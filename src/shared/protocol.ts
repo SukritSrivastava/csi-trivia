@@ -23,7 +23,8 @@
  *      The Host view doesn't either (the projector laptop may be screen-shared).
  *      Only the Admin view carries it, so the quizmaster can judge.
  *   2. Option ids are opaque random strings, new for every question run.
- *   3. Each phone gets the 4 options in its own shuffled order.
+ *   3. The 4 options are shuffled once per question run. In Round 1 the Host and
+ *      every phone show that same order, numbered 1–4 (like Murder Trivia).
  *   4. Answer times are measured on the server, never trusted from a phone.
  *   5. Admin flow commands carry the stepId they were issued from. If the
  *      step has moved on, ignore the command (see AdminCommandPayload).
@@ -49,21 +50,55 @@ export const ADD_TIME_MS = 5_000;
 export const OPTION_LETTERS = ["A", "B", "C", "D"] as const;
 export type OptionLetter = (typeof OPTION_LETTERS)[number];
 
-/** Name-tag colours, assigned in join order and repeated after 12. */
+// ============================================================================
+// Bots (every participant's avatar)
+// ============================================================================
+
+/**
+ * Every participant is a little robot: a colour and a head shape, picked on the
+ * phone in the lobby (the server assigns a free one on join, so nobody has to).
+ * Look: docs/SPEC.md "Look" and public/finaldesign.html.
+ *
+ * Uniqueness: while any colour is still unused, a colour can only be taken by
+ * one person. Once all 12 are in use, a colour can be shared, but never the
+ * same colour AND head (12 × 8 = 96 unique bots).
+ */
 export const PARTICIPANT_COLORS = [
-  "#FF3D7F", // pink
-  "#00A6A6", // teal
-  "#7B5CFF", // violet
-  "#FF6B1A", // orange
-  "#1FA855", // green
-  "#2D7FF9", // blue
-  "#C2185B", // berry
-  "#8D6E63", // cocoa
-  "#E0457B", // rose
-  "#0F8B8D", // deep teal
-  "#5B3FD9", // indigo
-  "#D9480F", // rust
+  "#6CF0B0", // mint
+  "#4CC9F0", // sky
+  "#9B7BFF", // violet
+  "#FF5FA2", // pink
+  "#FF4D5E", // red
+  "#FF8C42", // orange
+  "#FFD23F", // yellow
+  "#B6F04C", // lime
+  "#E8F0F2", // white
+  "#2EC4B6", // teal
+  "#C77DFF", // lilac
+  "#F72585", // magenta
 ] as const;
+
+export const BOT_HEADS = ["box", "round", "antenna", "bolts", "horns", "ears", "dome", "visor"] as const;
+export type BotHead = (typeof BOT_HEADS)[number];
+
+/**
+ * What a bot's eyes are doing. The server decides it (HostView.cast), so every
+ * screen shows the same thing.
+ * - idle:     blinks and looks around (lobby, read step, between steps)
+ * - thinking: eyes dart side to side (a question is open and they haven't answered)
+ * - locked:   eyes shut, slow breathing (answered, waiting for the reveal)
+ * - right:    happy ^ ^ eyes, smile, hops (got it right)
+ * - wrong:    red X eyes, frown, shakes (got it wrong or missed it)
+ * - out:      powered down (cut after Round 1, removed)
+ * "locked" never says whether the answer was right, so the Host still can't leak it.
+ */
+export type BotMood = "idle" | "thinking" | "locked" | "right" | "wrong" | "out";
+
+/** A bot choice: one of PARTICIPANT_COLORS and one of BOT_HEADS. */
+export interface BotLook {
+  color: string;
+  head: BotHead;
+}
 
 // ============================================================================
 // The flow
@@ -144,10 +179,19 @@ export interface Timer {
  */
 export type ParticipantStatus = "playing" | "finalist" | "audience" | "removed";
 
+/** How a person appears on every screen: name and bot. */
 export interface ParticipantTag {
   id: string;
   name: string;
+  /** Bot colour, one of PARTICIPANT_COLORS. */
   color: string;
+  /** Bot head shape. */
+  head: BotHead;
+}
+
+/** A bot on the Host's cast wall, with what its eyes are doing right now. */
+export interface CastMember extends ParticipantTag {
+  mood: BotMood;
 }
 
 /** Head counts. Removed participants are only counted in `removed`. */
@@ -178,7 +222,7 @@ export interface QuizSettings {
 // Round 1 pieces
 // ============================================================================
 
-/** A Round 1 question as the Host shows it. Options are never on the Host in Round 1. */
+/** A Round 1 question as the Host shows it. */
 export interface Round1Question {
   /** Opaque id of this question run. Changes on "restart question". */
   id: string;
@@ -188,6 +232,12 @@ export interface Round1Question {
   text: string;
   /** Path under /public, e.g. "/questions/hexagon.svg", or null. */
   image: string | null;
+  /**
+   * The 4 options, numbered 1–4 in this order, from the answer step on. null in
+   * the read step. Every phone shows them in this same order with the same numbers.
+   * Never says which one is right (that's `correctText` on the reveal).
+   */
+  options: string[] | null;
 }
 
 /** One answer button on a phone. `id` is opaque; it says nothing about which one is right. */
@@ -348,6 +398,11 @@ export interface HostView {
   settings: QuizSettings;
   /** Everyone who joined (not removed), in join order: the lobby wall. */
   participants: ParticipantTag[];
+  /**
+   * The bots across the top of the projector, in join order, each with its mood
+   * for the current step (see BotMood). Removed participants are left out.
+   */
+  cast: CastMember[];
   counts: Counts;
   timer: Timer | null;
   paused: boolean;
@@ -380,22 +435,27 @@ export interface Round2Phone {
 }
 
 export type ParticipantScreen =
-  /** Joined, waiting for the quiz to start. */
-  | { kind: "lobby"; joined: number }
+  /** Joined, waiting for the quiz to start. Build your bot here (participant:bot). */
+  | { kind: "lobby"; joined: number; botPicker: BotPicker }
   /** Round 1 is about to start. */
   | { kind: "r1Intro"; settings: QuizSettings }
   /** Joined while a question was open: plays from the next question. */
   | { kind: "nextQuestion" }
   /** Read time: the question is on the projector, options come next. */
   | { kind: "eyesUp"; questionNumber: number; questionCount: number }
-  /** The 4 options in THIS phone's order. Never a correct flag. First tap locks. */
+  /** The 4 options in the Host's order (number = position + 1). Never a correct flag. First tap locks. */
   | { kind: "answer"; questionId: string; questionNumber: number; questionCount: number; options: AnswerOption[] }
   /** Tapped; waiting. `timeUp` once the answer time has ended. */
   | { kind: "lockedIn"; choiceText: string; timeUp: boolean }
   /** Time ran out without an answer. */
   | { kind: "timesUp" }
   /** After the reveal: right or wrong only (no points, no rank). */
-  | { kind: "result"; outcome: "correct" | "wrong" | "missed" }
+  | {
+      kind: "result";
+      outcome: "correct" | "wrong" | "missed";
+      /** The right answer, for "It was …" (after the reveal only, so it's safe). */
+      correctText: string;
+    }
   /** The quizmaster cancelled the question. */
   | { kind: "voided" }
   /** End of Round 1: the only time a phone shows its rank. */
@@ -436,6 +496,14 @@ export type ParticipantScreen =
     }
   /** Removed by the quizmaster. */
   | { kind: "removed" };
+
+/** What the lobby bot builder can offer this phone. */
+export interface BotPicker {
+  /** Colours held by someone else that this phone can't pick right now (greyed out). */
+  lockedColors: string[];
+  /** Colour + head pairs held by someone else (that head is greyed out for that colour). */
+  taken: BotLook[];
+}
 
 export interface ParticipantView {
   roomCode: string;
@@ -644,6 +712,10 @@ export type JoinResult =
   | { ok: true; participantId: string; roomCode: string; status: ParticipantStatus }
   | { ok: false; error: JoinError };
 
+export type BotError = "taken" | "invalid" | "too-late";
+
+export type BotResult = { ok: true } | { ok: false; error: BotError };
+
 export type AdminAuthResult = { ok: true; roomCode: string } | { ok: false; error: "room-not-found" | "wrong-pin" };
 
 export interface AdminCommandPayload {
@@ -681,6 +753,11 @@ export interface ClientToServerEvents {
     payload: { roomCode: string; name: string; participantId?: string },
     ack: (result: JoinResult) => void,
   ) => void;
+  /**
+   * Lobby only: change this participant's bot. Rejected if the colour is locked
+   * or the colour + head pair is taken (see PARTICIPANT_COLORS), or the quiz started.
+   */
+  "participant:bot": (payload: BotLook, ack: (result: BotResult) => void) => void;
   /** Round 1. First tap wins; later taps are ignored. */
   "participant:answer": (payload: { questionId: string; optionId: string }) => void;
   /** Buzzer round. First buzz of the window wins the turn. */
@@ -717,6 +794,12 @@ export const JOIN_ERROR_MESSAGES: Record<JoinError, string> = {
   "quiz-ended": "This quiz has already finished.",
   removed: "The quizmaster removed you from this quiz.",
   "room-full": "This quiz is full.",
+};
+
+export const BOT_ERROR_MESSAGES: Record<BotError, string> = {
+  taken: "Someone just took that one. Pick another colour or head.",
+  invalid: "That bot isn't available.",
+  "too-late": "The quiz has started, so your bot is locked in.",
 };
 
 export const ADMIN_AUTH_ERROR_MESSAGES: Record<"room-not-found" | "wrong-pin", string> = {

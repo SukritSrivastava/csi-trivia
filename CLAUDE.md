@@ -1,7 +1,10 @@
 # Project notes for Claude
 
-Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2). Build plan:
-`docs/BUILD-PHASES.md` (5 phases; phase 1 done).
+**Read `PROJECT-RULES.md` first: it is the full handoff (constraints, architecture, stack, to-do,
+skills, agents, plugins, API). This file is the short version.**
+
+Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2.1). Build plan:
+`docs/BUILD-PHASES.md` (v4, 5 phases; phase 1 done, design foundation done).
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
@@ -22,11 +25,22 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - Admin commands carry `stepId`; the server ignores a command from a stale step (except the
   step-independent ones listed in `STEP_INDEPENDENT_ACTIONS`).
 - Phones and the Host never receive the correct answer before the reveal (simulate and smoke
-  check this). Options are shuffled per phone; option and question ids are opaque.
+  check this). Options are shuffled once per question; in Round 1 the Host (from the answer step)
+  and every phone show the same order, numbered 1–4. Option and question ids are opaque.
 - Questions live in `data/questions.json` (MCQ, 4 options, `correct` = index, `round` 1/2/null).
-- Look: marigold game-show style. Tokens and shared classes (`plate`, `press`, `type-wide`) are in
-  `src/app/globals.css`. The Host sizes everything in `rem` (scaled by `html:has(.host-root)`, so
-  the Host root element needs the `host-root` class).
+- Look: **"Server Corridor, Lights Low"**, approved and final. Match `public/finaldesign.html`
+  exactly (open it at http://localhost:3000/finaldesign.html); don't redesign it. Tokens and classes
+  are in `src/app/globals.css` (`host-q`, `host-opts`, `opt-num`, `host-count`, `phone-opt`,
+  `phone-go`, `clock`, `bot`, `corridor-*`). Components: `Bot` + `botDelay`, `BotBuilder`,
+  `Corridor`, `TimerRing` in `src/components/ui/`. The old marigold tokens (`plate`, `press`,
+  `bg-paper`, `bg-marigold`…) are unused leftovers (the temporary pages are restyled); delete in Phase 5. `Avatar.tsx` is the old
+  initials circle: use `Bot` instead. The Host sizes everything in `rem` (scaled by
+  `html:has(.host-root)`, so the Host root element needs the `host-root` class); at 1920 px,
+  1% of the screen width is about 1.2rem.
+- Bots: `ParticipantTag` has `color` + `head`. The server assigns a free bot on join; phones change
+  it in the lobby with `participant:bot` (`BotPicker` on the lobby screen says what's taken).
+  `HostView.cast` gives every bot's `mood` for the current step; screens never work moods out
+  themselves. Give each bot `delay={botDelay(id)}` so a wall of them doesn't blink in sync.
 - Animation: `motion` (`motion/react`), `@number-flow/react` for numbers, `canvas-confetti` via
   `src/lib/confetti.ts`. Respect reduced motion (`MotionConfig reducedMotion="user"`).
 - The user is on Windows (PowerShell). No bash-only commands in scripts or docs.

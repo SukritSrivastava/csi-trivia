@@ -19,6 +19,11 @@ import {
   type AdminQuestion,
   type AdminView,
   type Backing,
+  BOT_HEADS,
+  type BotHead,
+  type BotMood,
+  type BotPicker,
+  type BotResult,
   type BuzzerQuestion,
   type BuzzOutcome,
   type CommandResult,
@@ -75,7 +80,9 @@ export const realClock: Clock = {
 interface Participant {
   id: string;
   name: string;
+  /** Bot colour and head (see PARTICIPANT_COLORS in protocol.ts). */
   color: string;
+  head: BotHead;
   joinIndex: number;
   status: ParticipantStatus;
   connected: boolean;
@@ -108,8 +115,6 @@ interface Round1Run {
   optionIds: string[];
   /** Option indexes in A–D order (Admin letters, results chart). */
   hostOrder: number[];
-  /** Each phone's own shuffled order of option indexes. */
-  orders: Map<string, number[]>;
   answers: Map<string, { optionIndex: number; elapsedMs: number }>;
   /** Points and time actually applied per participant, so a void can undo them. */
   applied: Map<string, { points: number; timeMs: number }>;
@@ -273,7 +278,7 @@ export class QuizRoom {
     const participant: Participant = {
       id: randomId(),
       name,
-      color: PARTICIPANT_COLORS[this.participants.length % PARTICIPANT_COLORS.length],
+      ...this.freeBot(),
       joinIndex: this.participants.length,
       status: inRound1 ? "playing" : "audience",
       connected: true,
@@ -293,6 +298,25 @@ export class QuizRoom {
     this.participants.push(participant);
     this.changed();
     return ok(participant);
+  }
+
+  /** Lobby only: change a participant's bot (see the uniqueness rule on PARTICIPANT_COLORS). */
+  setBot(id: string, look: { color: string; head: string }): BotResult {
+    const p = this.find(id);
+    if (!p || p.status === "removed") return { ok: false, error: "invalid" };
+    if (this.phase !== "lobby") return { ok: false, error: "too-late" };
+    const color = PARTICIPANT_COLORS.find((c) => c.toLowerCase() === String(look?.color ?? "").toLowerCase());
+    const head = BOT_HEADS.find((h) => h === look?.head);
+    if (!color || !head) return { ok: false, error: "invalid" };
+    if (p.color === color && p.head === head) return { ok: true };
+    const picker = this.botPicker(p);
+    if (picker.lockedColors.includes(color) || picker.taken.some((t) => t.color === color && t.head === head)) {
+      return { ok: false, error: "taken" };
+    }
+    p.color = color;
+    p.head = head;
+    this.changed();
+    return { ok: true };
   }
 
   disconnect(id: string) {
@@ -509,7 +533,6 @@ export class QuizRoom {
       question,
       optionIds: question.options.map(() => randomId()),
       hostOrder: shuffle([0, 1, 2, 3], this.random),
-      orders: new Map(),
       answers: new Map(),
       applied: new Map(),
       limitMs: this.config.round1.answerMs,
@@ -965,6 +988,81 @@ export class QuizRoom {
     return this.participants.find((p) => p.id === id);
   }
 
+  /**
+   * A bot for a new participant: the least-used colour (palette order breaks
+   * ties), with the first head nobody has in that colour. Unique for 96
+   * people; past that, pairs repeat.
+   */
+  private freeBot(): { color: string; head: BotHead } {
+    const others = this.active();
+    const uses = (c: string) => others.filter((o) => o.color === c).length;
+    const color = [...PARTICIPANT_COLORS].sort((a, b) => uses(a) - uses(b))[0];
+    const head = BOT_HEADS.find((h) => !others.some((o) => o.color === color && o.head === h)) ?? BOT_HEADS[uses(color) % BOT_HEADS.length];
+    return { color, head };
+  }
+
+  /** What the lobby bot builder can offer `p` (everyone else's bots count as taken). */
+  private botPicker(p: Participant): BotPicker {
+    const others = this.active().filter((o) => o.id !== p.id);
+    const held = new Set(others.map((o) => o.color));
+    const anyColourFree = PARTICIPANT_COLORS.some((c) => !held.has(c));
+    return {
+      lockedColors: anyColourFree ? PARTICIPANT_COLORS.filter((c) => held.has(c)) : [],
+      taken: others.map((o) => ({ color: o.color, head: o.head })),
+    };
+  }
+
+  /** What `p`'s bot eyes are doing on the Host right now (see BotMood). */
+  private botMood(p: Participant): BotMood {
+    if (p.status === "removed") return "out";
+    const phase = this.phase;
+
+    if (this.isRound1Phase() && this.r1) {
+      const run = this.r1;
+      if (!this.playsQuestion(p, run)) return "idle";
+      const answer = run.answers.get(p.id);
+      switch (phase) {
+        case "r1Read":
+          return "idle";
+        case "r1Answer":
+          return answer ? "locked" : "thinking";
+        case "r1TimesUp":
+          return answer ? "locked" : "idle";
+        default:
+          // Reveal, results, leaderboard: right or wrong (a miss counts as wrong).
+          if (run.voided) return "idle";
+          return answer && answer.optionIndex === run.question.correct ? "right" : "wrong";
+      }
+    }
+
+    if (phase === "lobby" || phase === "r1Intro") return "idle";
+
+    // From the cut on, only the finalists are still in the game.
+    const finalist = this.finalistIds().includes(p.id);
+    if (phase === "podium" && this.podium) {
+      if (this.podium.order[0] === p.id) return "right";
+      return this.podium.basis === "round1" || finalist ? "idle" : "out";
+    }
+    if (!finalist) return "out";
+
+    if (this.r2 && ROUND2_QUESTION_PHASES.includes(phase)) {
+      const run = this.r2;
+      if (!run.inPlay.includes(p.id)) return "idle";
+      if (run.lockedOut.includes(p.id)) return "wrong";
+      switch (phase) {
+        case "r2Read":
+          return "idle";
+        case "r2BuzzOpen":
+          return "thinking";
+        case "r2Answering":
+          return run.buzzedBy === p.id ? "locked" : "thinking";
+        default:
+          return run.outcome?.kind === "correct" && run.outcome.by === p.id ? "right" : "idle";
+      }
+    }
+    return "idle";
+  }
+
   private active() {
     return this.participants.filter((p) => p.status !== "removed");
   }
@@ -1309,7 +1407,7 @@ export class QuizRoom {
   // ==========================================================================
 
   private tag(p: Participant): ParticipantTag {
-    return { id: p.id, name: p.name, color: p.color };
+    return { id: p.id, name: p.name, color: p.color, head: p.head };
   }
 
   private settings(): QuizSettings {
@@ -1368,16 +1466,14 @@ export class QuizRoom {
       count: this.round1Questions.length,
       text: run.question.text,
       image: run.question.image,
+      // Shown from the answer step on, numbered 1–4 in this order (the same on every phone).
+      options: this.phase === "r1Read" ? null : run.hostOrder.map((i) => run.question.options[i]),
     };
   }
 
-  private optionsFor(run: Round1Run, id: string) {
-    let order = run.orders.get(id);
-    if (!order) {
-      order = shuffle([0, 1, 2, 3], this.random);
-      run.orders.set(id, order);
-    }
-    return order.map((i) => ({ id: run.optionIds[i], text: run.question.options[i] }));
+  /** The phone's answer buttons: the Host's order, so "2" means the same thing on every screen. */
+  private optionsFor(run: Round1Run, _id: string) {
+    return run.hostOrder.map((i) => ({ id: run.optionIds[i], text: run.question.options[i] }));
   }
 
   private optionResults(run: Round1Run): OptionResult[] {
@@ -1457,7 +1553,7 @@ export class QuizRoom {
     if (!outcome) return null;
     if (outcome.kind === "correct") {
       const p = this.find(outcome.by);
-      return { kind: "correct", by: p ? this.tag(p) : { id: outcome.by, name: "", color: "#888888" } };
+      return { kind: "correct", by: p ? this.tag(p) : { id: outcome.by, name: "", color: "#888888", head: "box" } };
     }
     return outcome;
   }
@@ -1614,6 +1710,7 @@ export class QuizRoom {
       soundOn: this.soundOn,
       settings: this.settings(),
       participants: this.cached("hostParticipants", () => this.active().map((p) => this.tag(p))),
+      cast: this.cached("hostCast", () => this.active().map((p) => ({ ...this.tag(p), mood: this.botMood(p) }))),
       counts: this.counts(),
       timer: this.timer,
       paused: this.paused,
@@ -1646,7 +1743,7 @@ export class QuizRoom {
 
     switch (this.phase) {
       case "lobby":
-        return { kind: "lobby", joined: this.counts().joined };
+        return { kind: "lobby", joined: this.counts().joined, botPicker: this.botPicker(p) };
       case "r1Intro":
         return { kind: "r1Intro", settings: this.settings() };
       case "cut":
@@ -1686,7 +1783,11 @@ export class QuizRoom {
           return answer ? { kind: "lockedIn", choiceText: run.question.options[answer.optionIndex], timeUp: true } : { kind: "timesUp" };
         default:
           if (run.voided) return { kind: "voided" };
-          return { kind: "result", outcome: !answer ? "missed" : answer.optionIndex === run.question.correct ? "correct" : "wrong" };
+          return {
+            kind: "result",
+            outcome: !answer ? "missed" : answer.optionIndex === run.question.correct ? "correct" : "wrong",
+            correctText: run.question.options[run.question.correct],
+          };
       }
     }
 
@@ -1753,7 +1854,7 @@ export class QuizRoom {
   private podiumScreen(p: Participant): ParticipantScreen {
     const entries = this.podiumEntries();
     const basis = this.podium!.basis;
-    const winner = entries[0] ? { id: entries[0].id, name: entries[0].name, color: entries[0].color } : null;
+    const winner = entries[0] ? { id: entries[0].id, name: entries[0].name, color: entries[0].color, head: entries[0].head } : null;
     const mine = entries.find((e) => e.id === p.id);
     const backedP = p.status === "audience" && p.backingId ? this.find(p.backingId) : undefined;
     return {

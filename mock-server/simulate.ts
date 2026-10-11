@@ -4,7 +4,7 @@
  * runs in about a second. Run: npm run simulate
  */
 import assert from "node:assert/strict";
-import type { AdminAction, CommandResult, Phase } from "../src/shared/protocol";
+import { type AdminAction, BOT_HEADS, type CommandResult, PARTICIPANT_COLORS, type Phase } from "../src/shared/protocol";
 import { type GameConfig, PRESETS } from "./config";
 import { loadQuestions, type QuizQuestion } from "./questions";
 import { type Clock, QuizRoom } from "./quiz";
@@ -238,6 +238,61 @@ test("joining: duplicate and blank names, rejoin by id and by name, room full", 
   assert.ok(back.ok && back.participantId === riya, "a dropped phone takes its seat back by typing the same name");
   const byId = g.room.join("", riya);
   assert.ok(byId.ok && byId.participantId === riya, "rejoin with the saved id");
+});
+
+test("bots: unique colours first, then unique colour + head; lobby only; moods follow the game; one 1–4 answer order", () => {
+  const g = new Game(PRESETS.demo);
+  const ids = Array.from({ length: 14 }, (_, i) => g.join(`P${i}`));
+  const looks = () => ids.map((id) => g.phone(id).me);
+  assert.equal(new Set(looks().slice(0, 12).map((m) => m.color)).size, 12, "the first 12 get 12 different colours");
+  assert.equal(new Set(looks().map((m) => `${m.color}|${m.head}`)).size, 14, "nobody shares colour and head");
+  assert.ok(looks().every((m) => PARTICIPANT_COLORS.includes(m.color as never) && BOT_HEADS.includes(m.head)));
+
+  // All 12 colours are in use, so colours unlock; only exact pairs stay taken.
+  const lobby = g.screen(ids[0]);
+  assert.ok(lobby.kind === "lobby" && lobby.botPicker.lockedColors.length === 0 && lobby.botPicker.taken.length === 13);
+  const p1 = g.phone(ids[1]).me;
+  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: p1.head }), { ok: false, error: "taken" });
+  const free = BOT_HEADS.find((h) => !looks().some((m) => m.color === p1.color && m.head === h))!;
+  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: free }), { ok: true });
+  assert.equal(g.phone(ids[0]).me.head, free);
+  assert.deepEqual(g.room.setBot(ids[0], { color: "#000000", head: "box" }), { ok: false, error: "invalid" });
+  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: "wings" }), { ok: false, error: "invalid" });
+
+  // With a colour free, held colours are locked.
+  const g2 = new Game(PRESETS.demo);
+  const a = g2.join("A");
+  const b = g2.join("B");
+  const aColor = g2.phone(a).me.color;
+  const pick = g2.screen(b);
+  assert.ok(pick.kind === "lobby" && pick.botPicker.lockedColors.includes(aColor));
+  assert.deepEqual(g2.room.setBot(b, { color: aColor, head: "visor" }), { ok: false, error: "taken" }, "a held colour is locked while others are free");
+
+  // Moods on the Host.
+  const mood = (game: Game, id: string) => game.host().cast.find((c) => c.id === id)!.mood;
+  assert.ok(g2.host().cast.every((c) => c.mood === "idle"), "idle in the lobby");
+  g2.do({ type: "startQuiz" });
+  assert.deepEqual(g2.room.setBot(a, { color: PARTICIPANT_COLORS[5], head: "box" }), { ok: false, error: "too-late" });
+  g2.do({ type: "showQuestion" });
+  assert.equal(mood(g2, a), "idle", "idle while reading");
+  const reading = g2.host().stage;
+  assert.ok(reading.phase === "r1Read" && reading.question.options === null, "no options on the Host while reading");
+  g2.tick();
+  assert.equal(mood(g2, a), "thinking");
+  const answering = g2.host().stage;
+  const phoneA = g2.screen(a);
+  const phoneB = g2.screen(b);
+  assert.ok(answering.phase === "r1Answer" && answering.question.options?.length === 4, "Host shows the 4 options, numbered 1–4");
+  assert.ok(phoneA.kind === "answer" && phoneB.kind === "answer");
+  assert.deepEqual(phoneA.options.map((o) => o.text), answering.question.options, "phones show the Host's order");
+  assert.deepEqual(phoneB.options.map((o) => o.text), answering.question.options);
+  g2.answer(a, "correct");
+  assert.equal(mood(g2, a), "locked", "locked in, still no hint of right or wrong");
+  assert.equal(mood(g2, b), "thinking");
+  g2.answer(b, "wrong");
+  g2.do({ type: "revealAnswer" });
+  assert.equal(mood(g2, a), "right");
+  assert.equal(mood(g2, b), "wrong");
 });
 
 // ============================================================================
@@ -941,6 +996,10 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
           g.answer(id, rng() < 0.6 ? "correct" : "wrong");
         }
         distinctOrders = Math.max(distinctOrders, orders.size);
+        const hostStage = g.host().stage;
+        if (orders.size === 1 && hostStage.phase === "r1Answer") {
+          assert.equal([...orders][0], hostStage.question.options?.join("|"), `${label}: phones use the Host's 1–4 order`);
+        }
         if (g.phase === "r1Answer") g.tick();
         continue;
       }
@@ -1004,7 +1063,7 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
   }
   for (const id of ids) assert.equal(g.screen(id).kind, "podium");
   assert.equal(g.room.resultsCsv().csv.split("\r\n").length, count + 1, `${label}: CSV row per participant`);
-  if (count >= 10) assert.ok(distinctOrders > 1, `${label}: options shuffled per phone`);
+  assert.ok(distinctOrders <= 1, `${label}: every phone shows the options in the same order as the Host`);
 
   const suddenDeath = seen.has("suddenDeath") ? ", went to sudden death" : "";
   return `${label}: ${views} phone views in ${(performance.now() - start).toFixed(0)}ms, slowest full refresh ${slowestRefresh.toFixed(1)}ms${suddenDeath}`;

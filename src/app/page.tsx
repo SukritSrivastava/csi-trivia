@@ -1,26 +1,49 @@
 import Link from "next/link";
-import { APP_NAME } from "@/shared/protocol";
+import { Bot } from "@/components/ui/Bot";
+import { Corridor } from "@/components/ui/Corridor";
+import { APP_NAME, BOT_HEADS, PARTICIPANT_COLORS } from "@/shared/protocol";
+
+/** A few sample bots on the front door, one of each head. */
+const CREW = BOT_HEADS.map((head, i) => ({ head, color: PARTICIPANT_COLORS[(i * 5) % PARTICIPANT_COLORS.length] }));
 
 export default function Home() {
   return (
-    <main className="flex min-h-dvh flex-col justify-center gap-10 bg-marigold px-6 py-12 text-ink sm:px-16">
-      <div className="max-w-3xl">
-        <h1 className="type-wide text-6xl font-black leading-none tracking-tight sm:text-8xl">{APP_NAME}</h1>
-        <p className="mt-5 max-w-xl text-xl font-medium text-ink-soft sm:text-2xl">
-          Questions on the projector. Answers on your phone. The fastest six go to the buzzer round.
-        </p>
-      </div>
+    <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-12 text-center">
+      <Corridor scrim="full" />
 
-      <div className="flex max-w-3xl flex-col gap-4 sm:flex-row">
-        <Link href="/play" className="press bg-ink px-7 py-5 text-center text-xl font-bold text-paper">
-          Join the quiz
-        </Link>
-        <Link href="/host" className="press bg-paper px-7 py-5 text-center text-xl font-bold text-ink">
-          Host screen
-        </Link>
-        <Link href="/admin" className="press bg-paper px-7 py-5 text-center text-xl font-bold text-ink">
-          Admin
-        </Link>
+      <div className="relative z-10 flex max-w-3xl flex-col items-center gap-8">
+        <ul className="flex flex-wrap justify-center gap-4 sm:gap-6" aria-hidden>
+          {CREW.map((b, i) => (
+            <li key={b.head}>
+              <Bot color={b.color} head={b.head} size="clamp(34px, 7vw, 56px)" delay={i * 0.45} />
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex flex-col items-center gap-4">
+          <h1 className="font-term text-7xl leading-none text-mint [text-shadow:0_0_18px_var(--color-mint)] sm:text-9xl">
+            {APP_NAME.toUpperCase()}
+          </h1>
+          <p className="max-w-xl -rotate-2 text-lg text-bright sm:text-2xl">
+            Questions on the projector. Answers on your phone. Six bots make it to the buzzer round.
+          </p>
+        </div>
+
+        <nav className="flex w-full max-w-xl flex-col gap-3 sm:flex-row">
+          <Link href="/play" className="phone-go flex-1">
+            JOIN THE QUIZ
+          </Link>
+          <Link href="/host" className="phone-opt flex-1 justify-center">
+            Host screen
+          </Link>
+          <Link href="/admin" className="phone-opt flex-1 justify-center">
+            Admin
+          </Link>
+        </nav>
+
+        <a href="/finaldesign.html" className="text-sm text-fog underline underline-offset-4 hover:text-mint-soft">
+          Design reference
+        </a>
       </div>
     </main>
   );

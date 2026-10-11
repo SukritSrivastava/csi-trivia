@@ -4,10 +4,15 @@ A live MCQ quiz for 60–100 people at a club event. Questions go up on the
 projector, everyone answers on their phone, the fastest 6 make a buzzer-round
 final, and a quizmaster runs every step from an admin panel.
 Rules: [docs/SPEC.md](docs/SPEC.md). Build plan: [docs/BUILD-PHASES.md](docs/BUILD-PHASES.md).
+**AI handoff (read first): [PROJECT-RULES.md](PROJECT-RULES.md).**
 
-> **Status: build phase 1 of 5.** The game engine, contract and tests are done.
-> `/host`, `/play` and `/admin` are plain temporary test pages; the real
-> screens arrive in phases 2–4.
+> **Status: build phase 1 of 5, plus the design foundation.** The game engine,
+> contract and tests are done, and the approved look ("Server Corridor, Lights
+> Low") is in the design system. `/host`, `/play` and `/admin` are still plain
+> temporary test pages (now with bots); the real screens arrive in phases 2–4.
+>
+> **The design:** open [public/finaldesign.html](public/finaldesign.html), or
+> http://localhost:3000/finaldesign.html while `npm run dev` runs.
 
 ## Run it locally
 
@@ -56,7 +61,8 @@ set `GAME_PRESET=event` (see [.env.example](.env.example)).
 All questions live in [data/questions.json](data/questions.json): MCQ only, exactly 4
 options, `correct` is the index (0–3) of the right one, `round` is `1`, `2` or `null`
 (either). Images go in `public/questions/` and show on the Host only. Options are
-shuffled per phone automatically. The server checks the file when it starts and
+shuffled once per question automatically (the Host and every phone show the same
+order, numbered 1–4). The server checks the file when it starts and
 lists every problem it finds.
 
 ## Scripts
@@ -107,7 +113,9 @@ scripts/                     smoke test and bots
 server/                      real backend (teammate)
 src/shared/protocol.ts       the contract
 src/app/                     pages: / (home), /host, /play, /admin
+src/components/ui/           Bot, BotBuilder, Corridor, TimerRing (the approved design)
 src/components/temp/         phase 1 temporary test pages (replaced in phases 2–4)
+public/finaldesign.html      the approved design, with every animation
 src/stores/                  Zustand stores: socket events in, state out
 src/lib/                     socket, session, countdown, wake lock, labels, helpers
 ```

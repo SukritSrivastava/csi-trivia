@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { getSocket } from "@/lib/socket";
 import { loadParticipantSession, saveLastName, saveParticipantSession } from "@/lib/session";
-import { JOIN_ERROR_MESSAGES, type ParticipantView } from "@/shared/protocol";
+import { BOT_ERROR_MESSAGES, type BotLook, JOIN_ERROR_MESSAGES, type ParticipantView } from "@/shared/protocol";
 import type { ConnectionStatus } from "./hostStore";
 
 interface ParticipantStore {
@@ -24,9 +24,15 @@ interface ParticipantStore {
   tapped: { questionId: string; optionId: string; text: string } | null;
   /** The question this phone buzzed on (shown instantly, before the server confirms). */
   buzzedOn: string | null;
+  /** A bot change is on its way to the server. */
+  botPending: boolean;
+  /** Why the last bot change was refused (someone took it first, quiz started). */
+  botNotice: string | null;
 
   connect: () => () => void;
   join: (roomCode: string, name: string) => void;
+  /** Lobby: change this participant's bot. */
+  setBot: (look: BotLook) => void;
   answer: (questionId: string, option: { id: string; text: string }) => void;
   buzz: (questionId: string) => void;
   back: (finalistId: string) => void;
@@ -42,6 +48,8 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
   resuming: false,
   tapped: null,
   buzzedOn: null,
+  botPending: false,
+  botNotice: null,
 
   connect: () => {
     const socket = getSocket();
@@ -112,6 +120,18 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
         set({ joining: false, notice: "Can't reach the quiz. Check your internet and try again." });
       }
     }, 8000);
+  },
+
+  setBot: (look) => {
+    if (get().botPending) return;
+    set({ botPending: true, botNotice: null });
+    getSocket().emit("participant:bot", look, (result) => {
+      set({ botPending: false, botNotice: result.ok ? null : BOT_ERROR_MESSAGES[result.error] });
+    });
+    // No reply (server unreachable): don't leave the builder stuck.
+    window.setTimeout(() => {
+      if (get().botPending) set({ botPending: false });
+    }, 5000);
   },
 
   answer: (questionId, option) => {

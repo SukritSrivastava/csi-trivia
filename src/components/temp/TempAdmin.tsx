@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { ACTION_LABELS, COMMAND_ERROR_TEXT, DESTRUCTIVE_ACTIONS } from "@/lib/adminLabels";
 import { ADMIN_ACTION_TYPES, type AdminAction, type AdminActionType, type AdminView } from "@/shared/protocol";
 import { useAdminStore } from "@/stores/adminStore";
+import { Bot, botDelay } from "@/components/ui/Bot";
 import { Button, Card, Countdown, Field, inputClass, RawView, TempShell } from "./TempKit";
 
 /** Actions with parameters get their own controls below; these take none. */
@@ -28,7 +29,7 @@ export function TempAdmin() {
   useEffect(() => connect(), [connect]);
 
   return (
-    <TempShell title="Admin (quizmaster)" status={status}>
+    <TempShell title="ADMIN" status={status}>
       {view ? <AdminBody view={view} /> : <SignIn />}
     </TempShell>
   );
@@ -58,7 +59,7 @@ function SignIn() {
           <input className={inputClass} value={pin} onChange={(e) => setPin(e.target.value)} type="password" inputMode="numeric" name="pin" />
         </Field>
         {error && (
-          <p className="rounded-lg bg-side-a p-2 text-sm font-bold" role="alert">
+          <p className="rounded-xl border border-wrong bg-wrong/10 p-3 text-sm text-wrong" role="alert">
             {error}
           </p>
         )}
@@ -99,29 +100,29 @@ function AdminBody({ view }: { view: AdminView }) {
     <>
       <Card>
         <div className="flex flex-wrap items-center gap-3">
-          <p className="type-wide text-3xl font-black tracking-widest">{view.roomCode}</p>
-          <p className="text-lg font-black" data-testid="step-label">
+          <p className="font-term text-5xl leading-none tracking-widest text-mint [text-shadow:0_0_8px_var(--color-mint)]">{view.roomCode}</p>
+          <p className="text-lg text-bright" data-testid="step-label">
             {view.stepLabel}
           </p>
-          <span className="ml-auto text-3xl">
+          <span className="ml-auto text-4xl">
             <Countdown timer={view.timer} clockOffset={clockOffset} paused={view.paused} />
           </span>
         </div>
-        {view.paused && <p className="mt-2 rounded-lg bg-marigold p-2 text-center text-xl font-black">PAUSED</p>}
+        {view.paused && <p className="mt-3 rounded-xl bg-alarm/90 p-2 text-center font-term text-4xl leading-none text-ghost">PAUSED</p>}
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {view.primary ? (
             <Button onClick={() => void send(view.primary!.action)} disabled={pending !== null} tone="primary" big testId="primary">
               {view.primary.label}
             </Button>
           ) : (
-            <span className="rounded-lg border-2 border-dashed border-ink px-6 py-4 text-lg font-bold text-ink-soft">
+            <span className="rounded-xl border-2 border-dashed border-line px-6 py-4 text-lg text-fog">
               {view.phase === "podium" ? "Finished" : "Waiting…"}
             </span>
           )}
-          {view.hint && <p className="max-w-xl text-sm font-semibold">{view.hint}</p>}
+          {view.hint && <p className="max-w-xl text-sm text-mint-soft">{view.hint}</p>}
         </div>
         {error && (
-          <p className="mt-2 text-sm font-bold text-side-a" role="alert">
+          <p className="mt-2 text-sm text-wrong" role="alert">
             {ACTION_LABELS[lastResult!.action]}: {error}
           </p>
         )}
@@ -129,7 +130,8 @@ function AdminBody({ view }: { view: AdminView }) {
 
       {view.round2?.buzzedBy && (
         <Card title="Judge">
-          <p className="mb-2 text-xl font-black">
+          <p className="mb-3 flex items-center gap-3 text-xl text-bright">
+            <Bot color={view.round2.buzzedBy.color} head={view.round2.buzzedBy.head} mood="locked" size="48px" />
             {view.round2.buzzedBy.name} is answering{view.round2.answerTimeUp ? " (time's up)" : ""}. Answer: {view.question?.correctLetter}.{" "}
             {view.question?.correctText}
           </p>
@@ -173,45 +175,49 @@ function AdminBody({ view }: { view: AdminView }) {
         <Card title="Current question (with the answer)">
           {view.question ? (
             <div>
-              <p className="font-bold">
+              <p className="text-sm text-mint-soft">
                 Round {view.question.round}, question {view.question.number}
                 {view.question.count ? ` of ${view.question.count}` : ""}
                 {view.question.suddenDeath ? " (sudden death)" : ""}
               </p>
-              <p className="text-lg font-black">{view.question.text}</p>
-              <ul>
-                {view.question.options.map((o) => (
-                  <li key={o.letter} className={o.correct ? "font-black text-side-b" : ""}>
-                    {o.letter}. {o.text} {o.correct ? "✔" : ""}
+              <p className="my-2 text-lg text-bright">{view.question.text}</p>
+              <ul className="flex flex-col gap-1">
+                {view.question.options.map((o, i) => (
+                  <li key={o.letter} className={`flex items-center gap-2 ${o.correct ? "text-mint" : ""}`}>
+                    <span className={`font-term text-2xl leading-none ${o.correct ? "text-mint" : "text-amber"}`}>
+                      {view.question!.round === 1 ? i + 1 : o.letter}
+                    </span>
+                    {o.text} {o.correct ? "✔" : ""}
                   </li>
                 ))}
               </ul>
             </div>
           ) : (
-            <p className="text-ink-soft">No question on right now.</p>
+            <p className="text-fog">No question on right now.</p>
           )}
           {view.nextQuestion && (
-            <p className="mt-3 text-sm">
-              <span className="font-bold">Next up:</span> round {view.nextQuestion.round}
+            <p className="mt-3 text-sm text-mint-soft">
+              <span className="text-ghost">Next up:</span> round {view.nextQuestion.round}
               {view.nextQuestion.suddenDeath ? " sudden death" : ""} #{view.nextQuestion.number}: {view.nextQuestion.text}
             </p>
           )}
         </Card>
         <Card title="Counts">
-          <p className="text-sm">
+          <p className="text-sm text-mint-soft">
             {view.counts.joined} joined · {view.counts.connected} connected · {view.counts.playing} playing · {view.counts.finalists} finalists ·{" "}
             {view.counts.audience} audience · {view.counts.removed} removed
           </p>
           {view.counts.expected !== null && (
-            <p className="mt-1 text-xl font-black">
-              {view.counts.answered} / {view.counts.expected} answered
+            <p className="mt-2 text-lg">
+              <span className="font-term text-4xl leading-none text-amber">{view.counts.answered}</span> / {view.counts.expected} answered
             </p>
           )}
           {view.finalists.length > 0 && (
             <ul className="mt-2 text-sm">
               {view.finalists.map((f) => (
-                <li key={f.id} className={f.lockedOut || !f.inPlay ? "opacity-50" : ""}>
-                  {f.seat}. {f.name}: {f.points} pts{f.lockedOut ? " (locked out)" : ""}
+                <li key={f.id} className={`flex items-center gap-2 ${f.lockedOut || !f.inPlay ? "opacity-50" : ""}`}>
+                  <Bot color={f.color} head={f.head} mood={f.lockedOut ? "wrong" : "idle"} size="26px" delay={botDelay(f.id)} />
+                  {f.seat}. {f.name}: <span className="font-term text-xl leading-none text-amber">{f.points}</span> pts{f.lockedOut ? " (locked out)" : ""}
                   {view.backing ? ` · backed by ${view.backing.counts[f.id] ?? 0}` : ""}
                 </li>
               ))}
@@ -222,9 +228,9 @@ function AdminBody({ view }: { view: AdminView }) {
 
       <Card title={`Participants (${view.participants.length})`}>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left font-sans text-sm">
             <thead>
-              <tr className="border-b-2 border-ink">
+              <tr className="border-b border-line text-xs tracking-wider text-mint-soft uppercase">
                 <th className="py-1 pr-2">Name</th>
                 <th className="pr-2">Status</th>
                 <th className="pr-2">Online</th>
@@ -238,13 +244,15 @@ function AdminBody({ view }: { view: AdminView }) {
             </thead>
             <tbody>
               {view.participants.map((p) => (
-                <tr key={p.id} className={`border-b border-ink/20 ${p.status === "removed" ? "opacity-40" : ""}`}>
-                  <td className="py-1 pr-2 font-bold">
-                    <span className="mr-1 inline-block h-3 w-3 rounded-full border border-ink" style={{ background: p.color }} />
-                    {p.name}
+                <tr key={p.id} className={`border-b border-line/60 ${p.status === "removed" ? "opacity-40" : ""}`}>
+                  <td className="py-1.5 pr-2">
+                    <span className="flex items-center gap-2 font-type text-ghost">
+                      <Bot color={p.color} head={p.head} mood={p.status === "removed" ? "out" : "idle"} size="24px" delay={botDelay(p.id)} />
+                      {p.name}
+                    </span>
                   </td>
                   <td className="pr-2">{p.status}{p.joinedLate ? " (late)" : ""}</td>
-                  <td className="pr-2">{p.connected ? "●" : "○"}{p.pageHidden ? " away" : ""}</td>
+                  <td className={`pr-2 ${p.connected ? "text-mint" : "text-wrong"}`}>{p.connected ? "●" : "○"}{p.pageHidden ? " away" : ""}</td>
                   <td className="pr-2">{p.rank ?? "–"}</td>
                   <td className="pr-2">{p.score}</td>
                   <td className="pr-2">{p.status === "finalist" ? p.points : "–"}</td>

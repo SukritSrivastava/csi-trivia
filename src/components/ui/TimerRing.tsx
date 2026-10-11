@@ -6,47 +6,35 @@ import type { Timer } from "@/shared/protocol";
 interface TimerRingProps {
   timer: Timer | null;
   clockOffset: number;
-  /** Diameter in rem. */
+  /** Diameter in rem (the Host scales rem with screen width). 14.4rem matches the approved design at 1080p. */
   size?: number;
 }
 
-/** The TV's countdown: a ring that drains, turning pink in the last ten seconds. */
-export function TimerRing({ timer, clockOffset, size = 9 }: TimerRingProps) {
+/**
+ * The Host's countdown, styled like Murder Trivia's pocket watch: a clock face
+ * where a red wedge grows as time is used up, terminal digits, a hard mint
+ * offset shadow. Sits bottom-left on question screens (public/finaldesign.html).
+ */
+export function TimerRing({ timer, clockOffset, size = 14.4 }: TimerRingProps) {
   const countdown = useCountdown(timer, clockOffset);
   if (!countdown) return null;
 
-  const radius = 38;
-  const circumference = 2 * Math.PI * radius;
-  const urgent = countdown.seconds <= 10;
+  const used = Math.round((1 - countdown.fraction) * 1000) / 10; // % of the face in red
 
   return (
     <div
-      className="relative grid shrink-0 place-items-center"
-      style={{ width: `${size}rem`, height: `${size}rem` }}
+      className="clock shrink-0"
+      style={{
+        width: `${size}rem`,
+        height: `${size}rem`,
+        fontSize: `${size * 0.53}rem`,
+        background: `conic-gradient(var(--color-alarm) 0 ${used}%, var(--color-clock) ${used}%)`,
+        transition: "background 200ms linear",
+      }}
       role="timer"
       aria-label={`${countdown.seconds} seconds left`}
     >
-      <svg viewBox="0 0 100 100" className="absolute inset-0 -rotate-90">
-        <circle cx="50" cy="50" r="47" fill="var(--color-paper)" stroke="var(--color-ink)" strokeWidth="5" />
-        <circle cx="50" cy="50" r={radius} fill="none" stroke="var(--color-ink)" strokeOpacity="0.12" strokeWidth="10" />
-        <circle
-          cx="50"
-          cy="50"
-          r={radius}
-          fill="none"
-          stroke={urgent ? "var(--color-side-a)" : "var(--color-ink)"}
-          strokeWidth="10"
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - countdown.fraction)}
-          style={{ transition: "stroke-dashoffset 200ms linear" }}
-        />
-      </svg>
-      <span
-        className="type-wide relative font-black tabular-nums text-ink"
-        style={{ fontSize: `${size * 0.32}rem` }}
-      >
-        {countdown.seconds}
-      </span>
+      {countdown.seconds}
     </div>
   );
 }

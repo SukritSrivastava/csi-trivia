@@ -4,6 +4,10 @@ v2 (11 Oct 2026): two rounds instead of five, a **6-player buzzer round** instea
 duel, and the **quizmaster controls the whole flow** from the Admin screen. Anything below
 marked **Default** is a setting in `mock-server/config.ts`, not a fixed rule.
 
+v2.1 (11 Oct 2026, evening): the approved look ("Server Corridor, Lights Low", see **Look**),
+**bots** (every participant picks a colour and head in the lobby; their eyes react to the game),
+and in Round 1 the Host shows the 4 options numbered 1–4 with **the same order on every phone**.
+
 ## The three screens
 
 | Screen | Route | Who sees it | What it does |
@@ -41,6 +45,11 @@ Lobby → Round 1 (everyone) → Top 6 revealed → Audience backs a finalist �
 - Host: room code tiles, QR code, join link, a wall of every name, a live player count.
 - Participants join with room code + **real name**. An exact duplicate name is rejected
   ("add your surname initial, like Rahul S").
+- **Build your bot:** every participant is a robot. The server gives each new joiner a free bot;
+  in the lobby they can change its **colour (12)** and **head (8)** on their phone. While any colour
+  is unused, each colour belongs to one person (taken colours are greyed out). Once all 12 are in
+  use, colours can be shared but never the same colour **and** head (96 unique bots). Bots are
+  locked when the quizmaster clicks Start quiz.
 - Quizmaster clicks **Start quiz**.
 
 ### Round 1: everyone plays (MCQ)
@@ -50,7 +59,7 @@ For each question, the quizmaster clicks through these steps:
 | Step | Started by | Host shows | Participant phone shows |
 |---|---|---|---|
 | Read | **Show question** (click) | question (+ image), 8s countdown, no options | "Eyes up", 8s countdown |
-| Answer | automatic after the 8s read | question, 8s countdown, "38 / 64 answered" | 4 options, shuffled per phone; first tap locks |
+| Answer | automatic after the 8s read | question, the 4 options numbered 1–4, 8s countdown, "38 / 64 answered" | the same 4 options in the same order (1–4); first tap locks |
 | Time's up | automatic (8s over, or everyone answered) | "Time's up" | "Locked in" or "Time's up" |
 | Reveal | **Reveal answer** (click) | the correct answer | right / wrong (no points, no rank) |
 | Results | **Show results** (click) | bar chart: how many picked each option | unchanged |
@@ -155,18 +164,41 @@ The rules above didn't cover these; this is how the quiz behaves.
 ## Rules that don't change
 
 - Participants never receive the correct answer before the reveal. Option ids are opaque.
-  Options are shuffled per phone. Answer times are measured on the server.
+  Options are shuffled once per question; in Round 1 the Host and every phone show that same
+  order, numbered 1–4 (decided 11 Oct 2026, to match the approved design). Answer times are
+  measured on the server.
 - Disconnects: reopening `/play` rejoins as the same participant with the same score
   (or type the same name if the phone dropped).
 - Phone screen stays awake during the quiz (Screen Wake Lock).
 - Questions: MCQ only, 4 options, in `data/questions.json`. Images go in `public/questions/`
   and appear on Host only. The Host preloads the next question's image.
 
-## Look
+## Look: "Server Corridor, Lights Low" (approved 11 Oct 2026)
 
-- Marigold game-show look from the prototype: marigold `#FFB627`, ink `#1B1340`, paper `#FFFBF0`
-  cards with hard offset shadows, pink `#FF3D7F` and teal `#00A6A6` accents, Archivo with the
-  wide width for headlines. Club logo can go in a corner later.
-- Host text readable from the back of the hall.
+The approved design, with every animation, is **`public/finaldesign.html`** (open
+`http://localhost:3000/finaldesign.html` while `npm run dev` runs). Build every screen to match it.
+Inspired by Jackbox's Murder Trivia 2; themed on the Hermes AI agent running a server room.
+
+- **Background (Host):** a dark server-room corridor in one-point perspective: rack walls with dim
+  mint and red LEDs, a red alarm pulse from above, a vignette, and dark pools behind the text so it
+  reads from the back row. `<Corridor />`.
+- **Layout (Host question screens):** question on the left, tilted; answers on the right with big
+  yellow numbers 1–4, staggered tilt; the round clock timer bottom-left with "38 / 64 answered"
+  beside it; the cast of bots across the top; `hermes://quiz` bottom-right. Read step: the question
+  moves to the centre and the hint sits under it.
+- **Type:** typewriter (Special Elite) for words; terminal digits (VT323) for numbers (answer keys,
+  timer, counts, room code). Archivo only for dense Admin tables.
+- **Colour:** near-black void `#05080A`, mint `#6CF0B0` for light and actions, amber `#FFB627`
+  for answer numbers and counts (the only warm colour), alarm red `#D6334D`, wrong `#FF4D5E`.
+  Tokens in `src/app/globals.css`.
+- **Bots:** every participant is a robot in their colour and head. Its eyes show the game
+  (`BotMood`, decided by the server): idle (blinks, looks around), thinking (eyes dart; question
+  open, not answered), locked (eyes shut, breathing; answered), right (happy ^ ^ eyes, smile, hops),
+  wrong (red X eyes, frown, shakes), out (powered down after the cut). `<Bot />`.
+- **Timer:** a clock face with a red wedge for time used, terminal digits, hard mint offset shadow.
+  `<TimerRing />`.
+- **Phone:** dark teal gradient, typewriter type, mint-outlined answer buttons, solid mint action
+  button, the participant's own bot on result screens ("CORRECT" / "WRONG" in terminal digits).
+- Host text readable from the back of the hall. Club logo can go in a corner later.
 - Animation with `motion`, numbers with `@number-flow/react`, confetti with `canvas-confetti`.
   Respect reduced motion. Host sound effects with a mute (build phase 4).

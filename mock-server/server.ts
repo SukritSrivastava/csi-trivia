@@ -8,7 +8,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Server } from "socket.io";
-import { ADMIN_ACTION_TYPES, type AdminAction, type AdminActionType, NAME_MAX_LENGTH } from "../src/shared/protocol";
+import { ADMIN_ACTION_TYPES, type AdminAction, type AdminActionType, type BotResult, NAME_MAX_LENGTH } from "../src/shared/protocol";
 import type { GameConfig } from "./config";
 import type { Clock } from "./quiz";
 import { type GameServer, RoomManager } from "./rooms";
@@ -84,6 +84,14 @@ export function startGameServer(options: GameServerOptions): Promise<RunningGame
       if (typeof ack !== "function") return;
       const participantId = str(payload?.participantId, 40) || undefined;
       ack(rooms.join(socket, { roomCode: str(payload?.roomCode, 10), name: str(payload?.name, NAME_MAX_LENGTH * 3), participantId }));
+    });
+    socket.on("participant:bot", (payload, ack) => {
+      if (typeof ack !== "function") return;
+      let result: BotResult = { ok: false, error: "invalid" };
+      rooms.asParticipant(socket, (room, id) => {
+        result = room.setBot(id, { color: str(payload?.color, 10), head: str(payload?.head, 10) });
+      });
+      ack(result);
     });
     socket.on("participant:answer", (payload) =>
       rooms.asParticipant(socket, (room, id) => room.answer(id, str(payload?.questionId, 40), str(payload?.optionId, 40))),
