@@ -7,7 +7,7 @@ every phone. Rules: docs/SPEC.md (v2.1).
 Paste these into Claude Code in VS Code, opened in the JacKboX folder, one at a time, in order.
 Only paste the next prompt after you've tested and approved the current phase.
 
-Phase 1 (engine, contract, mock server, tests) is already built, and the design foundation was
+Phase 1 (engine, contract, game server, tests) is already built, and the design foundation was
 added from a Claude chat without being able to run `npm install` there. So the new Prompt 1 checks
 and finishes that foundation instead of rebuilding Phase 1.
 
@@ -45,7 +45,7 @@ GROUND RULES (apply to every phase)
 PHASE 1 OF 5: DESIGN FOUNDATION CHECK
 Goal: the approved design system, bots and the 1–4 answer order are in the code, tested and building, so phases 2–4 only have to draw screens. Phase 1's engine is already built; don't rebuild it. These were added from a Claude chat that couldn't run npm, so trust nothing until it passes:
 - src/shared/protocol.ts: PARTICIPANT_COLORS (12 bot colours), BOT_HEADS, BotHead, BotMood, BotLook, BotPicker, CastMember; ParticipantTag.head; HostView.cast; the lobby screen's botPicker; the "participant:bot" event with BotResult and BOT_ERROR_MESSAGES; Round1Question.options (null in the read step, then the 4 options numbered 1–4); phones get options in the Host's order; the phone's result screen carries correctText.
-- mock-server/quiz.ts: freeBot, botPicker, botMood, setBot, one answer order; mock-server/server.ts: the participant:bot handler; mock-server/simulate.ts: a new bots check.
+- server/quiz.ts: freeBot, botPicker, botMood, setBot, one answer order; server/server.ts: the participant:bot handler; server/simulate.ts: a new bots check.
 - src/app/globals.css (the whole design system), src/app/layout.tsx (Special Elite, VT323, Archivo), src/app/page.tsx (new home page), src/components/ui/Bot.tsx, BotBuilder.tsx, Corridor.tsx, TimerRing.tsx (now the clock), src/stores/participantStore.ts (setBot), the temporary pages (bots on /host and /play), public/finaldesign.html, docs/SPEC.md, CLAUDE.md, README.md.
 
 1. Git
@@ -59,7 +59,7 @@ Goal: the approved design system, bots and the 1–4 answer order are in the cod
 4. Tests for the new rules
 - scripts/smoke.ts, over real Socket.IO: a participant changes their bot in the lobby (ok); another tries the same colour while colours are still free ("taken"); a change after Start quiz ("too-late"); HostView.cast moods: all idle in the lobby, thinking then locked during an answer step, right and wrong after the reveal, out for those cut after Round 1; Round1Question.options is null during the read step and, during the answer step, equals every phone's option texts in order.
 - scripts/bots.ts: each bot picks a random free bot from its botPicker in the lobby before the quiz starts, and retries once if it gets "taken".
-- Add any missing cases to mock-server/simulate.ts.
+- Add any missing cases to server/simulate.ts.
 
 5. See it
 - npm run dev. Open the home page, /finaldesign.html, and a demo game with 1 /host tab, 1 /admin tab and 3 /play tabs plus 20 bots. Check: every phone can build its bot and taken colours grey out on the others live; the temporary Host page's cast strip shows the eyes changing through a question (thinking, locked, right or wrong) and the cut (out).
@@ -91,7 +91,7 @@ GROUND RULES (apply to every phase)
 - At the end: update CLAUDE.md with anything later phases need, commit with a message starting "Phase N:", and report what you built, how you verified it, the URLs, a checklist for me, your assumptions and anything left undone.
 
 PHASE 2 OF 5: THE ADMIN SCREEN (the quizmaster's control panel)
-Goal: the quizmaster can run the whole quiz from a phone held in one hand in a dark hall, or from a laptop, without ever wondering what the next click will do. This is the most important screen on the day. It replaces the temporary /admin page from Phase 1. Build it on AdminView from src/shared/protocol.ts; if the contract is missing something Admin needs, add it there, implement it in the mock server and tell me.
+Goal: the quizmaster can run the whole quiz from a phone held in one hand in a dark hall, or from a laptop, without ever wondering what the next click will do. This is the most important screen on the day. It replaces the temporary /admin page from Phase 1. Build it on AdminView from src/shared/protocol.ts; if the contract is missing something Admin needs, add it there, implement it in the game server (server/) and tell me.
 
 1. Sign in: room code (prefilled from /admin?code=ABCD) and PIN. Stays signed in after a refresh. Clear errors.
 2. Layout, phone first (390×844 and 360×740), with a two-column layout on a laptop:
@@ -242,13 +242,13 @@ GROUND RULES (apply to every phase)
 PHASE 5 OF 5: EVENT-PROOFING AND HANDOVER
 Goal: nothing surprising happens on the day, the projector looks like the approved design in a real hall, and my backend teammate and the quizmaster have everything they need.
 
-1. Failure drills on all three screens: refresh mid-question; lock a phone for 30 seconds; cut Wi-Fi for 10 seconds; reload the Host tab and the Admin tab mid-game; two Admin devices at once; slow network (DevTools Slow 4G) on Participant; two phones racing for the same bot colour; restart the mock server (show a clear "The quiz server restarted, so the quiz has to start again" in the design's style instead of a broken screen). Every case recovers or explains itself.
+1. Failure drills on all three screens: refresh mid-question; lock a phone for 30 seconds; cut Wi-Fi for 10 seconds; reload the Host tab and the Admin tab mid-game; two Admin devices at once; slow network (DevTools Slow 4G) on Participant; two phones racing for the same bot colour; restart the game server (show a clear "The quiz server restarted, so the quiz has to start again" in the design's style instead of a broken screen). Every case recovers or explains itself.
 2. Scale: event preset, 100 bots plus 4 real tabs, the whole quiz from lobby to podium. Watch for dropped events, slow views, Host jank (100 animated bots on the cast wall, the lobby wall, the cut), and memory growth. Measure the Host's frame rate during the answer step and the reveal with 100 bots. Fix what you find and put the numbers in your report.
 3. Design QA against public/finaldesign.html: every Host, phone and Admin screen side by side with the reference; fonts really loaded (Special Elite, VT323) with no fallback flash on the projector; a projector washout check (screenshots at reduced contrast and +30% brightness: the question, answers, numbers and clock must still read, the scrims must still separate text from the corridor); colour contrast; the same words for the same thing on every screen.
 4. Accessibility and polish: focus states (mint outline), screen-reader labels (bots have names where no name is printed), reduced motion (bots still show their mood pose), no leftover debug output or temporary code from Phase 1 (delete src/components/temp/ and the legacy marigold tokens and classes in globals.css once nothing uses them).
 5. Questions: npm run check-questions validates data/questions.json (4 options each, valid correct index, image files exist, no duplicate ids, enough questions for the chosen preset) and prints a summary. Add a short "Writing questions" section to README.md with a template I can copy for the real Hermes questions. Question images must read on the dark Host (show them on a dark card; warn in check-questions about images with transparent backgrounds and dark lines).
 6. Deployment notes in README.md: the frontend on Vercel, the game server on Render (or similar), every env var (NEXT_PUBLIC_SOCKET_URL, PUBLIC_WEB_URL, CORS_ORIGIN, ADMIN_PIN, GAME_PRESET), CORS, and how to wake a sleeping free server before the event. Don't deploy anything.
-7. docs/BACKEND-NOTES.md for my backend teammate: every event and view in protocol.ts, who sends it and when, the stepId rule, and everything the server must enforce (no answer leaks, one 1–4 answer order per question, server-side timing, lockouts, undo, reconnects, bot uniqueness and participant:bot, computing HostView.cast moods). Point to mock-server/ as the working reference.
+7. docs/BACKEND-NOTES.md for my backend teammate: every event and view in protocol.ts, who sends it and when, the stepId rule, and everything the server must enforce (no answer leaks, one 1–4 answer order per question, server-side timing, lockouts, undo, reconnects, bot uniqueness and participant:bot, computing HostView.cast moods). Point to server/ as the working reference.
 8. docs/RUN-SHEET.md for the quizmaster: a setup checklist (laptop, HDMI, display mode, full screen, projector brightness and hall lights, sound, Wi-Fi and mobile data check, Admin on a phone), what to say and click at each step (including "build your bot" in the lobby), and emergency moves (pause, void, undo a wrong mark, remove someone, a phone that can't join, the projector tab got refreshed).
 9. Full rehearsal with the event preset: Host at 1920×1080, Admin at phone size, 4 Participant tabs and 100 bots, lobby to podium, with at least one void, one undo and one participant refresh. typecheck, build, simulate, smoke and check-questions must all pass.
 10. Report: what changed, the numbers from the scale test, the URLs, a final checklist for a real run-through in the hall, and anything left open. Then wait. Still don't push until I say "push".

@@ -7,9 +7,9 @@
 import assert from "node:assert/strict";
 import { newDb } from "pg-mem";
 import { io, type Socket } from "socket.io-client";
-import { PRESETS, withTimingScale } from "../mock-server/config";
-import { Database, type Queryable } from "../mock-server/db";
-import { startGameServer } from "../mock-server/server";
+import { PRESETS, withTimingScale } from "../server/config";
+import { Database, type Queryable } from "../server/db";
+import { startGameServer } from "../server/server";
 import type { AdminAction, AdminView, ClientToServerEvents, ParticipantView, ServerToClientEvents } from "../src/shared/protocol";
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;

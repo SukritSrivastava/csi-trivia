@@ -12,8 +12,8 @@
  * ---------------------------------------------------------------------------
  * For the backend teammate
  * ---------------------------------------------------------------------------
- * Build the real server against this file. mock-server/ implements every
- * line of it and is the working reference (mock-server/quiz.ts holds all the
+ * Build the real server against this file. server/ implements every
+ * line of it and is the working reference (server/quiz.ts holds all the
  * rules with no socket code). If something here has to change, change it in
  * this file first and tell the frontend: TypeScript then flags every screen
  * that needs updating.

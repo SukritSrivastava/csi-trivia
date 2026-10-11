@@ -1,5 +1,5 @@
 /**
- * MOCK game server: runs the whole quiz so the frontend can be built and
+ * The Hermes Quiz game server: runs the whole quiz (this is the backend that's deployed) so the frontend can be built and
  * tested without the real backend. Started by `npm run dev`.
  *
  * Pick the preset with `--preset event` (npm run dev:event does this) or the
@@ -68,7 +68,7 @@ startGameServer({
     console.log(
       [
         "",
-        `  Hermes Quiz mock game server on port ${port}`,
+        `  Hermes Quiz game server on port ${port}`,
         `  ${config.name} preset: ${round1Count} Round 1 questions, top ${config.finalists}, ${config.round2.questions} buzzer questions`,
         `  Results database: ${process.env.DATABASE_URL ? "on (DATABASE_URL)" : "off (set DATABASE_URL to save to Postgres/Supabase)"}`,
         "",

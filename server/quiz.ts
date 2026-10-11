@@ -159,7 +159,7 @@ interface LastMark {
 const randomId = () => randomUUID().replace(/-/g, "").slice(0, 12);
 
 /**
- * Optional listener for saving results (mock-server/db.ts). The room calls it,
+ * Optional listener for saving results (server/db.ts). The room calls it,
  * never waits for it, and works the same without it.
  */
 export interface QuizRecorder {

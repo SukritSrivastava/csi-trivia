@@ -1,6 +1,6 @@
 # Project notes for Claude
 
-**Read `PROJECT-RULES.md` first: it is the full handoff (constraints, architecture, stack, to-do,
+**Read `docs/PROJECT-RULES.md` first: it is the full handoff (constraints, architecture, stack, to-do,
 skills, agents, plugins, API). This file is the short version.**
 
 Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2.1). Build plan:
@@ -13,14 +13,14 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 ## Rules of this codebase
 
 - Branches: `main` = the whole app, what's deployed. `frontend` (screens, `src/`) and `backend`
-  (`mock-server/`, `db.ts`, `backend/`) branch off `main` and merge back when all checks pass. Sukrit
+  (`server/`: game rules, sockets, database) branch off `main` and merge back when all checks pass. Sukrit
   (12 Oct) allowed commits, pushes and merges without asking; ask only before changing the approved design.
 - The server is the source of truth. Screens send actions and render the view they receive;
   they never compute game state.
 - Every event and view type lives in `src/shared/protocol.ts`. Change the contract there first,
-  implement it in `mock-server/`, then follow the TypeScript errors. A teammate builds the real
-  server in `server/` against it.
-- `mock-server/quiz.ts` has all the rules and no socket code. After changing rules run
+  implement it in `server/` (the game server, which is the deployed backend), then follow the
+  TypeScript errors. `archive/ws-backend-v1/` is the first prototype backend, kept for reference only.
+- `server/quiz.ts` has all the rules and no socket code. After changing rules run
   `npm run simulate` and `npm run smoke`.
 - The quizmaster drives the flow. Timers only for Round 1 read/answer and Round 2 read/buzz
   window/answer countdown; when one ends, the room holds. The spoken-answer countdown never marks.
@@ -69,7 +69,7 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 
 ## Commands
 
-- `npm run dev` (demo preset) / `npm run dev:event`: Next.js on 3000 + mock server on 3001.
+- `npm run dev` (demo preset) / `npm run dev:event`: Next.js on 3000 + game server on 3001.
 - `npm run bots -- --room ABCD --count 80`: fake participants for scale tests.
 - `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
 - Deploy: website on Vercel, game server on Render (`render.yaml`, `npm run start:game`, uses `PORT`),
@@ -77,8 +77,8 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - Live: https://hermes-quiz-nine.vercel.app (Vercel) + https://hermes-quiz-game.onrender.com (Render) + Supabase.
   `npm run deploy` (on a pushed `main`) redeploys both; keys in `.env.local`. Neither auto-deploys on push yet.
 - `npm run db-check`: plays a game with the results database on (in-memory Postgres) and checks the rows.
-- The backend is `mock-server/` (decided 12 Oct). `DATABASE_URL` (Supabase) turns on `mock-server/db.ts`,
-  which saves to the teammate's `backend/db.js` tables (additive columns only). `quiz.ts` stays I/O-free:
+- The backend is `server/` (decided 12 Oct). `DATABASE_URL` (Supabase) turns on `server/db.ts`,
+  which saves to the teammate's tables (from `archive/ws-backend-v1/db.js`) (additive columns only). `quiz.ts` stays I/O-free:
   it calls `room.recorder` (`QuizRecorder`) and exposes `snapshot()`.
 - `npm run admin-run [-- --bots 80 --out screenshots/x]` (with `npm run dev` running): Playwright drives a
   whole game from Admin (3 devices), 41 checks, screenshots in `screenshots/` (git-ignored).

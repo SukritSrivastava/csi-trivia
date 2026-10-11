@@ -1,5 +1,5 @@
 /**
- * Starts a mock game server: an HTTP server (GET /health) with Socket.IO on top.
+ * Starts the game server: an HTTP server (GET /health) with Socket.IO on top.
  * Used by `npm run dev` (via index.ts) and by `npm run smoke` (on a spare port).
  *
  * Every payload from a browser is checked here before it reaches the quiz, so a

@@ -30,7 +30,7 @@ Three services, each doing one job:
 Phones / Projector / Admin  ──►  Website (Next.js)          on Vercel
                                      │ Socket.IO
                                      ▼
-                              Game server (mock-server/)    on Render  ──►  Results database   on Supabase
+                              Game server (server/)    on Render  ──►  Results database   on Supabase
                                                             DATABASE_URL     (rooms, players, game_history)
 ```
 

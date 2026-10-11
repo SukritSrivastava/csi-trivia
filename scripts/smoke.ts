@@ -1,7 +1,7 @@
 /**
  * End-to-end check over real Socket.IO: npm run smoke
  *
- * Starts its own mock game server on a spare port (demo preset, timers sped
+ * Starts its own game server on a spare port (demo preset, timers sped
  * up), then plays a whole demo quiz the way the browsers would: a Host, an
  * Admin and 4 Participants, driven only through Admin commands. Checks the key
  * views along the way, including a phone that reconnects mid-question.
@@ -20,8 +20,8 @@ import type {
   ParticipantView,
   ServerToClientEvents,
 } from "../src/shared/protocol";
-import { PRESETS, withTimingScale } from "../mock-server/config";
-import { startGameServer } from "../mock-server/server";
+import { PRESETS, withTimingScale } from "../server/config";
+import { startGameServer } from "../server/server";
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;
 

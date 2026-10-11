@@ -2,7 +2,7 @@
 
 v2 (11 Oct 2026): two rounds instead of five, a **6-player buzzer round** instead of a 2-player
 duel, and the **quizmaster controls the whole flow** from the Admin screen. Anything below
-marked **Default** is a setting in `mock-server/config.ts`, not a fixed rule.
+marked **Default** is a setting in `server/config.ts`, not a fixed rule.
 
 v2.1 (11 Oct 2026, evening): the approved look ("Server Corridor, Lights Low", see **Look**),
 **bots** (every participant picks a colour and head in the lobby; their eyes react to the game),
@@ -21,8 +21,8 @@ and in Round 1 the Host shows the 4 options numbered 1–4 with **the same order
 - Club event, in person, one hall, projector driven by a laptop over HDMI.
 - **60–100 participants**, solo, one phone each, after a workshop on the **Hermes AI agent**.
 - Phones on a mix of college Wi-Fi and mobile data, so the **game server runs online**.
-- Event is within a week. A teammate builds the real server in `server/` against
-  `src/shared/protocol.ts`; `mock-server/` runs the whole quiz for local testing.
+- Event is within a week. The game server in `server/` runs the whole quiz (locally and on
+  Render) against the contract in `src/shared/protocol.ts`, and saves results to Supabase.
 
 ## Who controls what
 

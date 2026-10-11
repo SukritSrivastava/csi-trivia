@@ -1,4 +1,4 @@
-# Render Blueprint for the Hermes Quiz game server (mock-server/).
+# Render Blueprint for the Hermes Quiz game server (server/).
 # Render dashboard → New → Blueprint → pick this repo. See docs/DEPLOY.md.
 # Values marked "sync: false" are asked for in the dashboard (never commit them).
 services:

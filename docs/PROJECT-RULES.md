@@ -24,11 +24,12 @@ on the **Hermes AI agent**. The **event is within a week of 11 Oct 2026**.
 - **Look:** "Server Corridor, Lights Low", inspired by Jackbox's *Murder Trivia 2*. A dark
   server-room corridor, typewriter type, terminal digits, and every player is a **robot** whose
   eyes react to their answers. The approved reference is **`public/finaldesign.html`**.
-- **Team:** Sukrit builds the **frontend** (this Next.js app). A teammate builds the **real
-  backend**. Until it's ready, **`mock-server/`** runs the whole game and is the reference
-  implementation of the contract in **`src/shared/protocol.ts`**.
+- **Team:** Sukrit builds the **frontend** (this Next.js app). Lelouch (teammate) owns the
+  **backend**: **`server/`** runs the whole game, implements the contract in
+  **`src/shared/protocol.ts`**, and saves results to Supabase. It's what's deployed on Render.
+  (Lelouch's first prototype is kept in `archive/ws-backend-v1/`.)
 
-**Where we are:** Phase 1 of 5 is done (engine, contract, mock server, tests). The design system
+**Where we are:** Phase 1 of 5 is done (engine, contract, game server, tests). The design system
 and bots are in. `/host`, `/play` and `/admin` are temporary pages already styled in the final
 look. Next: run Prompt 1 in `docs/BUILD-PHASES.md` (see §4).
 
@@ -43,7 +44,7 @@ look. Next: run Prompt 1 in `docs/BUILD-PHASES.md` (see §4).
 ### Run it (Windows PowerShell)
 ```powershell
 npm install
-npm run dev            # Next.js on :3000 + mock game server on :3001 (demo preset)
+npm run dev            # Next.js on :3000 + game server on :3001 (demo preset)
 # Host:        http://localhost:3000/host
 # Admin:       http://localhost:3000/admin     (PIN 1234)
 # Participant: http://<your-LAN-IP>:3000/play  (phones on the same Wi-Fi; the server prints it)
@@ -61,7 +62,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | C1 | **Branches:** `main` = the whole app (what Render and Vercel deploy). `frontend` (screens) and `backend` (game server, database) branch off `main`; merge back only with all checks green. Pushing is allowed (Sukrit, 12 Oct). | One deployable truth; two people work side by side. |
 | C2 | **The server is the source of truth.** Screens send actions and draw the view they receive. They never compute game state, scores, timers, ranks or bot moods. | 100 phones must agree; nobody can cheat by editing the page. |
 | C3 | **No answer leaks.** Phones and the Host never receive the correct answer before the reveal. Only Admin gets it. Option ids and question ids are opaque random strings, new for every question run. | The projector laptop may be screen-shared; phones can be inspected. |
-| C4 | **Contract first.** Every event and view type lives in `src/shared/protocol.ts`. To change the API: edit it there → implement in `mock-server/` → follow the TypeScript errors → update §8 of this file → tell the backend teammate. | Two people build against one contract. |
+| C4 | **Contract first.** Every event and view type lives in `src/shared/protocol.ts`. To change the API: edit it there → implement in `server/` → follow the TypeScript errors → update §8 of this file → tell the backend teammate. | Two people build against one contract. |
 | C5 | **The quizmaster drives the flow.** Timers run only for Round 1 read/answer and Round 2 read / buzz window / spoken-answer countdown. When a timer ends, the room **holds** for the next click. The spoken-answer countdown **never** marks an answer. | SPEC v2. |
 | C6 | **Every Admin command carries `stepId`.** The server ignores a command from an old step (except `STEP_INDEPENDENT_ACTIONS`). | A double tap or two Admin phones must never skip two steps. |
 | C7 | **The look is approved and final.** Match `public/finaldesign.html` exactly. Use the tokens/classes in `src/app/globals.css` and the components in `src/components/ui/`. No new colours or fonts. Extend only in the same visual language and say so. | Sukrit approved it: "do not change anything". |
@@ -93,7 +94,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 11 Oct | Bot eyes show the game: idle / thinking / locked / right / wrong / out, computed by the server (`HostView.cast`). |
 | 11 Oct | One 1–4 answer order on the Host and every phone in Round 1 (no per-phone shuffle). |
 | 11 Oct | Host cast: up to 12 bots in a named row; 13+ as a dense wall of smaller bots without names. |
-| 12 Oct | **Backend = option 1 (§8.9):** the game server in `mock-server/` is the real backend; the teammate's Postgres/Supabase tables (`backend/db.js`) are wired in via `mock-server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
+| 12 Oct | **Backend = option 1 (§8.9):** the game server in `server/` is the real backend; the teammate's Postgres/Supabase tables (`archive/ws-backend-v1/db.js`) are wired in via `server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
 
 ---
 
@@ -112,7 +113,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
                                                              │  events + views defined in src/shared/protocol.ts
                  ┌───────────────────────────────────────────▼──────────────────────────────────────────────┐
                  │ Game server (port 3001)                                                                    │
-                 │   NOW:   mock-server/  (TypeScript, tsx)  ← complete, tested reference                     │
+                 │   NOW:   server/  (TypeScript, tsx)  ← complete, tested reference                     │
                  │          rooms.ts  sockets, roles, PIN, sending only changed views (150 ms throttle)       │
                  │          quiz.ts   ALL the rules, no socket code, injectable clock (QuizRoom class)        │
                  │          config.ts presets (event / demo) · questions.ts loads data/questions.json         │
@@ -151,24 +152,28 @@ Full rules and edge cases: `docs/SPEC.md`.
 
 ### 2.4 Folder map
 ```
-PROJECT-RULES.md            ← this file (the handoff)
-AGENTS.md / CLAUDE.md       short pointers + the must-follow rules
+README.md                   the front door: what it is, live links, run it, repo map
+docs/PROJECT-RULES.md       ← this file (the full handoff)
+AGENTS.md / CLAUDE.md       short pointers + the must-follow rules (read by AI tools; stay at the root)
 data/questions.json         the questions (MCQ, 4 options, correct = index, round 1/2/null)
 docs/SPEC.md                game rules v2.1 (source of truth for rules)
 docs/BUILD-PHASES.md        the 5 build prompts (v4)
-docs/DEPLOY.md              Supabase + Render + Vercel, step by step
+docs/DEPLOY.md              live addresses; Supabase + Render + Vercel, step by step
 render.yaml                 Render Blueprint for the game server
-mock-server/config.ts       presets: every timing and count
-mock-server/quiz.ts         all the rules (QuizRoom), no socket code
-mock-server/rooms.ts        Socket.IO glue: roles, PIN, rooms, sending views
-mock-server/server.ts       starts the Socket.IO server; validates incoming payloads
-mock-server/db.ts           saves results to Postgres/Supabase (teammate's tables) when DATABASE_URL is set
-mock-server/simulate.ts     npm run simulate: 23 rule checks with a fake clock, 100-player games
+server/index.ts             starts the game server (npm run dev:game / start:game): env, preset, database
+server/config.ts            presets: every timing and count
+server/quiz.ts              all the rules (QuizRoom), no socket code
+server/rooms.ts             Socket.IO glue: roles, PIN, rooms, sending views
+server/server.ts            the Socket.IO server; validates incoming payloads
+server/db.ts                saves results to Postgres/Supabase when DATABASE_URL is set
+server/questions.ts         loads and checks data/questions.json
+server/simulate.ts          npm run simulate: 23 rule checks with a fake clock, 100-player games
 scripts/smoke.ts            npm run smoke: whole demo game over real Socket.IO
 scripts/bots.ts             npm run bots: N fake participants
 scripts/db-check.ts         npm run db-check: a game over sockets with an in-memory Postgres; checks the saved rows
 scripts/admin-run.ts        npm run admin-run: Playwright runs a whole game from Admin + screenshots
-server/                     placeholder for the real backend (teammate)
+scripts/deploy.ts           npm run deploy: Render + Vercel
+archive/ws-backend-v1/      Lelouch's first backend prototype (raw ws). Not used; its tables live on in server/db.ts
 public/finaldesign.html     the approved design, every animation
 public/questions/           question images (Host only)
 src/shared/protocol.ts      THE CONTRACT
@@ -230,9 +235,9 @@ question centred, hint under it. At 1920 px, 1% of the width ≈ 1.2rem (`html:h
 | Motion | **motion 12** (`motion/react`), **@number-flow/react**, **canvas-confetti** | respect reduced motion |
 | QR | **qrcode.react 4** | lobby QR to `/play?code=ABCD` |
 | Fonts | `next/font/google`: Special Elite, VT323, Archivo (wdth axis) | |
-| Mock server | Node ≥ 20.9, **tsx** (`tsx watch mock-server/index.ts`) | `concurrently` runs web + game |
-| Tests | `mock-server/simulate.ts` (rules, fake clock), `scripts/smoke.ts` (real sockets), Playwright for screenshots | |
-| Game server = backend | `mock-server/` (Socket.IO, tsx) + **pg** to Supabase Postgres (`mock-server/db.ts`, the teammate's schema, on when `DATABASE_URL` is set) | decided 12 Oct, see §8.9 |
+| Game server | Node ≥ 20.9, **tsx** (`tsx watch server/index.ts`) | `concurrently` runs web + game |
+| Tests | `server/simulate.ts` (rules, fake clock), `scripts/smoke.ts` (real sockets), Playwright for screenshots | |
+| Game server = backend | `server/` (Socket.IO, tsx) + **pg** to Supabase Postgres (`server/db.ts`, the teammate's schema, on when `DATABASE_URL` is set) | decided 12 Oct, see §8.9 |
 | Hosting | Website on **Vercel**, game server on **Render** (`render.yaml`, `npm run start:game`), results in **Supabase** Postgres | live since 12 Oct; addresses and updating in `docs/DEPLOY.md` |
 
 npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `typecheck`, `simulate`, `smoke`, `bots`.
@@ -256,10 +261,10 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 
 ### Done
 - ✅ SPEC v2 → v2.1 (rules, bots, one answer order, the Look).
-- ✅ Phase 1: contract (`protocol.ts`), mock server (`quiz.ts`, `rooms.ts`), presets, `simulate` (23 checks pass), `smoke`, `bots`.
+- ✅ Phase 1: contract (`protocol.ts`), game server (`quiz.ts`, `rooms.ts`), presets, `simulate` (23 checks pass), `smoke`, `bots`.
 - ✅ Design approved: `public/finaldesign.html` (Direction E v2).
 - 🟡 Design system in code: `globals.css`, fonts, `Bot`, `BotBuilder`, `Corridor`, `TimerRing`, home page. (Written without `npm install`; Prompt 1 verifies.)
-- 🟡 Bots in the contract and mock server: `participant:bot`, `BotPicker`, `HostView.cast` moods; one 1–4 order; `result.correctText`. (`simulate` passes; `smoke`/`build` not yet run.)
+- 🟡 Bots in the contract and game server: `participant:bot`, `BotPicker`, `HostView.cast` moods; one 1–4 order; `result.correctText`. (`simulate` passes; `smoke`/`build` not yet run.)
 - 🟡 Temporary `/host`, `/play`, `/admin` restyled in the final look, `/host` with the projector stage (`TempStage`).
 
 ### Next
@@ -270,7 +275,7 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 5. ⬜ **Prompt 5, event-proofing** (failure drills, 100-bot scale test, design QA, run sheet, backend notes, deploy notes).
 
 ### Not in a phase yet
-- 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `mock-server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed Render server; merged into `main` on 12 Oct (branches: `main`, `frontend`, `backend`). Live test against the real Supabase passed 12 Oct.
+- 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed Render server; merged into `main` on 12 Oct (branches: `main`, `frontend`, `backend`). Live test against the real Supabase passed 12 Oct.
 - ⬜ Write the **real Hermes questions** (round 1 count, 10+ buzzer questions plus spares) into `data/questions.json`.
 - ✅ **Deployed 12 Oct:** website https://hermes-quiz-nine.vercel.app (Vercel), game server https://hermes-quiz-game.onrender.com (Render, from `main`), results in Supabase. Live end-to-end test passed (41 checks, rows in Supabase). Details and how to update: `docs/DEPLOY.md`. Open: link the Vercel project to GitHub (needs the Vercel GitHub app on the repo owner's account) so the website redeploys on push.
 - ⬜ CSI club logo in a corner (optional, "later").
@@ -316,13 +321,13 @@ Copilot and Gemini read automatically. The full version is here.
 ### 6.2 Roles (one agent can hold several; never two agents on the same files at once)
 | Role | Owns (may edit) | Must not edit | Done when |
 |---|---|---|---|
-| **Contract & game-rules agent** | `src/shared/protocol.ts`, `mock-server/**`, `data/questions.json`, `docs/SPEC.md`, §8 of this file | screens | `simulate` + `smoke` pass with new tests; §8 updated |
+| **Contract & game-rules agent** | `src/shared/protocol.ts`, `server/**`, `data/questions.json`, `docs/SPEC.md`, §8 of this file | screens | `simulate` + `smoke` pass with new tests; §8 updated |
 | **Admin screen agent** | `src/app/admin/**`, `src/components/admin/**`, `src/stores/adminStore.ts`, `src/lib/adminLabels.ts` | contract (ask the contract agent) | Prompt 2 verified |
 | **Participant screen agent** | `src/app/play/**`, `src/components/play/**`, `src/stores/participantStore.ts` | contract | Prompt 3 verified |
 | **Host screen agent** | `src/app/host/**`, `src/components/host/**`, `src/stores/hostStore.ts`, sounds | contract | Prompt 4 verified |
 | **Design-system agent** | `src/app/globals.css`, `src/app/layout.tsx`, `src/components/ui/**`, `public/finaldesign.html` (read-only unless Sukrit approves a change) | screens' logic | screens still match the reference |
 | **QA / event-proofing agent** | `scripts/**`, `docs/RUN-SHEET.md`, `docs/BACKEND-NOTES.md` | product code except bug fixes it reports | Prompt 5 verified |
-| **Backend agent (teammate's side)** | `server/**` or `backend/**` | `src/**`, `mock-server/**` | passes `smoke` pointed at the real server (§8.9) |
+| **Backend agent (teammate's side)** | `server/db.ts`, `server/index.ts`, `server/config.ts`, `render.yaml`, `docs/DEPLOY.md` (rules in `server/quiz.ts` with the contract agent) | `src/**` | `simulate`, `smoke` and `db-check` pass; the live server's `/health` is ok |
 
 ### 6.3 Hand-off protocol between agents or models
 - Leave the tree **building and green**. If you must stop half-way, say so at the top of your report.
@@ -355,7 +360,7 @@ Copilot and Gemini read automatically. The full version is here.
 
 The authoritative definition is **`src/shared/protocol.ts`** (TypeScript types with comments).
 This section explains it for anyone building either side. **The real backend must implement
-exactly this**; `mock-server/` is the working reference.
+exactly this**; `server/` is the working reference.
 
 ### 8.1 Transport
 - **Socket.IO v4** server. Default URL: same host as the website, **port 3001**
@@ -393,7 +398,7 @@ initial"), `name-invalid` (empty or over 20 chars after trimming), `quiz-ended`,
 | `admin:state` | `AdminView` (includes the correct answer) | every signed-in Admin socket |
 | `room:closed` | `{ reason }` | everyone in a room that's gone (new room, abandoned 30 min after the Host left with no Admin) |
 
-Send a view **whenever it changes, only to the sockets whose view changed** (the mock throttles
+Send a view **whenever it changes, only to the sockets whose view changed** (the server throttles
 phone updates to 150 ms). Every view carries `serverNow` (ms).
 
 ### 8.4 The three views (shape summary)
@@ -471,7 +476,10 @@ Admin  → revealAnswer → Host r1Reveal {correctText} · phones {kind:"result"
 { "stepId": 12, "action": { "type": "markWrong" } }
 ```
 
-### 8.9 ⚠️ The current real backend does not match this contract yet
+### 8.9 The first backend prototype (resolved 12 Oct: the backend is `server/`)
+*(History: this section is resolved, see "Decided 12 Oct 2026" below. The prototype it describes now
+lives in `archive/ws-backend-v1/`; the paths below are where it used to be.)*
+
 The teammate's `backend/` (on `main` in `Leleouch14/jackbox_2.0`, last checked 11 Oct 2026) is a
 different, earlier design:
 | | Contract (frontend) | `backend/server.js` today |
@@ -484,13 +492,13 @@ different, earlier design:
 | Questions | `data/questions.json` `{id, round, text, image, options[4], correct}` | `backend/questions.json` `{question, options, correctOption}` |
 | Extras | bots, moods, reconnect, wake lock, CSV | Postgres (`DATABASE_URL`, Supabase) / sqlite tables `rooms`, `players`, `game_history` |
 
-**Decided 12 Oct 2026: option 1.** What was done: `mock-server/db.ts` ports `backend/db.js` (same `rooms`, `players`, `game_history` tables, same `DATABASE_URL`, SSL for Supabase). It only **adds** columns: `players.name/status/round1_rank/buzzer_points`, `game_history.round/answer_ms`. `rooms.room_code` = code + creation time in UTC (e.g. `KJSC-2026-10-12T13:35`) so codes reused on another night never mix. Writes are queued in the background (a room at most every 2 s, answers as each question is scored, removed again on void/restart), and a DB failure is logged and never stops the quiz. `backend/` on `main` is untouched.
+**Decided 12 Oct 2026: option 1.** What was done: `server/db.ts` ports `archive/ws-backend-v1/db.js` (same `rooms`, `players`, `game_history` tables, same `DATABASE_URL`, SSL for Supabase). It only **adds** columns: `players.name/status/round1_rank/buzzer_points`, `game_history.round/answer_ms`. `rooms.room_code` = code + creation time in UTC (e.g. `KJSC-2026-10-12T13:35`) so codes reused on another night never mix. Writes are queued in the background (a room at most every 2 s, answers as each question is scored, removed again on void/restart), and a DB failure is logged and never stops the quiz. `backend/` on `main` is untouched.
 
 **Options that were considered (recommended first):**
-1. **Recommended:** the real server *is* `mock-server/` (already complete and tested against this
+1. **Recommended:** the real server *is* `server/` (already complete and tested against this
    contract): deploy it to Render as-is, and add the teammate's Postgres persistence (`db.js`:
    save room state, scores, answer log) behind `quiz.ts` without changing the contract.
-2. Teammate rewrites `backend/` to Socket.IO implementing §8 exactly, using `mock-server/` as the
+2. Teammate rewrites `backend/` to Socket.IO implementing §8 exactly, using `server/` as the
    reference, and proves it by pointing `npm run smoke` at it.
 3. Not recommended this close to the event: change the frontend to the raw-ws protocol.
 Whichever is chosen: record it in §1.3 and §4.

@@ -1,121 +1,121 @@
 # Hermes Quiz
 
-A live MCQ quiz for 60–100 people at a club event. Questions go up on the
-projector, everyone answers on their phone, the fastest 6 make a buzzer-round
-final, and a quizmaster runs every step from an admin panel.
-Rules: [docs/SPEC.md](docs/SPEC.md). Build plan: [docs/BUILD-PHASES.md](docs/BUILD-PHASES.md).
-**AI handoff (read first): [PROJECT-RULES.md](PROJECT-RULES.md).**
+A live multiple-choice quiz for 60–100 people in one hall, run by the CSI student chapter at
+KJSCE after the Hermes AI agent workshop. Questions go up on the **projector**, everyone answers
+on their **phone**, the top 6 play a **buzzer-round final**, and a **quizmaster** runs every step
+from an admin panel.
 
-> **Status: build phase 1 of 5, plus the design foundation.** The game engine,
-> contract and tests are done, and the approved look ("Server Corridor, Lights
-> Low") is in the design system. `/host`, `/play` and `/admin` are still plain
-> temporary test pages (now with bots); the real screens arrive in phases 2–4.
->
-> **The design:** open [public/finaldesign.html](public/finaldesign.html), or
-> http://localhost:3000/finaldesign.html while `npm run dev` runs.
+| | Live |
+|---|---|
+| Projector (Host) | https://hermes-quiz-nine.vercel.app/host |
+| Quizmaster (Admin) | https://hermes-quiz-nine.vercel.app/admin (PIN: ask Sukrit) |
+| Phones (Participant) | https://hermes-quiz-nine.vercel.app/play (or scan the QR on the Host) |
+| Game server | https://hermes-quiz-game.onrender.com ([`/health`](https://hermes-quiz-game.onrender.com/health) says `ok`) |
 
-## Run it locally
+**Status (12 Oct 2026):** the game engine, the Admin screen and the deployment are done. The phone
+and projector screens are still simple test pages in the final colours; they're next
+(build phases 3 and 4). The quiz still uses 3 demo questions.
 
-Needs **Node.js 20.9+**. In PowerShell, in this folder:
+---
+
+## How it works
+
+```
+ Projector  /host ─┐
+ Phones     /play ─┼──►  Website (Next.js)  ──Socket.IO──►  Game server (server/)  ──►  Supabase
+ Quizmaster /admin─┘     on Vercel                          on Render                   results
+```
+
+- **The game server owns the game:** timers, scores, the cut, the buzzers. Screens only send
+  actions ("tapped option 2", "Reveal answer") and draw what the server sends back.
+- **The quizmaster drives it:** nothing moves on by itself except the short read/answer timers.
+- **The contract** between screens and server is one file:
+  [`src/shared/protocol.ts`](src/shared/protocol.ts) (every event and view, commented).
+- **Supabase** stores results (rooms, players, every answer). If it's down, the quiz still runs.
+
+The rules of the game: [`docs/SPEC.md`](docs/SPEC.md).
+
+## Run it on your laptop
+
+Needs **Node.js 20.9+**. In a terminal (PowerShell is fine) in this folder:
 
 ```powershell
 npm install
 npm run dev
 ```
 
-`npm run dev` starts the website (port 3000) and the **mock game server**
-(port 3001) with the short **demo** preset. The terminal prints the links.
+That starts the website on port 3000 and the game server on port 3001 (short **demo** quiz).
 
-| Screen | Address | Who uses it |
-|---|---|---|
-| **Host** | http://localhost:3000/host | the projector everyone sees (no game controls) |
-| **Admin** | http://localhost:3000/admin (PIN **1234**) | the quizmaster: runs every step |
-| **Participant** | shown on the Host, e.g. http://192.168.1.5:3000/play | each person's phone, same Wi-Fi |
+| Open | For |
+|---|---|
+| http://localhost:3000/host | the projector: creates a room and shows its code |
+| http://localhost:3000/admin | the quizmaster: room code + PIN **1234** (local default) |
+| http://localhost:3000/play | a phone; open a few tabs, each is a player |
 
-**Testing alone:** open `/host`, then `/admin` (room code from the Host, PIN 1234),
-then `/play` in two or three more tabs (each tab is its own participant). Fill
-the room with fake participants from a second terminal:
+Fill the room with fake players from a second terminal: `npm run bots -- --room ABCD --count 20`.
+To save results locally too, put `DATABASE_URL=...` in `.env.local` (see [`.env.example`](.env.example)).
 
-```powershell
-npm run bots -- --room ABCD --count 20
+## What's where
+
+```
+src/                    the website (Next.js 16, React 19, Tailwind 4, Zustand)
+  app/                  pages: /host, /play, /admin, globals.css (the design system)
+  components/admin/     the Admin screen
+  components/ui/        Bot, Corridor, TimerRing, BotBuilder (the approved look)
+  components/temp/      temporary /host and /play pages (replaced in phases 3–4)
+  shared/protocol.ts    THE CONTRACT between screens and server
+  stores/, lib/         socket connection and state per screen, helpers
+server/                 the game server (Node + Socket.IO), what runs on Render
+  quiz.ts               every game rule (no network code)
+  rooms.ts, server.ts   sockets, PIN, sending views
+  db.ts                 saving results to Supabase
+  config.ts             timings and counts (demo / event presets)
+data/questions.json     the questions
+scripts/                tests, fake players, deploy
+docs/                   rules, deployment, the full handoff
+public/finaldesign.html the approved design (open it in a browser)
+archive/                the first backend prototype, not used (see archive/README.md)
 ```
 
-Windows Firewall may ask about Node.js the first time; allow it on private
-networks so phones can connect.
+## Working on it
 
-## Presets
+**Branches:** `main` is the whole app and what's live. Work on **`frontend`** (screens, `src/`) or
+**`backend`** (`server/`), then merge into `main` with a pull request once these all pass:
 
-All timings and counts live in [mock-server/config.ts](mock-server/config.ts).
+```powershell
+npm run typecheck; npm run build; npm run simulate; npm run smoke
+```
 
-| Preset | Round 1 | Finalists | Buzzer questions | Start with |
-|---|---|---|---|---|
-| **demo** (default) | the 3 demo questions | top 3 | 3 | `npm run dev` |
-| **event** | every Round 1 question | top 6 | 10 | `npm run dev:event` |
-
-Both use the event timings: 8s read + 8s answer in Round 1; 5s read, 15s buzz
-window, 10s to answer and a 10s reopen window in the buzzer round. You can also
-set `GAME_PRESET=event` (see [.env.example](.env.example)).
-
-## Questions
-
-All questions live in [data/questions.json](data/questions.json): MCQ only, exactly 4
-options, `correct` is the index (0–3) of the right one, `round` is `1`, `2` or `null`
-(either). Images go in `public/questions/` and show on the Host only. Options are
-shuffled once per question automatically (the Host and every phone show the same
-order, numbered 1–4). The server checks the file when it starts and
-lists every problem it finds.
-
-## Scripts
+Ground rules (details in [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md)):
+- **Contract first.** Changing what screens and server send each other? Edit
+  `src/shared/protocol.ts`, implement it in `server/`, then fix the TypeScript errors.
+- **No answer leaks.** Phones and the projector never get the correct answer before the reveal
+  (`simulate` and `smoke` check this).
+- **The look is final.** Match `public/finaldesign.html`; ask Sukrit before changing how anything looks.
+- **Never commit secrets.** Passwords and keys go in `.env.local`, which git ignores.
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | website + mock game server, demo preset |
-| `npm run dev:event` | the same with the full event preset |
-| `npm run bots -- --room ABCD --count 80` | fake participants join a running quiz (options in [scripts/bots.ts](scripts/bots.ts)) |
-| `npm run simulate` | plays full quizzes (4 to 100 participants) and every edge case with a fake clock, checks every rule (~2s) |
-| `npm run smoke` | starts its own server and plays a whole demo quiz over real Socket.IO: Host, 2 Admins, 4 phones (~8s) |
-| `npm run typecheck` | TypeScript across the whole project |
-| `npm run build` | production build of the website |
+| `npm run dev` / `npm run dev:event` | website + game server, demo / full event quiz |
+| `npm run bots -- --room ABCD --count 80` | fake players join a running quiz (`--url` for the live server) |
+| `npm run simulate` | plays full quizzes with a fake clock and checks every rule (~2 s) |
+| `npm run smoke` | a whole quiz over real sockets: Host, 2 Admins, 4 phones (~8 s) |
+| `npm run db-check` | a quiz with saving on (in-memory database), checks the saved rows |
+| `npm run admin-run` | a real browser runs a whole quiz from Admin, with screenshots (needs `npm run dev`) |
+| `npm run deploy` | puts `main` live on Render and Vercel (keys in `.env.local`) |
 
-`typecheck`, `build`, `simulate` and `smoke` must all pass before every commit.
+## Questions
 
-## How it fits together
+All in [`data/questions.json`](data/questions.json): exactly 4 options each, `correct` is the index
+(0–3) of the right one, `round` is `1`, `2` or `null` (either round). Images go in
+`public/questions/` and only show on the projector. The server checks the file when it starts.
 
-```
- phones ──answer / buzz / back──▶ game server ──views──▶ Host (projector)
-   ▲                                  │  ▲
-   └──── each phone's own view ───────┘  └── commands ── Admin (quizmaster)
-```
+## Docs
 
-- The **server owns the game**: timers, scoring, the cut, shuffling, buzzers.
-  Screens send actions and draw the view they get back.
-- The **quizmaster drives the flow**. Timers only run for Round 1's read and
-  answer, and the buzzer round's read, buzz window and answer countdown. When a
-  timer ends, everything holds for the next click.
-- Every Admin command carries the step it was sent from (`stepId`), so a double
-  tap or a second Admin device can never skip two steps.
-- [src/shared/protocol.ts](src/shared/protocol.ts) is the contract: every event and view,
-  commented for the backend teammate.
-- `mock-server/` runs the whole quiz so the frontend works on its own.
-  `server/` is where the real backend goes.
-
-## Folder map
-
-```
-data/questions.json          the questions
-docs/                        SPEC (rules) and BUILD-PHASES (the 5 build prompts)
-mock-server/config.ts        presets: every timing and count
-mock-server/quiz.ts          all the rules, no socket code
-mock-server/rooms.ts         Socket.IO glue: roles, PIN, sending views
-mock-server/server.ts        starts a server (used by dev and smoke)
-mock-server/simulate.ts      npm run simulate
-scripts/                     smoke test and bots
-server/                      real backend (teammate)
-src/shared/protocol.ts       the contract
-src/app/                     pages: / (home), /host, /play, /admin
-src/components/ui/           Bot, BotBuilder, Corridor, TimerRing (the approved design)
-src/components/temp/         phase 1 temporary test pages (replaced in phases 2–4)
-public/finaldesign.html      the approved design, with every animation
-src/stores/                  Zustand stores: socket events in, state out
-src/lib/                     socket, session, countdown, wake lock, labels, helpers
-```
+| | |
+|---|---|
+| [`docs/SPEC.md`](docs/SPEC.md) | the game rules, step by step |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | what's live where, and how to update or redo the deployment |
+| [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md) | the full handoff: constraints, architecture, API, to-do |
+| [`docs/BUILD-PHASES.md`](docs/BUILD-PHASES.md) | the 5 build phases |
+| [`public/finaldesign.html`](public/finaldesign.html) | the approved design ("Server Corridor, Lights Low") |

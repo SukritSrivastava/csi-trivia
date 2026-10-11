@@ -1,6 +1,6 @@
 /**
  * Saves results to Postgres (Supabase), using the tables from the backend
- * teammate's backend/db.js on main: rooms, players, game_history. Only on when
+ * teammate's archive/ws-backend-v1/db.js: rooms, players, game_history. Only on when
  * DATABASE_URL is set. Columns are only ever ADDED to their schema (name,
  * status, ranks, buzzer points, round), so their queries keep working.
  *
@@ -23,7 +23,7 @@ export interface Queryable {
 }
 
 const SCHEMA = [
-  // The teammate's tables, exactly as backend/db.js creates them.
+  // The teammate's tables, exactly as archive/ws-backend-v1/db.js creates them.
   `CREATE TABLE IF NOT EXISTS rooms (
      room_code TEXT PRIMARY KEY,
      game_state TEXT,
@@ -85,7 +85,7 @@ export class Database {
       max: 3,
       connectionTimeoutMillis: 5000,
     });
-    // An idle connection dropping must not take the quiz down (backend/db.js exits here).
+    // An idle connection dropping must not take the quiz down (archive/ws-backend-v1/db.js exits here).
     pool.on("error", (error) => log?.(`[db] connection error: ${error.message}`));
     return new Database(pool, log);
   }
