@@ -1,0 +1,715 @@
+@import "tailwindcss";
+
+/*
+ * HERMES QUIZ DESIGN SYSTEM: "Server Corridor, Lights Low" (approved 11 Oct 2026).
+ * The full reference page, with every animation, is public/finaldesign.html
+ * (open http://localhost:3000/finaldesign.html while `npm run dev` runs).
+ *
+ * The look: a dark server-room corridor in one-point perspective (inspired by
+ * Jackbox's Murder Trivia hallway). Rack walls with dim mint and red LEDs, a red
+ * alarm pulse from above, dark pools behind the text, heavy vignette.
+ * Typewriter type for words, terminal digits for numbers, yellow answer numbers.
+ * Every participant is a robot (colour + head) whose eyes react to the game.
+ *
+ * Use the tokens as Tailwind classes: bg-void, text-ghost, border-mint, text-amber,
+ * font-type, font-term, and so on.
+ */
+@theme {
+  /* ---- Server Corridor palette */
+  --color-void: #05080a; /* page background, darkest */
+  --color-rack: #091013; /* corridor walls */
+  --color-panel: #0b1114; /* cards, phone background top */
+  --color-deep: #132027; /* phone background bottom, raised surfaces */
+  --color-line: #1e3036; /* hairlines, borders on dark */
+  --color-mint: #6cf0b0; /* the room's light: outlines, glows, LEDs, primary actions */
+  --color-mint-soft: #bfe9d6; /* secondary text */
+  --color-ghost: #e7fff4; /* main text on dark */
+  --color-bright: #f1fff8; /* Host question and answer text */
+  --color-amber: #ffb627; /* answer numbers 1–4, counts: the only warm colour */
+  --color-alarm: #d6334d; /* the alarm pulse, the timer wedge */
+  --color-wrong: #ff4d5e; /* wrong answers, X eyes */
+  --color-clock: #fffbf0; /* timer face */
+  --color-fog: #7d9690; /* muted labels, disabled */
+
+  /* ---- Legacy marigold tokens: only the Phase 1 temporary pages use these. Don't use in new screens. */
+  --color-ink: #1b1340;
+  --color-ink-soft: #4a3f7a;
+  --color-marigold: #ffb627;
+  --color-marigold-deep: #f29a00;
+  --color-paper: #fffbf0;
+  --color-side-a: #ff3d7f;
+  --color-side-b: #00a6a6;
+
+  /* ---- Type */
+  --font-type: var(--font-special-elite), "Courier New", ui-monospace, monospace; /* words: questions, answers, names, labels */
+  --font-term: var(--font-vt323), ui-monospace, Menlo, monospace; /* numbers: answer keys, timer, counts, room code */
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif; /* Admin dense data only (tables, small labels) */
+}
+
+html {
+  overscroll-behavior: none; /* no pull-to-refresh mid-game */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The TV screen scales everything with its width, so it reads the same on a
+   laptop and on a 55" TV. Everything on /host is sized in rem.
+   At 1920 px wide, 1rem ≈ 16 px, and 1% of the screen width ≈ 1.2rem. */
+html:has(.host-root) {
+  font-size: clamp(11px, 0.834vw, 34px);
+}
+
+@layer components {
+  /* Archivo has a width axis (legacy pages). */
+  .type-wide {
+    font-stretch: 125%;
+  }
+  .type-narrow {
+    font-stretch: 85%;
+  }
+
+  /* ---- Legacy (Phase 1 temporary pages only) */
+  .plate {
+    background: var(--color-paper);
+    border: 0.25rem solid var(--color-ink);
+    border-radius: 1.25rem;
+    box-shadow: 0.5rem 0.5rem 0 var(--color-ink);
+  }
+  .press {
+    border: 3px solid var(--color-ink);
+    border-radius: 16px;
+    box-shadow: 0 5px 0 var(--color-ink);
+    transition:
+      transform 80ms ease-out,
+      box-shadow 80ms ease-out;
+  }
+  .press:active:not(:disabled) {
+    transform: translateY(4px);
+    box-shadow: 0 1px 0 var(--color-ink);
+  }
+  .press:disabled {
+    opacity: 0.4;
+    transform: translateY(5px);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
+  /* ======================================================================
+     THE CORRIDOR (Host background; <Corridor /> renders these layers)
+     ====================================================================== */
+  .corridor {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--color-void);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .corridor > i {
+    position: absolute;
+    inset: 0;
+    display: block;
+  }
+  /* One-point perspective: four trapezoids meeting a dark end wall at the centre. */
+  .corridor-ceil {
+    clip-path: polygon(0 0, 100% 0, 58% 40%, 42% 40%);
+    background: linear-gradient(#030506, #0a1215);
+  }
+  .corridor-floor {
+    clip-path: polygon(0 100%, 100% 100%, 58% 60%, 42% 60%);
+    background:
+      repeating-linear-gradient(90deg, transparent 0 9%, rgb(108 240 176 / 0.05) 9% 9.4%),
+      repeating-linear-gradient(0deg, transparent 0 7%, rgb(108 240 176 / 0.05) 7% 7.6%),
+      linear-gradient(#0e171b, #05080a);
+  }
+  .corridor-left,
+  .corridor-right {
+    background:
+      radial-gradient(circle, rgb(108 240 176 / 0.45) 0 0.19rem, transparent 0.34rem) 0 0 / 3.36rem 2.4rem,
+      repeating-linear-gradient(90deg, #091013 0 5.5%, #030506 5.5% 6.5%),
+      #091013;
+  }
+  .corridor-left {
+    clip-path: polygon(0 0, 42% 40%, 42% 60%, 0 100%);
+  }
+  .corridor-right {
+    clip-path: polygon(100% 0, 58% 40%, 58% 60%, 100% 100%);
+    background:
+      radial-gradient(circle, rgb(214 51 77 / 0.55) 0 0.19rem, transparent 0.34rem) 1.2rem 0.72rem / 4.32rem 3.12rem,
+      radial-gradient(circle, rgb(108 240 176 / 0.45) 0 0.19rem, transparent 0.34rem) 0 0 / 3.36rem 2.4rem,
+      repeating-linear-gradient(90deg, #091013 0 5.5%, #030506 5.5% 6.5%),
+      #091013;
+  }
+  .corridor-end {
+    clip-path: polygon(42% 40%, 58% 40%, 58% 60%, 42% 60%);
+    background: radial-gradient(#24443e, #030506 70%);
+  }
+  .corridor-alarm {
+    background: radial-gradient(ellipse at 50% 0%, rgb(214 51 77 / 0.28), transparent 55%);
+    animation: corridor-alarm 3.2s infinite;
+  }
+  /* Dark pools behind the text so it reads from the back row. */
+  .corridor-scrim-split {
+    background:
+      radial-gradient(ellipse 30% 30% at 25% 45%, rgb(3 5 6 / 0.82), transparent 100%),
+      radial-gradient(ellipse 30% 36% at 74% 50%, rgb(3 5 6 / 0.82), transparent 100%);
+  }
+  .corridor-scrim-center {
+    background: radial-gradient(ellipse 45% 30% at 50% 50%, rgb(3 5 6 / 0.85), transparent 100%);
+  }
+  .corridor-scrim-full {
+    background: radial-gradient(ellipse 60% 55% at 50% 50%, rgb(3 5 6 / 0.85), transparent 100%);
+  }
+  .corridor-vignette {
+    background: radial-gradient(ellipse at 50% 50%, transparent 35%, rgb(0 0 0 / 0.85) 100%);
+  }
+
+  /* ======================================================================
+     HOST TYPE (sizes in rem: the Host scales rem with screen width)
+     ====================================================================== */
+  /* Question: typewriter, tilted like it was written by the host, soft mint glow. */
+  .host-q {
+    font-family: var(--font-type);
+    color: var(--color-bright);
+    font-size: 4.2rem;
+    line-height: 1.08;
+    text-wrap: balance;
+    transform: rotate(-3deg);
+    text-shadow:
+      0 0 1.2rem rgb(108 240 176 / 0.45),
+      0 0.3rem 0.7rem #000;
+  }
+  .host-q-center {
+    font-size: 6rem;
+    text-align: center;
+    transform: rotate(-2deg);
+  }
+  /* Answers: staggered tilt, odd lines left, even lines right. */
+  .host-opts {
+    display: flex;
+    flex-direction: column;
+    gap: 1.9rem;
+    font-family: var(--font-type);
+    font-size: 3rem;
+    color: var(--color-bright);
+    text-shadow: 0 0.24rem 0.6rem #000;
+  }
+  .host-opts > :nth-child(odd) {
+    transform: rotate(-1.5deg);
+  }
+  .host-opts > :nth-child(even) {
+    transform: rotate(1.5deg);
+    margin-left: -3.6rem;
+  }
+  .host-opt {
+    display: flex;
+    align-items: center;
+    gap: 1.4rem;
+    transition: opacity 0.3s;
+  }
+  /* The yellow answer number: the only warm colour on screen. */
+  .opt-num {
+    font-family: var(--font-term);
+    color: var(--color-amber);
+    font-size: 6.5rem;
+    line-height: 1;
+    text-shadow: 0 0 1.2rem rgb(255 182 39 / 0.6);
+  }
+  .host-opt[data-dim="true"] {
+    opacity: 0.3;
+  }
+  .host-opt[data-correct="true"] .opt-num {
+    color: var(--color-mint);
+    text-shadow: 0 0 1.2rem var(--color-mint);
+  }
+  .host-count {
+    font-family: var(--font-type);
+    font-size: 2.4rem;
+    color: var(--color-mint-soft);
+  }
+  .host-count b {
+    font-family: var(--font-term);
+    font-weight: 400;
+    font-size: 4.3rem;
+    color: var(--color-amber);
+  }
+  .host-hint {
+    font-family: var(--font-type);
+    font-size: 2.4rem;
+    color: var(--color-mint-soft);
+  }
+  .host-banner {
+    font-family: var(--font-term);
+    font-size: 4rem;
+    color: var(--color-mint);
+    text-shadow: 0 0 1.2rem var(--color-mint);
+  }
+  .host-watermark {
+    font-family: var(--font-term);
+    color: var(--color-mint);
+    font-size: 1.6rem;
+    opacity: 0.7;
+  }
+  .host-name {
+    font-family: var(--font-type);
+    color: var(--color-ghost);
+    font-size: 1.6rem;
+  }
+
+  /* ======================================================================
+     PHONE (Participant)
+     ====================================================================== */
+  .phone-bg {
+    background: linear-gradient(var(--color-panel), var(--color-deep));
+    color: var(--color-ghost);
+    font-family: var(--font-type);
+  }
+  /* Answer button: mint outline on a faint mint wash. */
+  .phone-opt {
+    display: flex;
+    align-items: center;
+    min-height: 3.5rem;
+    padding: 0.6rem 1rem;
+    border: 2px solid var(--color-mint);
+    border-radius: 0.9rem;
+    background: rgb(108 240 176 / 0.07);
+    color: var(--color-ghost);
+    font-family: var(--font-type);
+    line-height: 1.15;
+    text-align: left;
+    transition:
+      transform 80ms ease-out,
+      background 120ms;
+  }
+  .phone-opt:active:not(:disabled) {
+    transform: scale(0.98);
+    background: rgb(108 240 176 / 0.18);
+  }
+  .phone-opt[aria-pressed="true"] {
+    background: var(--color-mint);
+    color: var(--color-void);
+  }
+  .phone-opt:disabled:not([aria-pressed="true"]) {
+    opacity: 0.35;
+  }
+  /* Solid mint action (LOCK IN, BUZZ when live). */
+  .phone-go {
+    border: 2px solid var(--color-mint);
+    background: var(--color-mint);
+    color: var(--color-void);
+    font-family: var(--font-term);
+    font-size: 1.9rem;
+    line-height: 1;
+    border-radius: 0.9rem;
+    padding: 0.7rem 1rem;
+    text-align: center;
+  }
+  .phone-go:disabled {
+    opacity: 0.4;
+  }
+  .phone-result {
+    font-family: var(--font-term);
+    font-size: 3.2rem;
+    line-height: 1;
+    color: var(--color-mint);
+    text-shadow: 0 0 6px var(--color-mint);
+  }
+  .phone-result[data-bad="true"] {
+    color: var(--color-wrong);
+    text-shadow: 0 0 6px var(--color-wrong);
+  }
+
+  /* ======================================================================
+     THE TIMER (<TimerRing />): a clock face with a red wedge for time used
+     ====================================================================== */
+  .clock {
+    position: relative;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 0.6rem solid var(--color-void);
+    box-shadow:
+      0.72rem 0.72rem 0 var(--color-mint),
+      0 0 2.9rem rgb(108 240 176 / 0.35);
+    font-family: var(--font-term);
+    line-height: 1;
+    color: var(--color-void);
+  }
+
+  /* ======================================================================
+     THE BOT (<Bot />). Size it with font-size: 1em = the bot's width.
+     data-head: box | round | antenna | bolts | horns | ears | dome | visor
+     data-mood: idle | thinking | locked | right | wrong | out
+     --c: the bot's colour. --d: animation delay, so a wall of bots doesn't blink in sync.
+     ====================================================================== */
+  .bot {
+    --c: #6cf0b0;
+    --d: 0s;
+    width: 1em;
+    height: 1em;
+    position: relative;
+    display: inline-block;
+    flex: none;
+  }
+  .bot i {
+    display: block;
+    font-style: normal;
+  }
+  .bot .bot-head {
+    position: absolute;
+    inset: 0.1em 0.02em 0;
+    background: color-mix(in srgb, var(--c) 20%, #081014);
+    border: 0.06em solid var(--c);
+    border-radius: 0.22em;
+    box-shadow:
+      0 0 0.22em color-mix(in srgb, var(--c) 55%, transparent),
+      inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
+    transition:
+      border-color 0.3s,
+      box-shadow 0.3s,
+      filter 0.4s;
+  }
+  .bot[data-head="round"] .bot-head {
+    border-radius: 50%;
+  }
+  .bot[data-head="dome"] .bot-head {
+    border-radius: 0.5em 0.5em 0.16em 0.16em;
+  }
+  .bot[data-head="antenna"] .bot-head::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -0.24em;
+    width: 0.05em;
+    height: 0.2em;
+    background: var(--c);
+    transform: translateX(-50%);
+  }
+  .bot[data-head="antenna"] .bot-head::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -0.34em;
+    width: 0.13em;
+    height: 0.13em;
+    border-radius: 50%;
+    background: var(--c);
+    transform: translateX(-50%);
+    box-shadow: 0 0 0.15em var(--c);
+    animation: bot-pulse 1.6s infinite var(--d);
+  }
+  .bot[data-head="bolts"] .bot-head::before,
+  .bot[data-head="bolts"] .bot-head::after {
+    content: "";
+    position: absolute;
+    top: 38%;
+    width: 0.1em;
+    height: 0.2em;
+    background: var(--c);
+    border-radius: 0.03em;
+  }
+  .bot[data-head="bolts"] .bot-head::before {
+    left: -0.15em;
+  }
+  .bot[data-head="bolts"] .bot-head::after {
+    right: -0.15em;
+  }
+  .bot[data-head="horns"] .bot-head::before,
+  .bot[data-head="horns"] .bot-head::after {
+    content: "";
+    position: absolute;
+    top: -0.2em;
+    border-left: 0.08em solid transparent;
+    border-right: 0.08em solid transparent;
+    border-bottom: 0.18em solid var(--c);
+  }
+  .bot[data-head="horns"] .bot-head::before {
+    left: 0.1em;
+    transform: rotate(-14deg);
+  }
+  .bot[data-head="horns"] .bot-head::after {
+    right: 0.1em;
+    transform: rotate(14deg);
+  }
+  .bot[data-head="ears"] .bot-head {
+    border-radius: 0.3em 0.3em 0.22em 0.22em;
+  }
+  .bot[data-head="ears"] .bot-head::before,
+  .bot[data-head="ears"] .bot-head::after {
+    content: "";
+    position: absolute;
+    top: -0.14em;
+    width: 0.2em;
+    height: 0.2em;
+    border: 0.05em solid var(--c);
+    border-radius: 50%;
+    background: inherit;
+  }
+  .bot[data-head="ears"] .bot-head::before {
+    left: -0.04em;
+  }
+  .bot[data-head="ears"] .bot-head::after {
+    right: -0.04em;
+  }
+  .bot .bot-eyes {
+    position: absolute;
+    left: 0.2em;
+    right: 0.2em;
+    top: 0.4em;
+    height: 0.24em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 1;
+  }
+  .bot .bot-eye {
+    width: 0.22em;
+    height: 0.22em;
+    border-radius: 50%;
+    background: #effff8;
+    position: relative;
+    box-shadow: 0 0 0.12em var(--c);
+    animation: bot-blink 4.2s infinite var(--d);
+    transition: height 0.2s;
+  }
+  .bot .bot-pupil {
+    position: absolute;
+    width: 0.1em;
+    height: 0.1em;
+    border-radius: 50%;
+    background: #05080a;
+    left: 0.06em;
+    top: 0.06em;
+    animation: bot-look 5.5s infinite var(--d);
+  }
+  .bot .bot-eye::before,
+  .bot .bot-eye::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 0.27em;
+    height: 0.055em;
+    background: #ff4d5e;
+    border-radius: 0.03em;
+    opacity: 0;
+  }
+  .bot .bot-eye::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+  }
+  .bot .bot-eye::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+  }
+  .bot[data-head="visor"] .bot-eyes {
+    background: rgb(0 0 0 / 0.55);
+    outline: 0.045em solid var(--c);
+    border-radius: 0.08em;
+    left: 0.12em;
+    right: 0.12em;
+    padding: 0 0.06em;
+  }
+  .bot .bot-mouth {
+    position: absolute;
+    left: 0.36em;
+    right: 0.36em;
+    bottom: 0.14em;
+    height: 0.045em;
+    background: var(--c);
+    border-radius: 1em;
+    opacity: 0.7;
+    transition: all 0.25s;
+  }
+
+  /* ---- moods */
+  .bot[data-mood="thinking"] .bot-pupil {
+    animation: bot-dart 0.7s infinite alternate var(--d);
+  }
+  .bot[data-mood="locked"] .bot-eye {
+    height: 0.05em;
+    border-radius: 0.05em;
+    animation: none;
+  }
+  .bot[data-mood="locked"] .bot-pupil {
+    opacity: 0;
+  }
+  .bot[data-mood="locked"] .bot-head {
+    animation: bot-breathe 2.4s infinite var(--d);
+  }
+  .bot[data-mood="right"] {
+    animation: bot-hop 0.55s ease-out 3 var(--d);
+  }
+  .bot[data-mood="right"] .bot-head {
+    box-shadow:
+      0 0 0.5em var(--c),
+      inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
+  }
+  .bot[data-mood="right"] .bot-eye {
+    background: transparent;
+    box-shadow: none;
+    border: 0.06em solid #effff8;
+    border-color: #effff8 transparent transparent transparent;
+    height: 0.22em;
+    transform: translateY(0.06em);
+    animation: none;
+  }
+  .bot[data-mood="right"] .bot-pupil {
+    opacity: 0;
+  }
+  .bot[data-mood="right"] .bot-mouth {
+    height: 0.1em;
+    background: transparent;
+    border: 0.05em solid var(--c);
+    border-top: none;
+    border-radius: 0 0 0.2em 0.2em;
+    opacity: 1;
+  }
+  .bot[data-mood="wrong"] {
+    animation: bot-shake 0.38s ease-in-out 2 var(--d);
+  }
+  .bot[data-mood="wrong"] .bot-head {
+    border-color: #ff4d5e;
+    box-shadow:
+      0 0 0.35em rgb(255 77 94 / 0.6),
+      inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
+  }
+  .bot[data-mood="wrong"] .bot-eye {
+    background: transparent;
+    box-shadow: none;
+    animation: none;
+  }
+  .bot[data-mood="wrong"] .bot-eye::before,
+  .bot[data-mood="wrong"] .bot-eye::after {
+    opacity: 1;
+  }
+  .bot[data-mood="wrong"] .bot-pupil {
+    opacity: 0;
+  }
+  .bot[data-mood="wrong"] .bot-mouth {
+    left: 0.4em;
+    right: 0.4em;
+    height: 0.08em;
+    background: transparent;
+    border: 0.045em solid #ff4d5e;
+    border-bottom: none;
+    border-radius: 0.2em 0.2em 0 0;
+    opacity: 1;
+  }
+  .bot[data-mood="out"] .bot-head {
+    filter: grayscale(1) brightness(0.45);
+    box-shadow: none;
+  }
+  .bot[data-mood="out"] .bot-eye {
+    height: 0.04em;
+    background: #55646a;
+    box-shadow: none;
+    animation: none;
+  }
+  .bot[data-mood="out"] .bot-pupil,
+  .bot[data-mood="out"] .bot-mouth {
+    opacity: 0;
+  }
+  .bot[data-mood="out"] .bot-head::after {
+    animation: none;
+  }
+}
+
+@keyframes corridor-alarm {
+  0%,
+  55%,
+  100% {
+    opacity: 0.15;
+  }
+  62% {
+    opacity: 0.9;
+  }
+  70% {
+    opacity: 0.25;
+  }
+  76% {
+    opacity: 0.8;
+  }
+}
+@keyframes bot-blink {
+  0%,
+  91%,
+  100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.08);
+  }
+}
+@keyframes bot-look {
+  0%,
+  18% {
+    transform: translate(0, 0);
+  }
+  24%,
+  42% {
+    transform: translate(0.05em, -0.02em);
+  }
+  48%,
+  66% {
+    transform: translate(-0.05em, 0.01em);
+  }
+  72%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+@keyframes bot-dart {
+  from {
+    transform: translate(-0.05em, 0);
+  }
+  to {
+    transform: translate(0.05em, 0);
+  }
+}
+@keyframes bot-hop {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-0.22em) scale(1.06, 0.95);
+  }
+  70% {
+    transform: translateY(0) scale(1.05, 0.94);
+  }
+}
+@keyframes bot-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-0.07em) rotate(-4deg);
+  }
+  75% {
+    transform: translateX(0.07em) rotate(4deg);
+  }
+}
+@keyframes bot-breathe {
+  50% {
+    transform: scaleY(0.97);
+  }
+}
+@keyframes bot-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-mint);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

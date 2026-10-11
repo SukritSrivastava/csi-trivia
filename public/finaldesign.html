@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hermes Quiz Final Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Cinzel:wght@600;800&family=Gochi+Hand&family=VT323&family=Special+Elite&display=swap">
+<style>
+/* Hermes Quiz final design (Direction E v2, approved 11 Oct 2026). Reference for the app: src/app/globals.css, src/components/ui/Bot.tsx, Corridor.tsx, TimerRing.tsx.
+   Layout: a design-review board. Reference breakdown, then four directions, each a projector frame + phone frame + verdict notes. Single dark look on purpose (it's a horror brief). */
+:root{
+  --bg:#0f0d14; --panel:#17141f; --line:#2b2636; --fg:#ece6f4; --muted:#a59cb5;
+  --marigold:#ffb627; --blood:#d6334d; --mint:#6cf0b0; --gold:#d9b36a;
+  --f-ui:"Archivo",ui-sans-serif,system-ui,sans-serif;
+  --f-hand:"Gochi Hand","Comic Sans MS",cursive;
+  --f-greek:"Cinzel",Georgia,serif;
+  --f-term:"VT323",ui-monospace,Menlo,monospace;
+  --f-type:"Special Elite","Courier New",monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:16px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:40px 80px;display:flex;flex-direction:column;gap:56px}
+header h1{font-stretch:125%;font-weight:900;font-size:clamp(2rem,5vw,3.4rem);line-height:1;margin:0;text-wrap:balance;letter-spacing:-.01em}
+header p{color:var(--muted);max-width:65ch;margin:14px 0 0}
+.eyebrow{font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700}
+h2{font-stretch:115%;font-weight:850;font-size:1.7rem;margin:4px 0 0;line-height:1.1;text-wrap:balance}
+h3{font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+
+/* reference breakdown */
+.ref{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.ref div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.ref b{display:block;font-size:.95rem;margin-bottom:4px}
+.ref span{color:var(--muted);font-size:.9rem}
+
+/* direction block */
+.dir{display:flex;flex-direction:column;gap:16px;border-top:1px solid var(--line);padding-top:28px}
+.dir-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 20px}
+.tag{font-size:.78rem;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.tag.rec{border-color:var(--marigold);color:var(--marigold)}
+.stage-row{display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:18px;align-items:end}
+@media (max-width:720px){.stage-row{grid-template-columns:1fr}.phone{justify-self:center}}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.notes div{min-width:0}
+.notes p,.notes li{color:var(--muted);font-size:.93rem;margin:0}
+.notes ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
+
+/* ---------- projector frame ---------- */
+.tv{position:relative;aspect-ratio:16/9;width:100%;max-width:100%;border-radius:8px;overflow:hidden;container-type:inline-size;border:1px solid var(--line);isolation:isolate}
+.tv > *{position:absolute}
+.corr{inset:0;z-index:-1}
+.corr i{position:absolute;inset:0;display:block}
+.ceil{clip-path:polygon(0 0,100% 0,58% 40%,42% 40%)}
+.flr {clip-path:polygon(0 100%,100% 100%,58% 60%,42% 60%)}
+.lw  {clip-path:polygon(0 0,42% 40%,42% 60%,0 100%)}
+.rw  {clip-path:polygon(100% 0,58% 40%,58% 60%,100% 100%)}
+.end {clip-path:polygon(42% 40%,58% 40%,58% 60%,42% 60%)}
+.vig{inset:0;z-index:5;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,transparent 35%,rgba(0,0,0,.85) 100%)}
+.cast{top:3%;left:4%;right:4%;display:flex;justify-content:space-between;z-index:6}
+.cast span{display:flex;flex-direction:column;align-items:center;gap:.4cqw;font-size:1.25cqw}
+.cast em{display:block;width:5.2cqw;height:5.2cqw;font-style:normal}
+.q{left:5%;top:34%;width:42%;z-index:6;line-height:1.08;text-wrap:balance}
+.opts{right:5%;top:30%;width:44%;z-index:6;display:flex;flex-direction:column;gap:1.6cqw}
+.opts div{display:flex;align-items:center;gap:1.2cqw}
+.opts b{font-size:4.2cqw;line-height:1}
+.timer{left:13%;bottom:7%;z-index:6}
+.wm{right:3%;bottom:3%;z-index:6;font-size:1.3cqw;opacity:.7}
+
+/* ---------- phone frame ---------- */
+.phone{width:180px;aspect-ratio:9/19;border-radius:26px;border:6px solid #050407;overflow:hidden;position:relative;container-type:inline-size;display:flex;flex-direction:column;padding:28px 14px 18px;gap:9px}
+.phone .ph-top{font-size:7cqw;opacity:.8}
+.phone .ph-q{font-size:10cqw;line-height:1.1}
+.phone .ph-opts{display:flex;flex-direction:column;gap:4cqw;margin-top:auto}
+.phone .ph-opts span{display:flex;align-items:center;padding:2cqw 6cqw;min-height:17cqw;line-height:1.15;font-size:7.5cqw;border-radius:5cqw}
+
+@keyframes alarm{0%,55%,100%{opacity:.15}62%{opacity:.9}70%{opacity:.25}76%{opacity:.8}}
+
+/* ================= E: A + D combined ================= */
+.e{background:#05080a}
+.e .ceil{background:linear-gradient(#030506,#0a1215)}
+.e .flr{background:
+  repeating-linear-gradient(90deg,transparent 0 9%,rgba(108,240,176,.05) 9% 9.4%),
+  repeating-linear-gradient(0deg,transparent 0 7%,rgba(108,240,176,.05) 7% 7.6%),
+  linear-gradient(#0e171b,#05080a)}
+.e .lw,.e .rw{background:
+  radial-gradient(circle,rgba(108,240,176,.45) 0 .16cqw,transparent .28cqw) 0 0/2.8cqw 2cqw,
+  repeating-linear-gradient(90deg,#091013 0 5.5%,#030506 5.5% 6.5%),#091013}
+.e .rw{background:
+  radial-gradient(circle,rgba(214,51,77,.55) 0 .16cqw,transparent .28cqw) 1cqw .6cqw/3.6cqw 2.6cqw,
+  radial-gradient(circle,rgba(108,240,176,.45) 0 .16cqw,transparent .28cqw) 0 0/2.8cqw 2cqw,
+  repeating-linear-gradient(90deg,#091013 0 5.5%,#030506 5.5% 6.5%),#091013}
+.e .end{background:radial-gradient(#24443e,#030506 70%)}
+.e .alarm{inset:0;z-index:4;background:radial-gradient(ellipse at 50% 0%,rgba(214,51,77,.28),transparent 55%);animation:alarm 3.2s infinite}
+.e .scrim{inset:0;z-index:5;pointer-events:none;background:
+  radial-gradient(ellipse 30% 30% at 25% 45%,rgba(3,5,6,.82),transparent 100%),
+  radial-gradient(ellipse 30% 36% at 74% 50%,rgba(3,5,6,.82),transparent 100%)}
+.e .vig{z-index:5}
+.e .cast{top:2.5%}
+.e .cast span{font-family:var(--f-type);color:#e7fff4;font-size:1.3cqw;gap:.6cqw}
+.e .cast .bot{font-size:5cqw;display:inline-block;gap:0}
+.e .q{font-family:var(--f-type);color:#f1fff8;font-size:3.5cqw;transform:rotate(-3deg);text-shadow:0 0 1cqw rgba(108,240,176,.45),0 .25cqw .6cqw #000}
+.e .opts{font-family:var(--f-type);font-size:2.5cqw;color:#f1fff8;text-shadow:0 .2cqw .5cqw #000}
+.e .opts div:nth-child(odd){transform:rotate(-1.5deg)}.e .opts div:nth-child(even){transform:rotate(1.5deg);margin-left:-3cqw}
+.e .opts b{color:#ffb627;font-family:var(--f-term);font-size:5.4cqw;font-weight:400;text-shadow:0 0 1cqw rgba(255,182,39,.6)}
+.e .timer{width:12cqw;height:12cqw;border-radius:50%;background:conic-gradient(#d6334d 0 30%,#fffbf0 30%);border:.5cqw solid #05080a;box-shadow:.6cqw .6cqw 0 #6cf0b0,0 0 2.4cqw rgba(108,240,176,.35);display:grid;place-items:center;font-family:var(--f-term);font-size:6.4cqw;line-height:1;color:#05080a}
+.e .wm{font-family:var(--f-term);color:#6cf0b0}
+.e .count{left:28%;bottom:12%;z-index:6;font-family:var(--f-type);font-size:2cqw;color:#bfe9d6}
+.e .count b{color:#ffb627;font-family:var(--f-term);font-size:3.6cqw;font-weight:400}
+.e .banner{left:0;right:0;bottom:12%;z-index:6;text-align:center;font-family:var(--f-term);font-size:3.4cqw;color:#6cf0b0;text-shadow:0 0 1cqw #6cf0b0;opacity:0;transition:opacity .3s}
+.e.show-reveal .banner{opacity:1}
+.e.show-reveal .opts div:not(.ok){opacity:.3}
+.e.show-reveal .opts div.ok b{color:#6cf0b0;text-shadow:0 0 1cqw #6cf0b0}
+.e.read .q{left:50%;top:50%;width:70%;transform:translate(-50%,-50%) rotate(-2deg);font-size:5cqw;text-align:center}
+.e.read .scrim{background:radial-gradient(ellipse 45% 30% at 50% 50%,rgba(3,5,6,.85),transparent 100%)}
+.e.read .hint{left:0;right:0;bottom:31%;z-index:6;text-align:center;font-family:var(--f-type);font-size:2cqw;color:#bfe9d6}
+.phone.e{background:linear-gradient(#0b1114,#132027);color:#e7fff4;font-family:var(--f-type)}
+.phone.e .ph-opts span{border:2px solid #6cf0b0;background:rgba(108,240,176,.07)}
+.combo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+@media (max-width:720px){.combo-grid{grid-template-columns:1fr}}
+.cap{font-size:.85rem;color:var(--muted);margin-top:6px}
+.combo{border:1px solid var(--marigold);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:18px;background:linear-gradient(180deg,rgba(255,182,39,.05),transparent 40%)}
+.subhead{font-size:1.05rem;font-weight:800;margin:6px 0 0;font-stretch:110%}
+
+/* controls */
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ctl button{font:inherit;font-size:.85rem;font-weight:700;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer}
+.ctl button[aria-pressed="true"]{border-color:#6cf0b0;color:#6cf0b0;background:rgba(108,240,176,.08)}
+.ctl span{font-size:.8rem;color:var(--muted)}
+
+/* ---------- BOT AVATAR ---------- */
+.bot{--c:#6cf0b0;--d:0s;font-size:var(--s,44px);width:1em;height:1em;position:relative;display:inline-block;flex:none}
+.bot .hd{position:absolute;inset:.1em .02em 0;background:color-mix(in srgb,var(--c) 20%,#081014);border:.06em solid var(--c);border-radius:.22em;box-shadow:0 0 .22em color-mix(in srgb,var(--c) 55%,transparent),inset 0 -.12em 0 rgba(0,0,0,.35);transition:border-color .3s,box-shadow .3s,filter .4s}
+.bot[data-shape="round"] .hd{border-radius:50%}
+.bot[data-shape="dome"] .hd{border-radius:.5em .5em .16em .16em}
+.bot[data-shape="antenna"] .hd::before{content:"";position:absolute;left:50%;top:-.24em;width:.05em;height:.2em;background:var(--c);transform:translateX(-50%)}
+.bot[data-shape="antenna"] .hd::after{content:"";position:absolute;left:50%;top:-.34em;width:.13em;height:.13em;border-radius:50%;background:var(--c);transform:translateX(-50%);box-shadow:0 0 .15em var(--c);animation:pulse 1.6s infinite var(--d)}
+.bot[data-shape="bolts"] .hd::before,.bot[data-shape="bolts"] .hd::after{content:"";position:absolute;top:38%;width:.1em;height:.2em;background:var(--c);border-radius:.03em}
+.bot[data-shape="bolts"] .hd::before{left:-.15em}.bot[data-shape="bolts"] .hd::after{right:-.15em}
+.bot[data-shape="horns"] .hd::before,.bot[data-shape="horns"] .hd::after{content:"";position:absolute;top:-.2em;border-left:.08em solid transparent;border-right:.08em solid transparent;border-bottom:.18em solid var(--c)}
+.bot[data-shape="horns"] .hd::before{left:.1em;transform:rotate(-14deg)}.bot[data-shape="horns"] .hd::after{right:.1em;transform:rotate(14deg)}
+.bot[data-shape="ears"] .hd{border-radius:.3em .3em .22em .22em}
+.bot[data-shape="ears"] .hd::before,.bot[data-shape="ears"] .hd::after{content:"";position:absolute;top:-.14em;width:.2em;height:.2em;border:.05em solid var(--c);border-radius:50%;background:inherit}
+.bot[data-shape="ears"] .hd::before{left:-.04em}.bot[data-shape="ears"] .hd::after{right:-.04em}
+.bot .eyes{position:absolute;left:.2em;right:.2em;top:.4em;height:.24em;display:flex;justify-content:space-between;align-items:center;z-index:1}
+.bot .eye{width:.22em;height:.22em;border-radius:50%;background:#effff8;position:relative;box-shadow:0 0 .12em var(--c);animation:blink 4.2s infinite var(--d);transition:height .2s}
+.bot .pupil{position:absolute;width:.1em;height:.1em;border-radius:50%;background:#05080a;left:.06em;top:.06em;animation:look 5.5s infinite var(--d)}
+.bot .eye::before,.bot .eye::after{content:"";position:absolute;left:50%;top:50%;width:.27em;height:.055em;background:#ff4d5e;border-radius:.03em;opacity:0}
+.bot .eye::before{transform:translate(-50%,-50%) rotate(45deg)}.bot .eye::after{transform:translate(-50%,-50%) rotate(-45deg)}
+.bot[data-shape="visor"] .eyes{background:rgba(0,0,0,.55);outline:.045em solid var(--c);border-radius:.08em;left:.12em;right:.12em;padding:0 .06em}
+.bot .mouth{position:absolute;left:.36em;right:.36em;bottom:.14em;height:.045em;background:var(--c);border-radius:1em;opacity:.7;transition:all .25s}
+
+/* states */
+.bot[data-state="think"] .pupil{animation:dart .7s infinite alternate var(--d)}
+.bot[data-state="locked"] .eye{height:.05em;border-radius:.05em;animation:none}
+.bot[data-state="locked"] .pupil{opacity:0}
+.bot[data-state="locked"] .hd{animation:breathe 2.4s infinite var(--d)}
+.bot[data-state="right"]{animation:hop .55s ease-out 3 var(--d)}
+.bot[data-state="right"] .hd{box-shadow:0 0 .5em var(--c),inset 0 -.12em 0 rgba(0,0,0,.35)}
+.bot[data-state="right"] .eye{background:transparent;box-shadow:none;border:.06em solid #effff8;border-color:#effff8 transparent transparent transparent;height:.22em;transform:translateY(.06em);animation:none}
+.bot[data-state="right"] .pupil{opacity:0}
+.bot[data-state="right"] .mouth{height:.1em;background:transparent;border:.05em solid var(--c);border-top:none;border-radius:0 0 .2em .2em;opacity:1}
+.bot[data-state="wrong"]{animation:shake .38s ease-in-out 2 var(--d)}
+.bot[data-state="wrong"] .hd{border-color:#ff4d5e;box-shadow:0 0 .35em rgba(255,77,94,.6),inset 0 -.12em 0 rgba(0,0,0,.35)}
+.bot[data-state="wrong"] .eye{background:transparent;box-shadow:none;animation:none}
+.bot[data-state="wrong"] .eye::before,.bot[data-state="wrong"] .eye::after{opacity:1}
+.bot[data-state="wrong"] .pupil{opacity:0}
+.bot[data-state="wrong"] .mouth{left:.4em;right:.4em;height:.08em;background:transparent;border:.045em solid #ff4d5e;border-bottom:none;border-radius:.2em .2em 0 0;opacity:1}
+.bot[data-state="out"] .hd{filter:grayscale(1) brightness(.45);box-shadow:none}
+.bot[data-state="out"] .eye{height:.04em;background:#55646a;box-shadow:none;animation:none}
+.bot[data-state="out"] .pupil,.bot[data-state="out"] .mouth{opacity:0}
+.bot[data-state="out"] .hd::after{animation:none}
+.cast span:has(.bot[data-state="out"]){opacity:.45}
+
+@keyframes blink{0%,91%,100%{transform:scaleY(1)}94%{transform:scaleY(.08)}}
+@keyframes look{0%,18%{transform:translate(0,0)}24%,42%{transform:translate(.05em,-.02em)}48%,66%{transform:translate(-.05em,.01em)}72%,100%{transform:translate(0,0)}}
+@keyframes dart{from{transform:translate(-.05em,0)}to{transform:translate(.05em,0)}}
+@keyframes hop{0%,100%{transform:translateY(0)}40%{transform:translateY(-.22em) scale(1.06,.95)}70%{transform:translateY(0) scale(1.05,.94)}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-.07em) rotate(-4deg)}75%{transform:translateX(.07em) rotate(4deg)}}
+@keyframes breathe{50%{transform:scaleY(.97)}}
+@keyframes pulse{50%{opacity:.35}}
+
+/* state legend */
+.legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.legend figure{margin:0;background:#0b1114;border:1px solid var(--line);border-radius:10px;padding:16px 10px 12px;display:flex;flex-direction:column;align-items:center;gap:10px}
+.legend .bot{--s:62px}
+.legend figcaption{text-align:center;font-size:.82rem;color:var(--muted);line-height:1.35}
+.legend figcaption b{display:block;color:var(--fg);font-size:.9rem}
+
+/* phones row */
+.phones{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start}
+.phones > div{display:flex;flex-direction:column;gap:6px;align-items:center}
+.phone.e .pick-prev{display:grid;place-items:center;padding:6px 0 2px}
+.phone.e .pick-prev .bot{--s:64px}
+.phone.e .lbl{font-size:6.5cqw;opacity:.75}
+.sw{display:grid;grid-template-columns:repeat(6,1fr);gap:3.5cqw}
+.sw button{aspect-ratio:1;border-radius:50%;border:2px solid transparent;background:var(--c);cursor:pointer;padding:0;position:relative}
+.sw button[aria-pressed="true"]{outline:2px solid #effff8;outline-offset:2px}
+.sw button:disabled{cursor:not-allowed;opacity:.28}
+.sw button:disabled::after{content:"";position:absolute;left:10%;right:10%;top:50%;height:2px;background:#effff8;transform:rotate(-45deg)}
+.shp{display:grid;grid-template-columns:repeat(4,1fr);gap:3cqw;justify-items:center}
+.shp button{background:transparent;border:1.5px solid transparent;border-radius:8px;padding:5px 2px 3px;cursor:pointer;width:100%;display:grid;place-items:center}
+.shp button[aria-pressed="true"]{border-color:#6cf0b0;background:rgba(108,240,176,.08)}
+.shp .bot{--s:24px}
+.phone.e .go{margin-top:auto;border:2px solid #6cf0b0;background:#6cf0b0;color:#05080a;font-family:var(--f-term);font-size:10cqw;border-radius:5cqw;padding:2cqw 0;text-align:center}
+.phone.e .res{display:flex;flex-direction:column;align-items:center;gap:4cqw;margin-top:auto;margin-bottom:auto;text-align:center}
+.phone.e .res .bot{--s:88px}
+.phone.e .res big{font-family:var(--f-term);font-size:17cqw;line-height:1;color:#6cf0b0;text-shadow:0 0 6px #6cf0b0}
+.phone.e .res.bad big{color:#ff4d5e;text-shadow:0 0 6px #ff4d5e}
+.phone.e .res small{font-size:7cqw;opacity:.8}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<!-- E: combined -->
+<section class="combo">
+  <div class="dir-head">
+    <div><div class="eyebrow">Hermes Quiz · final design · approved 11 Oct 2026</div><h2>Server Corridor, Lights Low</h2></div>
+    <span class="tag rec">Approved</span>
+  </div>
+  <p style="margin:0;color:var(--muted);max-width:72ch">Layout and timer placement from D, with the corridor, phone and fonts from A. Every player is a robot in the colour and head shape they chose, and its eyes react to every answer. Use the buttons to play the round.</p>
+
+  <div class="ctl" role="group" aria-label="Play the round">
+    <button type="button" data-phase="answer" aria-pressed="true">Answering</button>
+    <button type="button" data-phase="reveal" aria-pressed="false">Reveal answer</button>
+    <button type="button" data-phase="cut" aria-pressed="false">Top 6 cut</button>
+    <span id="phaseNote">Players still answering dart their eyes. Players who have locked in close them.</span>
+  </div>
+
+  <div class="combo-grid">
+    <div>
+      <div class="tv e" id="hostAnswer" role="img" aria-label="Combined direction, answer step">
+        <div class="corr"><i class="ceil"></i><i class="flr"></i><i class="lw"></i><i class="rw"></i><i class="end"></i></div>
+        <div class="alarm"></div><div class="scrim"></div><div class="vig"></div>
+        <div class="cast" id="castA"></div>
+        <div class="q">What does LLM stand for?</div>
+        <div class="opts"><div class="ok"><b>1</b>Large Language Model</div><div><b>2</b>Linear Logic Machine</div><div><b>3</b>Layered Learning Matrix</div><div><b>4</b>Long-term Language Memory</div></div>
+        <div class="timer">5</div>
+        <div class="count"><b>5</b> / 8 answered</div>
+        <div class="banner">&gt; answer: large language model</div>
+        <div class="wm">hermes://quiz</div>
+      </div>
+      <p class="cap">Answer step. Press Reveal answer to see the eyes react.</p>
+    </div>
+    <div>
+      <div class="tv e read" role="img" aria-label="Combined direction, read step">
+        <div class="corr"><i class="ceil"></i><i class="flr"></i><i class="lw"></i><i class="rw"></i><i class="end"></i></div>
+        <div class="alarm"></div><div class="scrim"></div><div class="vig"></div>
+        <div class="cast" id="castB"></div>
+        <div class="q">In an AI agent, what is a “tool call”?</div>
+        <div class="hint">Read it. Options appear on your phone in a moment.</div>
+        <div class="timer">8</div>
+        <div class="wm">hermes://quiz</div>
+      </div>
+      <p class="cap">Read step. The robots are idle: they blink and look around.</p>
+    </div>
+  </div>
+
+  <div>
+    <p class="subhead">What the eyes mean</p>
+    <div class="legend" style="margin-top:10px">
+      <figure><span class="bot" data-shape="antenna" data-state="idle" style="--c:#6cf0b0"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><figcaption><b>Idle</b>Blinks and glances around. Lobby and read step.</figcaption></figure>
+      <figure><span class="bot" data-shape="round" data-state="think" style="--c:#4cc9f0"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><figcaption><b>Thinking</b>Eyes dart side to side. Hasn't answered yet.</figcaption></figure>
+      <figure><span class="bot" data-shape="bolts" data-state="locked" style="--c:#9b7bff"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><figcaption><b>Locked in</b>Eyes shut, slow breathing. Answered, waiting.</figcaption></figure>
+      <figure><span class="bot" data-shape="ears" data-state="right" style="--c:#ffd23f;--d:0s"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><figcaption><b>Correct</b>Happy ^ ^ eyes, smile, hops and glows.</figcaption></figure>
+      <figure><span class="bot" data-shape="horns" data-state="wrong" style="--c:#ff5fa2"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><figcaption><b>Wrong</b>Red X eyes, frown, shakes.</figcaption></figure>
+      <figure><span class="bot" data-shape="dome" data-state="out" style="--c:#ff8c42"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><figcaption><b>Out</b>Powered down after the top 6 cut.</figcaption></figure>
+    </div>
+    <div class="ctl" style="margin-top:10px"><button type="button" id="replay">Replay animations</button></div>
+  </div>
+
+  <div>
+    <p class="subhead">On the phone</p>
+    <div class="phones" style="margin-top:10px">
+      <div>
+        <div class="phone e" id="builder">
+          <div class="ph-top">Room KJSC · Riya</div>
+          <div class="ph-q" style="font-size:9cqw">Build your bot</div>
+          <div class="pick-prev"><span class="bot" id="prevBot" data-shape="antenna" data-state="idle" style="--c:#4cc9f0"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span></div>
+          <div class="lbl">Colour</div>
+          <div class="sw" id="swatches"></div>
+          <div class="lbl">Head</div>
+          <div class="shp" id="shapes"></div>
+          <div class="go">LOCK IN</div>
+        </div>
+        <p class="cap">Before the game. Tap to try it.</p>
+      </div>
+      <div>
+        <div class="phone e"><div class="ph-top">Q1 of 3 · 5s</div><div class="ph-q">Pick one. First tap locks.</div><div class="ph-opts"><span>Long-term Language Memory</span><span>Large Language Model</span><span>Linear Logic Machine</span><span>Layered Learning Matrix</span></div></div>
+        <p class="cap">Answering (unchanged from A).</p>
+      </div>
+      <div>
+        <div class="phone e"><div class="ph-top">Q1 of 3</div><div class="res"><span class="bot" data-shape="antenna" data-state="right" style="--c:#4cc9f0"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><big>CORRECT</big><small>Your bot survives. For now.</small></div></div>
+        <p class="cap">Reveal, right answer.</p>
+      </div>
+      <div>
+        <div class="phone e"><div class="ph-top">Q1 of 3</div><div class="res bad"><span class="bot" data-shape="horns" data-state="wrong" style="--c:#ff5fa2"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span><big>WRONG</big><small>It was Large Language Model.</small></div></div>
+        <p class="cap">Reveal, wrong answer.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div><h3>Colour</h3><ul><li>12 colours. Each one is greyed out once taken, like the felt dolls in Jackbox.</li><li>When all 12 are gone, a colour can be taken again with a different head.</li></ul></div>
+    <div><h3>Head</h3><ul><li>8 shapes: box, round, antenna, bolts, horns, ears, dome, visor.</li><li>12 × 8 = 96 unique bots, which covers the 60–100 player range.</li></ul></div>
+    <div><h3>Fonts</h3><ul><li>Typewriter for questions, answers and names.</li><li>Terminal digits for the numbers, timer and counts, same as A.</li></ul></div>
+  </div>
+</section>
+
+<script>
+(function(){
+  const COLORS=["#6cf0b0","#4cc9f0","#9b7bff","#ff5fa2","#ff4d5e","#ff8c42","#ffd23f","#b6f04c","#e8f0f2","#2ec4b6","#c77dff","#f72585"];
+  const SHAPES=["box","round","antenna","bolts","horns","ears","dome","visor"];
+  const botHTML=(shape,color,state,delay)=>`<span class="bot" data-shape="${shape}" data-state="${state}" style="--c:${color};--d:${delay}s"><i class="hd"></i><i class="eyes"><i class="eye"><i class="pupil"></i></i><i class="eye"><i class="pupil"></i></i></i><i class="mouth"></i></span>`;
+  const CAST=[
+    {n:"Riya",s:"antenna",c:"#4cc9f0",answered:true,right:true,top6:true},
+    {n:"Aarav",s:"box",c:"#6cf0b0",answered:true,right:true,top6:true},
+    {n:"Kabir",s:"horns",c:"#ff5fa2",answered:true,right:false,top6:false},
+    {n:"Mehek",s:"ears",c:"#ffd23f",answered:false,right:false,top6:true},
+    {n:"Dev",s:"bolts",c:"#9b7bff",answered:true,right:true,top6:true},
+    {n:"Isha",s:"dome",c:"#ff8c42",answered:false,right:false,top6:false},
+    {n:"Rahul S",s:"round",c:"#b6f04c",answered:true,right:false,top6:true},
+    {n:"Tanvi",s:"visor",c:"#e8f0f2",answered:false,right:true,top6:true}
+  ];
+  const castA=document.getElementById("castA"),castB=document.getElementById("castB");
+  function stateFor(p,phase){
+    if(phase==="answer") return p.answered?"locked":"think";
+    if(phase==="reveal") return p.right?"right":"wrong";
+    return p.top6?"idle":"out";
+  }
+  function renderCast(el,phase){
+    el.innerHTML=CAST.map((p,i)=>`<span>${botHTML(p.s,p.c,phase?stateFor(p,phase):"idle",(i*0.37).toFixed(2))}${p.n}</span>`).join("");
+  }
+  const NOTES={
+    answer:"Players still answering dart their eyes. Players who have locked in close them.",
+    reveal:"Right answers hop with happy eyes. Wrong answers shake with red X eyes.",
+    cut:"Robots outside the top 6 power down. Here the top 6 is shown out of 8."
+  };
+  const host=document.getElementById("hostAnswer"),count=host.querySelector(".count");
+  function setPhase(ph){
+    document.querySelectorAll("[data-phase]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.phase===ph)));
+    renderCast(castA,ph);
+    host.classList.toggle("show-reveal",ph!=="answer");
+    count.style.visibility=ph==="answer"?"visible":"hidden";
+    document.getElementById("phaseNote").textContent=NOTES[ph];
+  }
+  document.querySelectorAll("[data-phase]").forEach(b=>b.addEventListener("click",()=>setPhase(b.dataset.phase)));
+  renderCast(castB,null);
+  setPhase("answer");
+
+  document.getElementById("replay").addEventListener("click",()=>{
+    document.querySelectorAll(".legend .bot, .res .bot").forEach(b=>{const st=b.dataset.state;b.dataset.state="idle";void b.offsetWidth;requestAnimationFrame(()=>{b.dataset.state=st;});});
+  });
+
+  // builder
+  const prev=document.getElementById("prevBot"),sw=document.getElementById("swatches"),sh=document.getElementById("shapes");
+  const TAKEN=new Set(["#6cf0b0","#ff5fa2","#ffd23f"]);
+  let cur={c:"#4cc9f0",s:"antenna"};
+  sw.innerHTML=COLORS.map(c=>`<button type="button" style="--c:${c}" data-c="${c}" aria-label="Colour ${c}${TAKEN.has(c)?" (taken)":""}" ${TAKEN.has(c)?"disabled":""} aria-pressed="${c===cur.c}"></button>`).join("");
+  sh.innerHTML=SHAPES.map(s=>`<button type="button" data-s="${s}" aria-label="${s} head" aria-pressed="${s===cur.s}">${botHTML(s,"#6cf0b0","idle",0)}</button>`).join("");
+  function upd(){
+    prev.style.setProperty("--c",cur.c);prev.dataset.shape=cur.s;
+    sh.querySelectorAll(".bot").forEach(b=>b.style.setProperty("--c",cur.c));
+    sw.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.c===cur.c)));
+    sh.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.s===cur.s)));
+    prev.dataset.state="right";clearTimeout(upd.t);upd.t=setTimeout(()=>prev.dataset.state="idle",1700);
+  }
+  sw.addEventListener("click",e=>{const b=e.target.closest("button");if(b&&!b.disabled){cur.c=b.dataset.c;upd();}});
+  sh.addEventListener("click",e=>{const b=e.target.closest("button");if(b){cur.s=b.dataset.s;upd();}});
+  upd();prev.dataset.state="idle";
+})();
+</script>
+
+</div>
+
+</body>
+</html>
