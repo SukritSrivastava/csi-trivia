@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Use them as Tailwind classes: bg-marigold, text-ink,
+ * border-ink, bg-side-a, and so on.
+ *
+ * The look: a game-show set. Marigold stage, ink outlines, cards that sit on
+ * hard offset shadows like cut-out props. Pink and teal always mean "left
+ * answer" and "right answer", on the TV and on every phone.
+ */
+@theme {
+  --color-ink: #1b1340;
+  --color-ink-soft: #4a3f7a;
+  --color-marigold: #ffb627;
+  --color-marigold-deep: #f29a00;
+  --color-paper: #fffbf0;
+  --color-side-a: #ff3d7f;
+  --color-side-b: #00a6a6;
+
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  overscroll-behavior: none; /* no pull-to-refresh mid-game */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The TV screen scales everything with its width, so it reads the same on a
+   laptop and on a 55" TV. Everything on /host is sized in rem. */
+html:has(.host-root) {
+  font-size: clamp(11px, 0.834vw, 34px);
+}
+
+/* Custom classes sit in the components layer so Tailwind utilities can override them. */
+@layer components {
+  /* Archivo has a width axis. Wide = display type, the room code, headlines. */
+  .type-wide {
+    font-stretch: 125%;
+  }
+  .type-narrow {
+    font-stretch: 85%;
+  }
+
+  /* A cut-out card: paper, thick ink outline, hard shadow. */
+  .plate {
+    background: var(--color-paper);
+    border: 0.25rem solid var(--color-ink);
+    border-radius: 1.25rem;
+    box-shadow: 0.5rem 0.5rem 0 var(--color-ink);
+  }
+
+  /* Phone buttons: big targets with a shadow that presses in when tapped. */
+  .press {
+    border: 3px solid var(--color-ink);
+    border-radius: 16px;
+    box-shadow: 0 5px 0 var(--color-ink);
+    transition:
+      transform 80ms ease-out,
+      box-shadow 80ms ease-out;
+  }
+  .press:active:not(:disabled) {
+    transform: translateY(4px);
+    box-shadow: 0 1px 0 var(--color-ink);
+  }
+  /* Disabled: sunk flat into the page, so it reads as "not yet". */
+  .press:disabled {
+    opacity: 0.4;
+    transform: translateY(5px);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-side-b);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
