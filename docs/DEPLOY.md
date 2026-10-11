@@ -12,11 +12,13 @@ Settings already in place: Render has `GAME_PRESET=event`, `ADMIN_PIN` (8 digits
 in the repo), `DATABASE_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (both the Vercel address), `NODE_VERSION=24`.
 Vercel has `NEXT_PUBLIC_SOCKET_URL=https://hermes-quiz-game.onrender.com`.
 
-**Updating it:**
-- Game server: push to `main`; Render redeploys by itself (or Render → the service → Manual Deploy).
-- Website: the Vercel project isn't linked to GitHub (that needs the Vercel GitHub app installed on the
-  repo owner's account). Until it is, redeploy from a laptop on `main`: `npx vercel login` once, then
-  `npx vercel deploy --prod` in the project folder (`.vercelignore` keeps `.env.local` out of the upload).
+**Updating it: `npm run deploy`** (on `main`, committed and pushed). It starts a Render deploy of the
+game server, waits until it's live and `/health` says ok, then builds and deploys the website to Vercel.
+Neither service redeploys on its own from a push yet: that needs Render's and Vercel's GitHub apps
+installed on the repo owner's account (`Leleouch14`). The script needs these in `.env.local`
+(git-ignored; already set on Sukrit's laptop, template in `.env.example`): `RENDER_API_KEY`,
+`RENDER_SERVICE_ID`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`. Options: `--skip-render`,
+`--skip-vercel`. `.vercelignore` keeps `.env.local` out of the upload.
 - Verified live 12 Oct: `npm run admin-run -- --web https://hermes-quiz-nine.vercel.app --game https://hermes-quiz-game.onrender.com`
   (set `ADMIN_PIN` first) passed all 41 checks, and the results landed in Supabase.
 

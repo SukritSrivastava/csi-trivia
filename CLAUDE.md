@@ -74,6 +74,8 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
 - Deploy: website on Vercel, game server on Render (`render.yaml`, `npm run start:game`, uses `PORT`),
   results in Supabase. Step by step: `docs/DEPLOY.md`. `tsx` and `pg` are runtime dependencies.
+- Live: https://hermes-quiz-nine.vercel.app (Vercel) + https://hermes-quiz-game.onrender.com (Render) + Supabase.
+  `npm run deploy` (on a pushed `main`) redeploys both; keys in `.env.local`. Neither auto-deploys on push yet.
 - `npm run db-check`: plays a game with the results database on (in-memory Postgres) and checks the rows.
 - The backend is `mock-server/` (decided 12 Oct). `DATABASE_URL` (Supabase) turns on `mock-server/db.ts`,
   which saves to the teammate's `backend/db.js` tables (additive columns only). `quiz.ts` stays I/O-free:
