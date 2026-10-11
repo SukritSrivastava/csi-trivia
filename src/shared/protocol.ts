@@ -700,6 +700,17 @@ export interface AdminView {
   canUndo: boolean;
   /** The last Correct / Wrong on this question (for the undo button label). */
   lastMark: { by: ParticipantTag; correct: boolean } | null;
+  /** The final order, on the podium only (same as the Host's podium stage), so the quizmaster can announce it. */
+  podium: PodiumSummary | null;
+}
+
+/** The result of the quiz: what the Host's podium shows. */
+export interface PodiumSummary {
+  basis: "buzzer" | "round1";
+  /** Final order, winner first. */
+  entries: PodiumEntry[];
+  /** Audience members who backed the winner. */
+  calledIt: number;
 }
 
 // ============================================================================

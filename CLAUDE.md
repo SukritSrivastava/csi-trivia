@@ -4,7 +4,7 @@
 skills, agents, plugins, API). This file is the short version.**
 
 Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2.1). Build plan:
-`docs/BUILD-PHASES.md` (v4, 5 phases; phase 1 done, design foundation done).
+`docs/BUILD-PHASES.md` (v4, 5 phases; phase 1, design foundation and phase 2 (Admin) done).
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
@@ -48,17 +48,21 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 ## What later phases build on
 
 - `AdminView.primary` (the big button: action + label), `.hint`, `.allowed`, `.stepLabel`,
-  `.question` (with the answer), `.nextQuestion`, `.round2`, `.finalists`, `.canUndo`, `.lastMark`
-  are computed by the server. The Admin UI just renders them.
-- `src/stores/adminStore.ts` `send(action)`: adds the stepId, ignores a repeat of the same command
-  within 600 ms, tracks `pending` and `lastResult`. Labels: `src/lib/adminLabels.ts`
+  `.question` (with the answer), `.nextQuestion`, `.round2`, `.finalists`, `.canUndo`, `.lastMark`,
+  `.podium` (final order, same as the Host podium) are computed by the server. The Admin UI just renders them.
+- Admin UI (phase 2): `src/components/admin/` (`AdminApp` layout: phone tabs Game/Controls/People,
+  two columns from 1024 px; `Dock` = hint + primary button; `GamePanels`; `Controls`;
+  `ParticipantsPanel`; `parts.tsx` = `Panel`, `ControlButton`, `useConfirm` (two taps, cancels after 3 s);
+  `useShortcuts`). Buttons send the stepId of the view they were drawn from.
+- `src/stores/adminStore.ts` `send(action, stepId?)`: adds the stepId, ignores a repeat of the same command
+  within 600 ms (and any big/judge button within 600 ms of another one), tracks `pending` and `lastResult`. Labels: `src/lib/adminLabels.ts`
   (`ACTION_LABELS`, `DESTRUCTIVE_ACTIONS`, `COMMAND_ERROR_TEXT`).
 - `src/stores/participantStore.ts`: auto-rejoin from sessionStorage, optimistic `tapped` (answer)
   and `buzzedOn`. `src/stores/hostStore.ts`: creates/resumes the room.
 - Phones: `useWakeLock`, `usePageVisibility` (reports hidden/shown; Admin-only flag), `vibrate`
   in `src/lib/format.ts`. Countdown: `useCountdown(timer, clockOffset)`; `TimerRing` for the Host.
-- `src/components/temp/` holds the phase 1 test pages. Replace `/admin` (phase 2), `/play`
-  (phase 3), `/host` (phase 4), then delete the folder.
+- `src/components/temp/` holds the phase 1 test pages. `/admin` is replaced (TempAdmin deleted);
+  replace `/play` (phase 3), `/host` (phase 4), then delete the folder.
 - `src/css.d.ts` only lets TypeScript accept `import "./globals.css"`.
 
 ## Commands
@@ -66,3 +70,6 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - `npm run dev` (demo preset) / `npm run dev:event`: Next.js on 3000 + mock server on 3001.
 - `npm run bots -- --room ABCD --count 80`: fake participants for scale tests.
 - `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
+- `npm run admin-run [-- --bots 80 --out screenshots/x]` (with `npm run dev` running): Playwright drives a
+  whole game from Admin (3 devices), 41 checks, screenshots in `screenshots/` (git-ignored).
+- `next dev` appends a Next.js block to `AGENTS.md`; that's expected, keep it committed.

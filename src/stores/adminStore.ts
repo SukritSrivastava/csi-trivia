@@ -14,6 +14,26 @@ import type { ConnectionStatus } from "./hostStore";
 
 /** A second tap of the same command within this window is ignored (double taps). */
 const DOUBLE_TAP_MS = 600;
+/**
+ * The big button and the judge buttons: a double tap on these is ignored even
+ * if the button's command changed between the taps (the next step arrived).
+ */
+const THUMB_ACTIONS: readonly AdminActionType[] = [
+  "startQuiz",
+  "showQuestion",
+  "revealAnswer",
+  "showResults",
+  "showLeaderboard",
+  "nextQuestion",
+  "endRound1",
+  "openPredictions",
+  "startBuzzerRound",
+  "showScores",
+  "startSuddenDeath",
+  "showWinner",
+  "markCorrect",
+  "markWrong",
+];
 const COMMAND_TIMEOUT_MS = 5000;
 
 /** The server's reply, or what happened on this side: ignored double tap, or no reply in time. */
@@ -35,13 +55,17 @@ interface AdminStore {
   connect: () => () => void;
   signIn: (roomCode: string, pin: string) => void;
   signOut: () => void;
-  /** Sends a command from the step currently on screen. */
-  send: (action: AdminAction) => Promise<SendResult>;
+  /**
+   * Sends a command. Pass the stepId of the view the button was drawn from, so a
+   * tap that lands just as the step changes is refused instead of acting on the
+   * new step. Defaults to the latest view's stepId.
+   */
+  send: (action: AdminAction, stepId?: number) => Promise<SendResult>;
   downloadResults: () => void;
 }
 
 export const useAdminStore = create<AdminStore>()((set, get) => {
-  let lastSent: { type: AdminActionType; at: number } | null = null;
+  let lastSent: { type: AdminActionType; at: number; thumb: boolean } | null = null;
 
   const auth = (roomCode: string, pin: string, quiet = false) => {
     const code = roomCode.trim().toUpperCase();
@@ -113,15 +137,19 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
       socket.connect();
     },
 
-    send: (action) =>
+    send: (action, stepId) =>
       new Promise<SendResult>((resolve) => {
         const view = get().view;
         const now = Date.now();
         if (!view) return resolve({ ok: false, reason: "not-signed-in" });
-        if (lastSent && lastSent.type === action.type && now - lastSent.at < DOUBLE_TAP_MS) {
+        // A second tap within 600 ms is ignored: the same command, or any big/judge
+        // button (so "Reveal answer" tapped twice can't turn into "Show results"
+        // when the new step arrives between the taps).
+        const thumb = THUMB_ACTIONS.includes(action.type);
+        if (lastSent && now - lastSent.at < DOUBLE_TAP_MS && (lastSent.type === action.type || (thumb && lastSent.thumb))) {
           return resolve({ ok: false, reason: "double-tap" }); // ignore quietly
         }
-        lastSent = { type: action.type, at: now };
+        lastSent = { type: action.type, at: now, thumb };
         set({ pending: action.type });
         let done = false;
         const finish = (result: SendResult) => {
@@ -130,7 +158,7 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
           set({ pending: null, lastResult: { action: action.type, result } });
           resolve(result);
         };
-        getSocket().emit("admin:command", { stepId: view.stepId, action }, finish);
+        getSocket().emit("admin:command", { stepId: stepId ?? view.stepId, action }, finish);
         window.setTimeout(() => finish({ ok: false, reason: "no-reply" }), COMMAND_TIMEOUT_MS);
       }),
 

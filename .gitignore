@@ -21,3 +21,6 @@ npm-debug.log*
 
 # one-time setup files (git bundle + script), deleted after setup
 .git-setup/
+
+# Playwright screenshots (scripts/admin-run.ts)
+screenshots/

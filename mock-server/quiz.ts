@@ -43,6 +43,7 @@ import {
   type ParticipantView,
   type Phase,
   type PodiumEntry,
+  type PodiumSummary,
   type PrimaryAction,
   type QuestionPreview,
   type QuizSettings,
@@ -1688,18 +1689,21 @@ export class QuizRoom {
           tied: this.finalistStates().filter((f) => this.sudden?.tiedIds.includes(f.id)),
           backing: this.backing(),
         };
-      case "podium": {
-        const entries = this.podiumEntries();
-        const winnerId = this.podium?.basis === "buzzer" ? entries[0]?.id : undefined;
-        return {
-          phase: "podium",
-          basis: this.podium!.basis,
-          entries,
-          calledIt: winnerId ? this.participants.filter((p) => p.status === "audience" && p.backingId === winnerId).length : 0,
-          backing: this.backing(),
-        };
-      }
+      case "podium":
+        return { phase: "podium", ...this.podiumSummary()!, backing: this.backing() };
     }
+  }
+
+  /** The final order and how many called it (Host podium and Admin). null before the podium. */
+  private podiumSummary(): PodiumSummary | null {
+    if (this.phase !== "podium" || !this.podium) return null;
+    const entries = this.podiumEntries();
+    const winnerId = this.podium.basis === "buzzer" ? entries[0]?.id : undefined;
+    return {
+      basis: this.podium.basis,
+      entries,
+      calledIt: winnerId ? this.participants.filter((p) => p.status === "audience" && p.backingId === winnerId).length : 0,
+    };
   }
 
   hostView(): HostView {
@@ -1968,6 +1972,7 @@ export class QuizRoom {
       backing: this.cutOrder ? this.backing() : null,
       canUndo: this.canUndo,
       lastMark: mark && markBy ? { by: this.tag(markBy), correct: mark.correct } : null,
+      podium: this.podiumSummary(),
     };
   }
 }

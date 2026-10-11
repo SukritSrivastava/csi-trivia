@@ -5,7 +5,7 @@
 > skills, agent roles, plugins and the frontend↔backend API. If you change anything it
 > describes, update this file in the same change (see §10 "Keeping this file true").
 >
-> Last updated: 11 Oct 2026 (night) · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
+> Last updated: 12 Oct 2026 · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
 
 ---
 
@@ -162,6 +162,7 @@ mock-server/server.ts       starts the Socket.IO server; validates incoming payl
 mock-server/simulate.ts     npm run simulate: 23 rule checks with a fake clock, 100-player games
 scripts/smoke.ts            npm run smoke: whole demo game over real Socket.IO
 scripts/bots.ts             npm run bots: N fake participants
+scripts/admin-run.ts        npm run admin-run: Playwright runs a whole game from Admin + screenshots
 server/                     placeholder for the real backend (teammate)
 public/finaldesign.html     the approved design, every animation
 public/questions/           question images (Host only)
@@ -173,7 +174,7 @@ src/components/host/useJoinUrl.ts   join link for phones (LAN address when the H
 src/stores/                 Zustand: hostStore, participantStore, adminStore
 src/lib/                    socket, session, useCountdown, useWakeLock, usePageVisibility, confetti, format, adminLabels
 ```
-**Leftovers to delete (they break the typecheck; Prompt 1 does it):** `src/components/host/HostApp.tsx`,
+**Leftovers (removed 12 Oct, backed up outside the repo; listed for history):** `src/components/host/HostApp.tsx`,
 `HostTopBar.tsx`, `LobbyStage.tsx`, `PlaceholderStages.tsx`; the whole `src/components/play/`;
 `src/components/admin/AdminApp.tsx`; `src/stores/playerStore.ts`; `src/lib/usePageAway.ts`;
 `src/components/ui/Avatar.tsx`.
@@ -256,8 +257,8 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 - 🟡 Temporary `/host`, `/play`, `/admin` restyled in the final look, `/host` with the projector stage (`TempStage`).
 
 ### Next
-1. ⬜ **Prompt 1, design foundation check:** git setup (`.git-setup/setup.ps1` exists; read it first), delete the leftovers (§2.4), `npm install`, make typecheck/build/simulate/smoke pass, extend `smoke` (bots, moods, 1–4 order), `bots.ts` picks a free bot, screenshots vs `finaldesign.html`.
-2. ⬜ **Prompt 2, Admin screen** (phone-first control panel in the corridor look).
+1. 🟡 **Prompt 1, design foundation check** (partly, 12 Oct: git on `frontend` from the bundle, leftovers removed, `npm install`, all four checks green, Playwright installed; still to do: the extra smoke tests for bots/moods/1–4 order and `bots.ts` picking a free bot): git setup (`.git-setup/setup.ps1` exists; read it first), delete the leftovers (§2.4), `npm install`, make typecheck/build/simulate/smoke pass, extend `smoke` (bots, moods, 1–4 order), `bots.ts` picks a free bot, screenshots vs `finaldesign.html`.
+2. 🟡 **Prompt 2, Admin screen**: built 12 Oct (`src/components/admin/`), verified with `npm run admin-run` (41 checks, demo + event preset with 80 bots); waiting for Sukrit's approval.
 3. ⬜ **Prompt 3, Participant screens** (join, bot builder, answers 1–4, results with bot, buzzer, podium).
 4. ⬜ **Prompt 4, Host screens** (corridor, cast wall, motion, sound).
 5. ⬜ **Prompt 5, event-proofing** (failure drills, 100-bot scale test, design QA, run sheet, backend notes, deploy notes).
@@ -409,7 +410,7 @@ with **`options` 1–4** plus `answered`/`expected`; `r1Reveal` has `correctText
 `hint`, **`allowed: AdminActionType[]`**, `timer`, `paused`, `question: AdminQuestion` (**with
 the answer**), `nextQuestion`, `counts` (+ `answered`/`expected`), `participants: AdminParticipant[]`
 (connected, status, score, rank, points, answered, `leftPageCount`, `pageHidden`, `backingId`),
-`round2`, `finalists`, `backing`, `canUndo`, `lastMark`, `roomCodeVisible`, `soundOn`.
+`round2`, `finalists`, `backing`, `canUndo`, `lastMark`, `roomCodeVisible`, `soundOn`, **`podium`** (`PodiumSummary`: `basis`, `entries`, `calledIt`; podium only).
 
 Shared types: `ParticipantTag { id, name, color, head }`, `CastMember = ParticipantTag & { mood }`,
 `BotMood = "idle"|"thinking"|"locked"|"right"|"wrong"|"out"`, `BotHead` (8), `PARTICIPANT_COLORS` (12),
@@ -490,6 +491,7 @@ Whichever is chosen: record it in §1.3 and §4.
 | Date | Change | Screens must |
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
+| 12 Oct 2026 | `AdminView.podium` (`PodiumSummary`, or null before the podium) (same data as the Host podium stage) | Admin shows the winner; the real backend must send it on the podium |
 | 11 Oct 2026 (night) | `ParticipantTag.head`; `PARTICIPANT_COLORS` = 12 bot colours; `BOT_HEADS`, `BotMood`, `BotLook`, `BotPicker`, `CastMember`; `HostView.cast`; lobby `botPicker`; `participant:bot` + `BotResult`; `Round1Question.options`; phones get the Host's order; `result.correctText` | draw bots everywhere a person appears; use `cast[i].mood`; number options 1–4 |
 
 ---
