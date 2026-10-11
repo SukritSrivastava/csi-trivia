@@ -233,7 +233,7 @@ question centred, hint under it. At 1920 px, 1% of the width ≈ 1.2rem (`html:h
 | Mock server | Node ≥ 20.9, **tsx** (`tsx watch mock-server/index.ts`) | `concurrently` runs web + game |
 | Tests | `mock-server/simulate.ts` (rules, fake clock), `scripts/smoke.ts` (real sockets), Playwright for screenshots | |
 | Game server = backend | `mock-server/` (Socket.IO, tsx) + **pg** to Supabase Postgres (`mock-server/db.ts`, the teammate's schema, on when `DATABASE_URL` is set) | decided 12 Oct, see §8.9 |
-| Hosting | Website on **Vercel**, game server on **Render** (`render.yaml`, `npm run start:game`), results in **Supabase** Postgres | decided 12 Oct; step by step in `docs/DEPLOY.md`; not deployed yet |
+| Hosting | Website on **Vercel**, game server on **Render** (`render.yaml`, `npm run start:game`), results in **Supabase** Postgres | live since 12 Oct; addresses and updating in `docs/DEPLOY.md` |
 
 npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `typecheck`, `simulate`, `smoke`, `bots`.
 
@@ -272,7 +272,7 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 ### Not in a phase yet
 - 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `mock-server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed Render server; merged into `main` on 12 Oct (branches: `main`, `frontend`, `backend`). Live test against the real Supabase passed 12 Oct.
 - ⬜ Write the **real Hermes questions** (round 1 count, 10+ buzzer questions plus spares) into `data/questions.json`.
-- ⬜ Deploy (follow `docs/DEPLOY.md`): frontend to Vercel, game server to Render (Blueprint `render.yaml`); set `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, `DATABASE_URL` (Supabase), `ADMIN_PIN`, `GAME_PRESET=event`.
+- ✅ **Deployed 12 Oct:** website https://hermes-quiz-nine.vercel.app (Vercel), game server https://hermes-quiz-game.onrender.com (Render, from `main`), results in Supabase. Live end-to-end test passed (41 checks, rows in Supabase). Details and how to update: `docs/DEPLOY.md`. Open: link the Vercel project to GitHub (needs the Vercel GitHub app on the repo owner's account) so the website redeploys on push.
 - ⬜ CSI club logo in a corner (optional, "later").
 - ⬜ Rehearsal in the actual hall with the real projector (brightness, hall lights, sound).
 

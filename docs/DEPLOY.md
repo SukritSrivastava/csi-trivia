@@ -1,5 +1,27 @@
 # Deploying Hermes Quiz
 
+## Live now (deployed 12 Oct 2026)
+
+| What | Where | Notes |
+|---|---|---|
+| Website (Vercel) | https://hermes-quiz-nine.vercel.app | project `hermes-quiz` on Sukrit's Vercel account. Host `/host`, Admin `/admin`, phones `/play` |
+| Game server (Render) | https://hermes-quiz-game.onrender.com (`/health` → `ok`) | service `hermes-quiz-game`, free plan, Singapore, branch `main`, event preset |
+| Results (Supabase) | project `etwobyrwvtrhmgolzctq`, Tokyo, Session pooler | tables `rooms`, `players`, `game_history`, row-level security on |
+
+Settings already in place: Render has `GAME_PRESET=event`, `ADMIN_PIN` (8 digits; ask Sukrit, it's not
+in the repo), `DATABASE_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (both the Vercel address), `NODE_VERSION=24`.
+Vercel has `NEXT_PUBLIC_SOCKET_URL=https://hermes-quiz-game.onrender.com`.
+
+**Updating it:**
+- Game server: push to `main`; Render redeploys by itself (or Render → the service → Manual Deploy).
+- Website: the Vercel project isn't linked to GitHub (that needs the Vercel GitHub app installed on the
+  repo owner's account). Until it is, redeploy from a laptop on `main`: `npx vercel login` once, then
+  `npx vercel deploy --prod` in the project folder (`.vercelignore` keeps `.env.local` out of the upload).
+- Verified live 12 Oct: `npm run admin-run -- --web https://hermes-quiz-nine.vercel.app --game https://hermes-quiz-game.onrender.com`
+  (set `ADMIN_PIN` first) passed all 41 checks, and the results landed in Supabase.
+
+The rest of this file is how it was set up, for doing it again from scratch.
+
 Three services, each doing one job:
 
 ```

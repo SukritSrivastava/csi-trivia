@@ -1,0 +1,9 @@
+﻿# Files the Vercel CLI must not upload (see docs/DEPLOY.md)
+.env*
+!.env.example
+screenshots
+.git-setup
+node_modules
+.next
+test-results
+*.tsbuildinfo
