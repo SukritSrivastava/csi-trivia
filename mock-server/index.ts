@@ -12,8 +12,11 @@
  *   WEB_PORT        default 3000 (only used to print the right links)
  *   PUBLIC_WEB_URL  the site's address once deployed (for the join link)
  *   CORS_ORIGIN     comma-separated allowed origins (default: any)
+ *   DATABASE_URL    Postgres (Supabase) connection string: saves rooms, scores and
+ *                   every Round 1 answer to the backend tables (db.ts). Unset = memory only.
  */
 import { type GameConfig, loadConfig } from "./config";
+import { Database } from "./db";
 import { getLanAddresses } from "./network";
 import { loadQuestions, pickRound1 } from "./questions";
 import { startGameServer } from "./server";
@@ -57,6 +60,7 @@ startGameServer({
   joinUrl,
   corsOrigin: process.env.CORS_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean),
   log: (message) => console.log(`  ${message}`),
+  database: Database.fromEnv((message) => console.log(`  ${message}`)),
 })
   .then(({ port }) => {
     const local = `http://localhost:${WEB_PORT}`;
@@ -65,6 +69,7 @@ startGameServer({
         "",
         `  Hermes Quiz mock game server on port ${port}`,
         `  ${config.name} preset: ${round1Count} Round 1 questions, top ${config.finalists}, ${config.round2.questions} buzzer questions`,
+        `  Results database: ${process.env.DATABASE_URL ? "on (DATABASE_URL)" : "off (set DATABASE_URL to save to Postgres/Supabase)"}`,
         "",
         `  Host (projector):  ${local}/host`,
         `  Admin:             ${local}/admin   (PIN ${ADMIN_PIN})`,

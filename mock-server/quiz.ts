@@ -158,6 +158,41 @@ interface LastMark {
 
 const randomId = () => randomUUID().replace(/-/g, "").slice(0, 12);
 
+/**
+ * Optional listener for saving results (mock-server/db.ts). The room calls it,
+ * never waits for it, and works the same without it.
+ */
+export interface QuizRecorder {
+  /** A Round 1 question was scored: one row per participant who played it. */
+  round1Scored(questionIndex: number, rows: AnswerRecord[]): void;
+  /** Its points were taken back (void, restart question, restart round). */
+  round1Unscored(questionIndex: number): void;
+}
+
+export interface AnswerRecord {
+  participantId: string;
+  /** Index into the question's options as written in questions.json; null = no answer. */
+  optionIndex: number | null;
+  correct: boolean;
+  points: number;
+  elapsedMs: number | null;
+}
+
+/** Everything worth saving about the room right now (see RoomManager, db.ts). */
+export interface RoomSnapshot {
+  phase: Phase;
+  /** Current Round 1 question (0-based) or buzzer question number, -1 before any. */
+  questionIndex: number;
+  players: {
+    id: string;
+    name: string;
+    status: ParticipantStatus;
+    score: number;
+    round1Rank: number | null;
+    buzzerPoints: number;
+  }[];
+}
+
 const ROUND1_QUESTION_PHASES: Phase[] = ["r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "r1Results", "r1Leaderboard"];
 const ROUND1_PHASES: Phase[] = ["r1Intro", ...ROUND1_QUESTION_PHASES];
 const ROUND2_QUESTION_PHASES: Phase[] = ["r2Read", "r2BuzzOpen", "r2Answering", "r2Reveal"];
@@ -169,6 +204,8 @@ const ROUND2_PHASES: Phase[] = ["r2Intro", ...ROUND2_QUESTION_PHASES, "r2Scores"
 
 export class QuizRoom {
   readonly hostToken = randomUUID();
+  /** Set by the server to save results; null in tests. */
+  recorder: QuizRecorder | null = null;
 
   private participants: Participant[] = [];
   private phase: Phase = "lobby";
@@ -559,6 +596,7 @@ export class QuizRoom {
   private scoreRound1(run: Round1Run) {
     const { maxPoints, minCorrectPoints } = this.config.scoring;
     const rankBefore = new Map(this.round1Ranking().map((p, i) => [p.id, i + 1]));
+    const records: AnswerRecord[] = [];
     for (const p of this.participants) {
       if (!this.playsQuestion(p, run)) continue;
       const a = run.answers.get(p.id);
@@ -577,9 +615,17 @@ export class QuizRoom {
       p.playedTimeMs += timeMs;
       p.change = points;
       run.applied.set(p.id, { points, timeMs });
+      records.push({
+        participantId: p.id,
+        optionIndex: a ? a.optionIndex : null,
+        correct: !!a && a.optionIndex === run.question.correct,
+        points,
+        elapsedMs: a ? a.elapsedMs : null,
+      });
     }
     run.scored = true;
     this.r1Scored.set(run.index, true);
+    this.recorder?.round1Scored(run.index, records);
     this.changed();
   }
 
@@ -596,6 +642,7 @@ export class QuizRoom {
     run.applied.clear();
     run.scored = false;
     this.r1Scored.delete(run.index);
+    this.recorder?.round1Unscored(run.index);
   }
 
   /** "End round 1": freeze the ranking, top N become finalists, the rest the audience. */
@@ -803,6 +850,7 @@ export class QuizRoom {
         } satisfies Partial<Participant>);
       }
       this.r1 = null;
+      for (const index of this.r1Scored.keys()) this.recorder?.round1Unscored(index);
       this.r1Scored.clear();
       this.cutOrder = null;
       this.go("r1Intro");
@@ -1921,6 +1969,23 @@ export class QuizRoom {
       };
     }
     return null;
+  }
+
+  /** What db.ts saves: the step and everyone's standing. */
+  snapshot(): RoomSnapshot {
+    const rank = this.round1RankMap();
+    return {
+      phase: this.phase,
+      questionIndex: this.r2 ? this.r2.number : this.r1 ? this.r1.index : -1,
+      players: this.participants.map((p) => ({
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        score: p.score,
+        round1Rank: rank.get(p.id) ?? null,
+        buzzerPoints: p.points,
+      })),
+    };
   }
 
   private adminParticipants(): AdminParticipant[] {

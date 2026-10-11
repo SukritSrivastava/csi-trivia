@@ -70,6 +70,10 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - `npm run dev` (demo preset) / `npm run dev:event`: Next.js on 3000 + mock server on 3001.
 - `npm run bots -- --room ABCD --count 80`: fake participants for scale tests.
 - `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
+- `npm run db-check`: plays a game with the results database on (in-memory Postgres) and checks the rows.
+- The backend is `mock-server/` (decided 12 Oct). `DATABASE_URL` (Supabase) turns on `mock-server/db.ts`,
+  which saves to the teammate's `backend/db.js` tables (additive columns only). `quiz.ts` stays I/O-free:
+  it calls `room.recorder` (`QuizRecorder`) and exposes `snapshot()`.
 - `npm run admin-run [-- --bots 80 --out screenshots/x]` (with `npm run dev` running): Playwright drives a
   whole game from Admin (3 devices), 41 checks, screenshots in `screenshots/` (git-ignored).
 - `next dev` appends a Next.js block to `AGENTS.md`; that's expected, keep it committed.

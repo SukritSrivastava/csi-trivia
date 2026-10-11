@@ -2,7 +2,7 @@
   "name": "hermes-quiz",
   "version": "0.1.0",
   "private": true,
-  "description": "Hermes Quiz: a live MCQ quiz for 60â€“100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
+  "description": "Hermes Quiz: a live MCQ quiz for 60Ã¢â‚¬â€œ100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
   "scripts": {
     "dev": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"npm:dev:game\"",
     "dev:event": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"tsx watch mock-server/index.ts --preset event\"",
@@ -14,13 +14,15 @@
     "simulate": "tsx mock-server/simulate.ts",
     "smoke": "tsx scripts/smoke.ts",
     "bots": "tsx scripts/bots.ts",
-    "admin-run": "tsx scripts/admin-run.ts"
+    "admin-run": "tsx scripts/admin-run.ts",
+    "db-check": "tsx scripts/db-check.ts"
   },
   "dependencies": {
     "@number-flow/react": "^0.6.2",
     "canvas-confetti": "^1.9.4",
     "motion": "^12.38.0",
     "next": "^16.4.0",
+    "pg": "^8.23.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -32,9 +34,11 @@
     "@tailwindcss/postcss": "^4.1.0",
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "concurrently": "^9.2.1",
+    "pg-mem": "^3.0.14",
     "playwright": "^1.64.0",
     "tailwindcss": "^4.1.0",
     "tsx": "^4.20.0",

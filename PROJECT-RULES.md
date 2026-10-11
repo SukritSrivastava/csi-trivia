@@ -93,6 +93,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 11 Oct | Bot eyes show the game: idle / thinking / locked / right / wrong / out, computed by the server (`HostView.cast`). |
 | 11 Oct | One 1–4 answer order on the Host and every phone in Round 1 (no per-phone shuffle). |
 | 11 Oct | Host cast: up to 12 bots in a named row; 13+ as a dense wall of smaller bots without names. |
+| 12 Oct | **Backend = option 1 (§8.9):** the game server in `mock-server/` is the real backend; the teammate's Postgres/Supabase tables (`backend/db.js`) are wired in via `mock-server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
 
 ---
 
@@ -159,9 +160,11 @@ mock-server/config.ts       presets: every timing and count
 mock-server/quiz.ts         all the rules (QuizRoom), no socket code
 mock-server/rooms.ts        Socket.IO glue: roles, PIN, rooms, sending views
 mock-server/server.ts       starts the Socket.IO server; validates incoming payloads
+mock-server/db.ts           saves results to Postgres/Supabase (teammate's tables) when DATABASE_URL is set
 mock-server/simulate.ts     npm run simulate: 23 rule checks with a fake clock, 100-player games
 scripts/smoke.ts            npm run smoke: whole demo game over real Socket.IO
 scripts/bots.ts             npm run bots: N fake participants
+scripts/db-check.ts         npm run db-check: a game over sockets with an in-memory Postgres; checks the saved rows
 scripts/admin-run.ts        npm run admin-run: Playwright runs a whole game from Admin + screenshots
 server/                     placeholder for the real backend (teammate)
 public/finaldesign.html     the approved design, every animation
@@ -227,7 +230,7 @@ question centred, hint under it. At 1920 px, 1% of the width ≈ 1.2rem (`html:h
 | Fonts | `next/font/google`: Special Elite, VT323, Archivo (wdth axis) | |
 | Mock server | Node ≥ 20.9, **tsx** (`tsx watch mock-server/index.ts`) | `concurrently` runs web + game |
 | Tests | `mock-server/simulate.ts` (rules, fake clock), `scripts/smoke.ts` (real sockets), Playwright for screenshots | |
-| Real backend (teammate, in progress) | Node, currently raw **`ws`** + **pg** (Supabase Postgres) / sqlite3 | **Not yet on the contract**; see §8.9 |
+| Game server = backend | `mock-server/` (Socket.IO, tsx) + **pg** to Supabase Postgres (`mock-server/db.ts`, the teammate's schema, on when `DATABASE_URL` is set) | decided 12 Oct, see §8.9 |
 | Hosting plan | Frontend on **Vercel**; game server on **Render** (or similar, WebSocket-capable) | not deployed yet |
 
 npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `typecheck`, `simulate`, `smoke`, `bots`.
@@ -241,6 +244,7 @@ Environment variables (`.env.local`, see `.env.example`):
 | `GAME_PORT` / `WEB_PORT` | `3001` / `3000` | server (web port only for printed links) |
 | `PUBLIC_WEB_URL` | `http://<LAN-IP>:3000` | server: builds the join link |
 | `CORS_ORIGIN` | any | server: comma-separated allowed origins |
+| `DATABASE_URL` | unset (memory only) | server: Postgres/Supabase; saves rooms, players, every Round 1 answer |
 
 ---
 
@@ -264,9 +268,9 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 5. ⬜ **Prompt 5, event-proofing** (failure drills, 100-bot scale test, design QA, run sheet, backend notes, deploy notes).
 
 ### Not in a phase yet
-- ⬜ **Backend alignment (blocking for the event):** the teammate's `backend/` uses a different protocol (§8.9). Agree on the path and finish it.
+- 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `mock-server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed server and try it against the real Supabase; the teammate reviews the `frontend` branch and merges.
 - ⬜ Write the **real Hermes questions** (round 1 count, 10+ buzzer questions plus spares) into `data/questions.json`.
-- ⬜ Deploy: frontend to Vercel, game server to Render; set `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, `ADMIN_PIN`, `GAME_PRESET=event`.
+- ⬜ Deploy: frontend to Vercel, game server to Render; set `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, `DATABASE_URL` (Supabase), `ADMIN_PIN`, `GAME_PRESET=event`.
 - ⬜ CSI club logo in a corner (optional, "later").
 - ⬜ Rehearsal in the actual hall with the real projector (brightness, hall lights, sound).
 
@@ -478,7 +482,9 @@ different, earlier design:
 | Questions | `data/questions.json` `{id, round, text, image, options[4], correct}` | `backend/questions.json` `{question, options, correctOption}` |
 | Extras | bots, moods, reconnect, wake lock, CSV | Postgres (`DATABASE_URL`, Supabase) / sqlite tables `rooms`, `players`, `game_history` |
 
-**Options (the team decides; recommended first):**
+**Decided 12 Oct 2026: option 1.** What was done: `mock-server/db.ts` ports `backend/db.js` (same `rooms`, `players`, `game_history` tables, same `DATABASE_URL`, SSL for Supabase). It only **adds** columns: `players.name/status/round1_rank/buzzer_points`, `game_history.round/answer_ms`. `rooms.room_code` = code + creation time in UTC (e.g. `KJSC-2026-10-12T13:35`) so codes reused on another night never mix. Writes are queued in the background (a room at most every 2 s, answers as each question is scored, removed again on void/restart), and a DB failure is logged and never stops the quiz. `backend/` on `main` is untouched.
+
+**Options that were considered (recommended first):**
 1. **Recommended:** the real server *is* `mock-server/` (already complete and tested against this
    contract): deploy it to Render as-is, and add the teammate's Postgres persistence (`db.js`:
    save room state, scores, answer log) behind `quiz.ts` without changing the contract.

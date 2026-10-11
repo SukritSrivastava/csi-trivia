@@ -22,6 +22,7 @@ import {
   type ServerToClientEvents,
 } from "../src/shared/protocol";
 import type { GameConfig } from "./config";
+import type { Database, RoomRecorder } from "./db";
 import { loadQuestions } from "./questions";
 import { type Clock, QuizRoom, realClock } from "./quiz";
 
@@ -46,6 +47,9 @@ interface RoomEntry {
   screensSentAt: number;
   screensStep: number;
   screensTimer: NodeJS.Timeout | null;
+  /** Saves to the database (null without DATABASE_URL). */
+  recorder: RoomRecorder | null;
+  saveTimer: NodeJS.Timeout | null;
 }
 
 export interface RoomManagerOptions {
@@ -55,7 +59,12 @@ export interface RoomManagerOptions {
   questionsFile?: string;
   clock?: Clock;
   log?: (message: string) => void;
+  /** Saves results to Postgres when set (DATABASE_URL). */
+  database?: Database | null;
 }
+
+/** The room is saved to the database at most this often while it changes. */
+const SAVE_EVERY_MS = 2000;
 
 /** Host/Admin views between step changes: at most this often. */
 const SCREEN_THROTTLE_MS = 150;
@@ -116,7 +125,10 @@ export class RoomManager {
       screensSentAt: 0,
       screensStep: -1,
       screensTimer: null,
+      recorder: this.options.database?.forRoom(code) ?? null,
+      saveTimer: null,
     };
+    entry.room.recorder = entry.recorder;
     this.rooms.set(code, entry);
     socket.data = { roomCode: code, role: "host" };
     this.queueFlush(code);
@@ -253,6 +265,8 @@ export class RoomManager {
       this.io.to(socketId).emit("room:closed", { reason });
     }
     if (entry.screensTimer) clearTimeout(entry.screensTimer);
+    if (entry.saveTimer) clearTimeout(entry.saveTimer);
+    entry.recorder?.save(entry.room.snapshot());
     entry.room.dispose();
     this.rooms.delete(code);
     this.log(`[room ${code}] closed: ${reason}`);
@@ -267,12 +281,24 @@ export class RoomManager {
 
   private queueFlush(code: string) {
     const entry = this.rooms.get(code);
-    if (!entry || entry.flushQueued) return;
+    if (!entry) return;
+    this.queueSave(entry);
+    if (entry.flushQueued) return;
     entry.flushQueued = true;
     queueMicrotask(() => {
       entry.flushQueued = false;
       if (this.rooms.get(code) === entry) this.flush(entry);
     });
+  }
+
+  /** Saves the room to the database a little later (one write for a burst of changes). */
+  private queueSave(entry: RoomEntry) {
+    if (!entry.recorder || entry.saveTimer) return;
+    entry.saveTimer = setTimeout(() => {
+      entry.saveTimer = null;
+      if (this.rooms.get(entry.room.code) === entry) entry.recorder?.save(entry.room.snapshot());
+    }, SAVE_EVERY_MS);
+    entry.saveTimer.unref?.();
   }
 
   /** True if this view differs from the last one sent to that socket. */

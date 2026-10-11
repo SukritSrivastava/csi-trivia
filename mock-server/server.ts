@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { Server } from "socket.io";
 import { ADMIN_ACTION_TYPES, type AdminAction, type AdminActionType, type BotResult, NAME_MAX_LENGTH } from "../src/shared/protocol";
 import type { GameConfig } from "./config";
+import type { Database } from "./db";
 import type { Clock } from "./quiz";
 import { type GameServer, RoomManager } from "./rooms";
 
@@ -26,6 +27,8 @@ export interface GameServerOptions {
   questionsFile?: string;
   clock?: Clock;
   log?: (message: string) => void;
+  /** Saves results to Postgres (see db.ts). Optional. */
+  database?: Database | null;
 }
 
 export interface RunningGameServer {
@@ -61,6 +64,7 @@ export function startGameServer(options: GameServerOptions): Promise<RunningGame
     questionsFile: options.questionsFile,
     clock: options.clock,
     log: options.log,
+    database: options.database,
   });
 
   io.on("connection", (socket) => {
