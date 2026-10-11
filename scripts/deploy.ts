@@ -70,7 +70,7 @@ function vercel() {
     encoding: "utf8",
   });
   if (run.status !== 0) throw new Error("Vercel deploy failed (see above).");
-  console.log(`Vercel: deployed ${run.stdout.trim().split(/\s+/).find((w) => w.startsWith("https://")) ?? ""}`);
+  console.log(`Vercel: deployed ${run.stdout.match(/https:\/\/[^\s"',]+/)?.[0] ?? ""}`);
 }
 
 async function main() {
