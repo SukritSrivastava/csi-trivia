@@ -8,8 +8,8 @@
 | Game server (Render) | https://hermes-quiz-game.onrender.com (`/health` → `ok`) | service `hermes-quiz-game`, free plan, Singapore, branch `main`, event preset |
 | Results (Supabase) | project `etwobyrwvtrhmgolzctq`, Tokyo, Session pooler | tables `rooms`, `players`, `game_history`, row-level security on |
 
-Settings already in place: Render has `GAME_PRESET=event`, `ADMIN_PIN` (8 digits; ask Sukrit, it's not
-in the repo), `DATABASE_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (both the Vercel address), `NODE_VERSION=24`.
+Settings already in place: Render has `GAME_PRESET=event`, `ADMIN_PIN` (ask Sukrit; it's not in the
+repo, which is public), `DATABASE_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (both the Vercel address), `NODE_VERSION=24`.
 Vercel has `NEXT_PUBLIC_SOCKET_URL=https://hermes-quiz-game.onrender.com`.
 
 **Updating it: `npm run deploy`** (on `main`, committed and pushed). It starts a Render deploy of the

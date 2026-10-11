@@ -54,7 +54,10 @@ export function SignIn() {
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             type="password"
-            inputMode="numeric"
+            // The PIN can have letters (e.g. CSI_JB): normal keyboard, capitals on, no autocorrect.
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
             autoComplete="current-password"
             name="pin"
           />
