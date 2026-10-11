@@ -6,7 +6,7 @@ Then read `docs/SPEC.md` (game rules), `src/shared/protocol.ts` (the contract) a
 `public/finaldesign.html` (the approved design).
 
 ## Must-follow rules (details in PROJECT-RULES.md §1)
-1. Never `git push` unless Sukrit says "push". Commit locally on the `frontend` branch only.
+1. Branches: `main` (whole app, deployed), `frontend` and `backend` off it; merge into `main` only with all checks green. Never change the approved design without asking Sukrit.
 2. The server is the source of truth. Screens never compute game state, scores, timers or bot moods.
 3. Never send the correct answer to phones or the Host before the reveal.
 4. Contract first: change `src/shared/protocol.ts`, then `mock-server/`, then the screens, then PROJECT-RULES.md §8.

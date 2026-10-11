@@ -47,7 +47,7 @@ Table Editor.
 ## 2. Render: the game server
 
 1. render.com → sign in with GitHub → **New** → **Blueprint** → pick `Leleouch14/jackbox_2.0`.
-   Render reads `render.yaml` (branch `frontend`, `npm ci`, `npm run start:game`, health check `/health`,
+   Render reads `render.yaml` (branch `main`, `npm ci`, `npm run start:game`, health check `/health`,
    `GAME_PRESET=event`).
 2. It asks for the secret values:
    | Key | Value |
@@ -59,14 +59,14 @@ Table Editor.
 3. **Apply**. When it's live, note its address, e.g. `https://hermes-quiz-game.onrender.com`.
    Open `<that address>/health`: it should say `ok`. The log should say `Results database: on`.
 
-(Without the Blueprint: New → Web Service, same repo and branch, Build `npm ci`, Start
+(Without the Blueprint: New → Web Service, same repo, branch `main`, Build `npm ci`, Start
 `npm run start:game`, add the env vars above plus `GAME_PRESET=event`. Don't set a port: Render's
 `PORT` is used automatically.)
 
 ## 3. Vercel: the website
 
 1. vercel.com → **Add New** → **Project** → import `Leleouch14/jackbox_2.0`. It detects Next.js.
-2. Production branch: `frontend` (Project → Settings → Git) until it's merged into `main`.
+2. Production branch: `main` (the default).
 3. Environment variable (before the first deploy; it's built into the pages):
    | Key | Value |
    |---|---|

@@ -12,7 +12,9 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 
 ## Rules of this codebase
 
-- NEVER `git push` unless the user explicitly says "push". Commit locally on `frontend` only.
+- Branches: `main` = the whole app, what's deployed. `frontend` (screens, `src/`) and `backend`
+  (`mock-server/`, `db.ts`, `backend/`) branch off `main` and merge back when all checks pass. Sukrit
+  (12 Oct) allowed commits, pushes and merges without asking; ask only before changing the approved design.
 - The server is the source of truth. Screens send actions and render the view they receive;
   they never compute game state.
 - Every event and view type lives in `src/shared/protocol.ts`. Change the contract there first,

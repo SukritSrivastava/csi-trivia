@@ -6,7 +6,7 @@ services:
     name: hermes-quiz-game
     runtime: node
     plan: free
-    branch: frontend # switch to main once the frontend branch is merged
+    branch: main # what's live; frontend/backend are merged into main
     buildCommand: npm ci
     startCommand: npm run start:game
     healthCheckPath: /health

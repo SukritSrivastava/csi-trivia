@@ -58,7 +58,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 ### 1.1 Hard rules (never break these)
 | # | Rule | Why |
 |---|---|---|
-| C1 | **Never `git push`** unless Sukrit literally says "push". Commit locally on the **`frontend`** branch only. | Shared repo; the teammate works on `main`/backend. |
+| C1 | **Branches:** `main` = the whole app (what Render and Vercel deploy). `frontend` (screens) and `backend` (game server, database) branch off `main`; merge back only with all checks green. Pushing is allowed (Sukrit, 12 Oct). | One deployable truth; two people work side by side. |
 | C2 | **The server is the source of truth.** Screens send actions and draw the view they receive. They never compute game state, scores, timers, ranks or bot moods. | 100 phones must agree; nobody can cheat by editing the page. |
 | C3 | **No answer leaks.** Phones and the Host never receive the correct answer before the reveal. Only Admin gets it. Option ids and question ids are opaque random strings, new for every question run. | The projector laptop may be screen-shared; phones can be inspected. |
 | C4 | **Contract first.** Every event and view type lives in `src/shared/protocol.ts`. To change the API: edit it there → implement in `mock-server/` → follow the TypeScript errors → update §8 of this file → tell the backend teammate. | Two people build against one contract. |
@@ -270,7 +270,7 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 5. ⬜ **Prompt 5, event-proofing** (failure drills, 100-bot scale test, design QA, run sheet, backend notes, deploy notes).
 
 ### Not in a phase yet
-- 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `mock-server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed server and try it against the real Supabase; the teammate reviews the `frontend` branch and merges.
+- 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `mock-server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed Render server; merged into `main` on 12 Oct (branches: `main`, `frontend`, `backend`). Live test against the real Supabase passed 12 Oct.
 - ⬜ Write the **real Hermes questions** (round 1 count, 10+ buzzer questions plus spares) into `data/questions.json`.
 - ⬜ Deploy (follow `docs/DEPLOY.md`): frontend to Vercel, game server to Render (Blueprint `render.yaml`); set `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, `DATABASE_URL` (Supabase), `ADMIN_PIN`, `GAME_PRESET=event`.
 - ⬜ CSI club logo in a corner (optional, "later").
@@ -311,7 +311,7 @@ Copilot and Gemini read automatically. The full version is here.
 4. Keep the four checks green (C11). Never push (C1).
 5. Finish with a report: what you changed, how you verified it, URLs to test, a checklist for
    Sukrit, assumptions, anything left undone. Update §4 (to-do) and anything else here that changed.
-6. Commit locally on `frontend` with a clear message (`Phase N: …` for phase work).
+6. Commit on `frontend` or `backend` with a clear message (`Phase N: …` for phase work), push, merge into `main` when green.
 
 ### 6.2 Roles (one agent can hold several; never two agents on the same files at once)
 | Role | Owns (may edit) | Must not edit | Done when |
