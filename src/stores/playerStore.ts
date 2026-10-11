@@ -9,21 +9,25 @@ import type { ConnectionStatus } from "./hostStore";
 interface PlayerStore {
   status: ConnectionStatus;
   view: PlayerView | null;
+  /** server clock − this device's clock */
   clockOffset: number;
   joining: boolean;
-  /** Shown on the join form. */
+  /** Message on the join form (an error, or why you were sent back to it). */
   notice: string | null;
-
-  /** Optimistic UI: what this phone already sent, so it can move on before the server replies. */
-  sentPromptId: string | null;
-  votedFor: string | null;
+  /** True while trying to rejoin a saved session after a refresh. */
+  resuming: boolean;
+  /**
+   * The option this phone tapped, shown as "Locked in" straight away, before
+   * the server confirms. Option ids are new for every question, so a stale
+   * one never matches the next question.
+   */
+  tapped: { optionId: string; text: string } | null;
 
   connect: () => () => void;
   join: (roomCode: string, name: string) => void;
-  answer: (promptId: string, text: string) => void;
-  vote: (answerId: string) => void;
-  start: () => void;
-  restart: () => void;
+  answer: (questionId: string, option: { id: string; text: string }) => void;
+  predict: (finalistId: string) => void;
+  buzz: () => void;
   leave: () => void;
 }
 
@@ -33,28 +37,29 @@ export const usePlayerStore = create<PlayerStore>()((set, get) => ({
   clockOffset: 0,
   joining: false,
   notice: null,
-  sentPromptId: null,
-  votedFor: null,
+  resuming: false,
+  tapped: null,
 
   connect: () => {
     const socket = getSocket();
 
     const onConnect = () => {
       set({ status: "online" });
-      // Phone locked, Wi-Fi blipped or page refreshed: quietly rejoin as the same player.
+      // Refresh, locked phone or Wi-Fi blip: quietly rejoin as the same player.
       const saved = loadPlayerSession();
       if (!saved) return;
+      set({ resuming: true });
       socket.emit("player:join", { roomCode: saved.roomCode, name: "", playerId: saved.playerId }, (result) => {
+        set({ resuming: false });
         if (!result.ok) {
           savePlayerSession(null);
-          set({ view: null, notice: "That game has ended. Join a new one." });
+          set({ view: null, notice: JOIN_ERROR_MESSAGES[result.error] ?? "That quiz has ended." });
         }
       });
     };
     const onDisconnect = () => set({ status: "offline" });
-    const onConnectError = () => set({ status: "offline" });
-    const onState = (view: PlayerView) =>
-      set({ view, clockOffset: view.serverNow - Date.now() });
+    const onConnectError = () => set({ status: "offline", resuming: false });
+    const onState = (view: PlayerView) => set({ view, clockOffset: view.serverNow - Date.now() });
     const onClosed = ({ reason }: { reason: string }) => {
       savePlayerSession(null);
       set({ view: null, notice: reason });
@@ -65,6 +70,7 @@ export const usePlayerStore = create<PlayerStore>()((set, get) => ({
     socket.on("connect_error", onConnectError);
     socket.on("player:state", onState);
     socket.on("room:closed", onClosed);
+    if (loadPlayerSession()) set({ resuming: true });
     socket.connect();
 
     return () => {
@@ -80,6 +86,7 @@ export const usePlayerStore = create<PlayerStore>()((set, get) => ({
   join: (roomCode, name) => {
     if (get().joining) return;
     set({ joining: true, notice: null });
+    const attempt = Date.now();
     getSocket().emit("player:join", { roomCode, name }, (result) => {
       set({ joining: false });
       if (result.ok) {
@@ -89,30 +96,27 @@ export const usePlayerStore = create<PlayerStore>()((set, get) => ({
         set({ notice: JOIN_ERROR_MESSAGES[result.error] });
       }
     });
-    // If the game server isn't reachable, the ack never comes. Don't leave the button stuck.
+    // If the game server can't be reached, the reply never comes. Don't leave the button stuck.
     window.setTimeout(() => {
-      if (get().joining) {
-        set({ joining: false, notice: "Can't reach the game. Check you're on the same Wi-Fi as the TV." });
+      if (get().joining && Date.now() - attempt >= 8000) {
+        set({ joining: false, notice: "Can't reach the quiz. Check your internet and try again." });
       }
     }, 8000);
   },
 
-  answer: (promptId, text) => {
-    set({ sentPromptId: promptId });
-    getSocket().emit("player:answer", { promptId, text });
+  answer: (questionId, option) => {
+    if (get().tapped?.optionId === option.id) return;
+    set({ tapped: { optionId: option.id, text: option.text } });
+    getSocket().emit("player:answer", { questionId, optionId: option.id });
   },
 
-  vote: (answerId) => {
-    set({ votedFor: answerId });
-    getSocket().emit("player:vote", { answerId });
-  },
+  predict: (finalistId) => getSocket().emit("player:predict", { finalistId }),
 
-  start: () => getSocket().emit("player:start"),
-  restart: () => getSocket().emit("player:restart"),
+  buzz: () => getSocket().emit("player:buzz"),
 
   leave: () => {
     savePlayerSession(null);
-    set({ view: null, notice: null });
+    set({ view: null, notice: null, tapped: null });
     // Reconnect fresh so the server forgets this socket's old seat.
     const socket = getSocket();
     socket.disconnect();

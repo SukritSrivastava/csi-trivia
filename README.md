@@ -1,107 +1,73 @@
-# Roomful (working title)
+# Hermes Quiz
 
-A Jackbox-style party game. One screen everyone can see (laptop or TV) runs the
-show, and every player uses their phone's browser as the controller. No app to
-install.
+A live elimination quiz for 60–100 players. Questions run on the projector,
+everyone answers on their phone, and each round cuts the field until two
+finalists meet in a buzzer duel. Rules: [docs/SPEC.md](docs/SPEC.md).
 
-## Run it
+## Run it locally
 
-You need **Node.js 20.9 or newer** (`node -v` to check).
+Needs **Node.js 20.9+**.
 
 ```powershell
 npm install
 npm run dev
 ```
 
-That starts two things together:
+`npm run dev` starts the website (port 3000) and the **mock game server** (port 3001)
+with the short **demo** preset (3 rounds of the 3 demo questions, then the duel).
 
-| What | Where | Job |
+| Screen | Address | Who uses it |
 |---|---|---|
-| Website (Next.js) | port 3000 | the TV screen and the phone controller |
-| Game server (Socket.IO) | port 3001 | holds every room and runs the rules |
+| Projector | http://localhost:3000/host | the laptop on the projector |
+| Phones | shown on the projector (e.g. http://192.168.1.5:3000/play) | players, same Wi-Fi |
+| Organiser | http://localhost:3000/admin (PIN **1234**) | starts the quiz, pauses, judges the duel |
 
-Then:
+Testing alone: open `/play` in a few browser tabs (each tab is its own player),
+then start from `/admin`. Windows Firewall may ask about Node.js the first time;
+allow it on private networks so phones can connect.
 
-1. On the laptop, open **http://localhost:3000/host**. A room code appears.
-2. On phones on the **same Wi-Fi**, open the address shown on the TV (or scan the QR code).
-3. The first player to join is the VIP and presses Start once 3+ players are in.
+To run the full event format instead: `$env:GAME_PRESET="event"; npm run dev`
 
-The first time, Windows Firewall may ask about Node.js. Allow it on **private
-networks**, or phones won't be able to connect.
+## Questions
 
-**Testing alone?** Open `http://localhost:3000/play` in three normal browser tabs and
-join with different names (each tab is its own player). The **Skip** button on
-the TV ends any timer early.
+All questions live in [data/questions.json](data/questions.json): MCQ only, 4 options,
+`correct` is the index (0–3) of the right one. Images go in `public/questions/`.
+Options are shuffled per phone automatically.
 
-## How it works
+## How it fits together
 
 ```
- phones ──actions──▶ game server ──views──▶ TV
-   ▲                     │
-   └──── private view ───┘
+ phones ──actions──▶ game server ──views──▶ projector
+   ▲                      │
+   └──── private view ────┘     organiser ──controls──▶ game server
 ```
 
-- The **server owns the game**. Screens never decide anything. A phone sends an
-  action ("I voted for this answer"), the server updates the room, then sends every
-  screen a fresh view.
-- Every phone gets **its own view**, so players can see things nobody else can (their
-  own prompts, for example).
-- `src/shared/protocol.ts` is the contract: every event and every view shape. Both
-  sides import it, so if you change a type, TypeScript shows everything that needs updating.
+- The **server owns the game**: timers, scoring, cuts, shuffling, the duel.
+  Screens send actions and draw the view they get back.
+- [src/shared/protocol.ts](src/shared/protocol.ts) is the contract: every event and view.
+- `mock-server/` runs the whole quiz so the frontend works on its own.
+  `server/` is where the real backend goes.
 
 ## Folder map
 
 ```
-server/
-  index.ts       Socket.IO server: wires events to the room manager
-  rooms.ts       which socket belongs to which room and player; sends views
-  game.ts        the rules: phases, prompts, voting, scoring (no sockets here)
-  prompts.ts     the prompt bank. Add more!
-  simulate.ts    plays whole fake games to check the rules (npm run simulate)
-src/
-  shared/protocol.ts    the contract between server and screens
-  app/                  pages: / (home), /host (TV), /play (phone)
-  components/host/      one component per TV phase: Lobby, Intro, Answer, Vote, Reveal, Scores, End
-  components/play/      phone screens: JoinForm, Lobby, Answer, Vote, Wait, End
-  components/ui/        Avatar, TimerRing
-  stores/               Zustand stores: socket events in, state out
-  lib/                  socket connection, countdown, wake lock, session storage
+data/questions.json           the questions
+mock-server/                  mock game server (config.ts has the round presets)
+server/                       real backend (teammate)
+src/shared/protocol.ts        the contract
+src/app/                      pages: / (home), /play, /host, /admin
+src/components/play/          phone screens
+src/components/host/          projector screens (placeholders until phase 2)
+src/components/admin/         organiser page (basic until phase 3)
+src/stores/                   Zustand stores: socket events in, state out
+src/lib/                      socket, countdown, wake lock, confetti, helpers
 ```
-
-## The game (v1)
-
-1. **Round 1:** everyone gets two prompts. Each prompt goes to two players, and
-   everyone else votes for the funnier answer. 100 points per vote, plus a bonus for
-   a clean sweep.
-2. **Round 2:** same thing, double points.
-3. **Final round:** everyone answers one prompt and everyone votes. Triple points.
-
-Late joiners (or anyone past 8 players) join the **audience** and their votes count too.
-
-## Already handled
-
-- Refresh or lock your phone and you rejoin automatically as the same player. You can
-  also rejoin by typing the same name.
-- The phone screen stays awake during a game (Screen Wake Lock).
-- If the TV refreshes, it picks the same room back up.
-- The VIP passes to the next player if they leave the lobby.
-- Room codes use consonants only, so they can't spell rude words.
-- Extra time, audience and hide-code settings in the lobby.
-
-## Ideas for next
-
-- Sound and music on the TV (Howler.js), after the host clicks once.
-- A second game mode reusing the same three phone inputs: text, buttons, drawing.
-- A drawing canvas component for the phone.
-- Family-friendly prompt filter.
-- Deploy: website on Vercel, game server on Render or Railway. Set
-  `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (see `.env.example`).
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | website + game server with hot reload |
-| `npm run simulate` | plays fake games and checks the rules hold |
-| `npm run typecheck` | TypeScript check across the whole project |
+| `npm run dev` | website + mock game server, demo preset |
+| `npm run simulate` | plays full fake quizzes (4 to 100 players) and checks every rule |
+| `npm run typecheck` | TypeScript across the whole project |
 | `npm run build` | production build of the website |

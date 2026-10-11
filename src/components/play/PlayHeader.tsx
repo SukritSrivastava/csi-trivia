@@ -6,42 +6,50 @@ import { useCountdown } from "@/lib/useCountdown";
 import { usePlayerStore } from "@/stores/playerStore";
 import type { PlayerView } from "@/shared/protocol";
 
-/** Your colour band: so you can match yourself to your token on the TV. */
+const STATUS_LABEL: Record<PlayerView["me"]["status"], string> = {
+  active: "Playing",
+  out: "Knocked out",
+  audience: "Audience",
+  removed: "Removed",
+};
+
+/** Your colour band, so you can find yourself on the projector, plus the countdown. */
 export function PlayHeader({ view }: { view: PlayerView }) {
   const clockOffset = usePlayerStore((s) => s.clockOffset);
-  const leave = usePlayerStore((s) => s.leave);
   const countdown = useCountdown(view.timer, clockOffset);
-  const { me, role } = view;
-  const isAudience = role === "audience";
-  const band = isAudience ? "#4a3f7a" : me.color;
+  const { me } = view;
+  const watching = me.status !== "active";
+  const band = watching ? "#4a3f7a" : me.color;
+  const urgent = countdown !== null && countdown.seconds <= 5 && view.screen.kind === "answer";
 
   return (
-    <header className="sticky top-0 z-10" style={{ background: band, color: textOn(band) }}>
-      <div className="flex items-center gap-3 px-5 py-3">
-        {!isAudience && <Avatar name={me.name} color={me.color} size={2.6} />}
+    <header className="sticky top-0 z-20" style={{ background: band, color: textOn(band) }}>
+      <div className="flex items-center gap-3 px-4 py-2.5">
+        <Avatar name={me.name} color={me.color} size={2.4} dimmed={watching} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xl font-black">{me.name}</p>
-          <p className="text-sm font-bold opacity-80">
-            {isAudience ? "Audience" : me.isVip ? `VIP, ${me.score} points` : `${me.score} points`}
-          </p>
+          <p className="truncate text-lg font-black leading-tight">{me.name}</p>
+          <p className="text-xs font-bold opacity-80">{STATUS_LABEL[me.status]}</p>
         </div>
-        <span className="type-wide rounded-lg bg-ink px-2.5 py-1 text-base font-black tracking-[0.15em] text-paper">
+        {countdown && (
+          <span
+            className={`type-wide min-w-[3ch] text-right text-2xl font-black tabular-nums ${urgent ? "animate-pulse" : ""}`}
+            aria-hidden
+          >
+            {countdown.seconds}
+          </span>
+        )}
+        <span className="type-wide rounded-lg bg-ink px-2 py-1 text-sm font-black tracking-[0.15em] text-paper">
           {view.roomCode}
         </span>
-        {view.screen.kind === "lobby" && (
-          <button type="button" onClick={leave} className="text-sm font-bold underline underline-offset-2">
-            Leave
-          </button>
+      </div>
+      <div className="h-1.5 bg-ink/25" role="timer" aria-label={countdown ? `${countdown.seconds} seconds left` : "No timer"}>
+        {countdown && (
+          <div
+            className="h-full transition-[width] duration-100 ease-linear"
+            style={{ width: `${countdown.fraction * 100}%`, background: urgent ? "var(--color-side-a)" : "var(--color-paper)" }}
+          />
         )}
       </div>
-      {countdown && (
-        <div className="h-2 bg-ink/30" role="timer" aria-label={`${countdown.seconds} seconds left`}>
-          <div
-            className="h-full bg-paper transition-[width] duration-200 ease-linear"
-            style={{ width: `${countdown.fraction * 100}%` }}
-          />
-        </div>
-      )}
     </header>
   );
 }

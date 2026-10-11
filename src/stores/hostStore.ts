@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { getSocket } from "@/lib/socket";
 import { loadHostSession, saveHostSession } from "@/lib/session";
-import type { HostView, RoomSettings } from "@/shared/protocol";
+import type { HostView } from "@/shared/protocol";
 
 export type ConnectionStatus = "connecting" | "online" | "offline";
 
@@ -12,12 +12,9 @@ interface HostStore {
   view: HostView | null;
   /** server clock − this device's clock */
   clockOffset: number;
-
-  /** Opens the connection and creates (or resumes) a room. Returns a cleanup function. */
+  /** Opens the connection and creates (or resumes) a quiz room. Returns a cleanup function. */
   connect: () => () => void;
   newRoom: () => void;
-  updateSettings: (settings: Partial<RoomSettings>) => void;
-  skip: () => void;
 }
 
 export const useHostStore = create<HostStore>()((set) => {
@@ -35,7 +32,7 @@ export const useHostStore = create<HostStore>()((set) => {
 
       const onConnect = () => {
         set({ status: "online" });
-        // After a refresh (or a dropped connection) pick the same room back up.
+        // After a refresh or a dropped connection, pick the same room back up.
         const saved = loadHostSession();
         if (!saved) return createRoom();
         socket.emit("host:resume", saved, ({ ok }) => {
@@ -47,8 +44,7 @@ export const useHostStore = create<HostStore>()((set) => {
       };
       const onDisconnect = () => set({ status: "offline" });
       const onConnectError = () => set({ status: "offline" });
-      const onState = (view: HostView) =>
-        set({ view, clockOffset: view.serverNow - Date.now() });
+      const onState = (view: HostView) => set({ view, clockOffset: view.serverNow - Date.now() });
 
       socket.on("connect", onConnect);
       socket.on("disconnect", onDisconnect);
@@ -70,8 +66,5 @@ export const useHostStore = create<HostStore>()((set) => {
       set({ view: null });
       createRoom();
     },
-
-    updateSettings: (settings) => getSocket().emit("host:settings", settings),
-    skip: () => getSocket().emit("host:skip"),
   };
 });

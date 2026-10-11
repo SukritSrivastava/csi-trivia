@@ -1,0 +1,39 @@
+{
+  "_format": "Each question: id, round (1-5 to pin it to a round, \"duel\" for the final, null for any), text, image (path under /public or null), options (exactly 4), correct (index 0-3 of the right option). Options are shuffled for every phone, so order here doesn't matter.",
+  "questions": [
+    {
+      "id": "demo-1",
+      "round": null,
+      "text": "What does LLM stand for?",
+      "image": null,
+      "options": [
+        "Large Language Model",
+        "Linear Logic Machine",
+        "Layered Learning Matrix",
+        "Long-term Language Memory"
+      ],
+      "correct": 0
+    },
+    {
+      "id": "demo-2",
+      "round": null,
+      "text": "In an AI agent, what is a \"tool call\"?",
+      "image": null,
+      "options": [
+        "The model asking to run a function or action",
+        "The agent phoning a human for help",
+        "A command that restarts the model",
+        "A type of GPU memory"
+      ],
+      "correct": 0
+    },
+    {
+      "id": "demo-3",
+      "round": null,
+      "text": "How many sides does this shape have?",
+      "image": "/questions/hexagon.svg",
+      "options": ["5", "6", "7", "8"],
+      "correct": 1
+    }
+  ]
+}
