@@ -7,7 +7,7 @@ export default function Home() {
       <div className="max-w-3xl">
         <h1 className="type-wide text-6xl font-black leading-none tracking-tight sm:text-8xl">{APP_NAME}</h1>
         <p className="mt-5 max-w-xl text-xl font-medium text-ink-soft sm:text-2xl">
-          Questions on the projector. Answers on your phone. Last one standing wins.
+          Questions on the projector. Answers on your phone. The fastest six go to the buzzer round.
         </p>
       </div>
 
@@ -16,10 +16,10 @@ export default function Home() {
           Join the quiz
         </Link>
         <Link href="/host" className="press bg-paper px-7 py-5 text-center text-xl font-bold text-ink">
-          Open the projector screen
+          Host screen
         </Link>
         <Link href="/admin" className="press bg-paper px-7 py-5 text-center text-xl font-bold text-ink">
-          Organiser
+          Admin
         </Link>
       </div>
     </main>

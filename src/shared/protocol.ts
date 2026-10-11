@@ -1,24 +1,38 @@
 /**
- * THE CONTRACT between the game server and every screen.
+ * THE CONTRACT between the game server and every screen (rules: docs/SPEC.md v2).
  *
- *   Projector  (/host)   receives HostView
- *   Phones     (/play)   each receive their OWN PlayerView
- *   Organiser  (/admin)  receives AdminView
+ *   Host         /host    the projector everyone sees. No game controls.   receives HostView
+ *   Participant  /play    each person's phone. Gets its OWN private view.  receives ParticipantView
+ *   Admin        /admin   the quizmaster's control panel (PIN).            receives AdminView
  *
- * The server owns the game: timers, scoring, cuts, shuffling, the duel.
- * Screens never decide anything. They send an action ("I picked option x")
- * and draw whatever view arrives next.
+ * The server owns the game: timers, scoring, the cut, shuffling, buzzers,
+ * judging. Screens never decide anything. They send an action ("I tapped
+ * option x", "Reveal answer") and draw whatever view arrives next.
  *
- * Backend: build the real server against this file. The mock server in
- * mock-server/ implements all of it, so use that as a working reference.
- * If something here has to change, change it in this file first and tell
- * the frontend; TypeScript will flag every screen that needs updating.
+ * ---------------------------------------------------------------------------
+ * For the backend teammate
+ * ---------------------------------------------------------------------------
+ * Build the real server against this file. mock-server/ implements every
+ * line of it and is the working reference (mock-server/quiz.ts holds all the
+ * rules with no socket code). If something here has to change, change it in
+ * this file first and tell the frontend: TypeScript then flags every screen
+ * that needs updating.
  *
- * Security rules the server must keep:
- *   1. A phone's view NEVER contains the correct answer before the reveal.
- *   2. Option ids are opaque (random per question), so they give nothing away.
+ * Rules the server must enforce:
+ *   1. A Participant view NEVER contains the correct answer before the reveal.
+ *      The Host view doesn't either (the projector laptop may be screen-shared).
+ *      Only the Admin view carries it, so the quizmaster can judge.
+ *   2. Option ids are opaque random strings, new for every question run.
  *   3. Each phone gets the 4 options in its own shuffled order.
  *   4. Answer times are measured on the server, never trusted from a phone.
+ *   5. Admin flow commands carry the stepId they were issued from. If the
+ *      step has moved on, ignore the command (see AdminCommandPayload).
+ *   6. The quizmaster drives the flow. Timers only run where SPEC says so,
+ *      and when a timer ends the game holds and waits for the next click.
+ *
+ * Views are sent whenever they change, and only to the sockets whose view
+ * actually changed (100 phones). Every view carries `serverNow` so screens
+ * can correct for phones whose clocks are off.
  */
 
 export const APP_NAME = "Hermes Quiz";
@@ -28,8 +42,15 @@ export const ROOM_CODE_LENGTH = 4;
 export const ROOM_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 export const NAME_MAX_LENGTH = 20;
 
+/** How much "+5 seconds" adds to a running timer. */
+export const ADD_TIME_MS = 5_000;
+
+/** Letters for the 4 options, as shown on the Host in the buzzer round and on Admin. */
+export const OPTION_LETTERS = ["A", "B", "C", "D"] as const;
+export type OptionLetter = (typeof OPTION_LETTERS)[number];
+
 /** Name-tag colours, assigned in join order and repeated after 12. */
-export const PLAYER_COLORS = [
+export const PARTICIPANT_COLORS = [
   "#FF3D7F", // pink
   "#00A6A6", // teal
   "#7B5CFF", // violet
@@ -45,84 +66,123 @@ export const PLAYER_COLORS = [
 ] as const;
 
 // ============================================================================
-// Building blocks
+// The flow
 // ============================================================================
 
 /**
- * Every step of the night, in order:
+ * Every step of the quiz, in order. (click) = the quizmaster's click on Admin,
+ * (timer) = runs by itself once started.
  *
  *   lobby
- *   → for each round:
- *       roundIntro
- *       → for each question: read → answer → reveal → chart → leaderboard
- *       → roundEnd (the cut)
- *   → prediction (knocked-out players back a finalist)
- *   → duel (buzzer final, first to N points)
- *   → podium
+ *   → r1Intro                                   (click: Start quiz)
+ *   → for each Round 1 question:
+ *       r1Read        8s, question on Host, "Eyes up" on phones    (click: Show question / Next question)
+ *       r1Answer      8s, options on phones; ends early when every
+ *                     connected participant has answered           (timer)
+ *       r1TimesUp     holds                                        (timer)
+ *       r1Reveal      correct answer; phones show right / wrong    (click: Reveal answer)
+ *       r1Results     how many picked each option (optional)       (click: Show results)
+ *       r1Leaderboard top 10 (optional)                            (click: Show leaderboard)
+ *   → cut           full ranking, cut line under 6th               (click: End round 1)
+ *   → predictions   audience backs a finalist                      (click: Open predictions)
+ *   → r2Intro       the finalists, the buzzer rules                (click: Start buzzer round)
+ *   → for each buzzer question:
+ *       r2Read        question + A–D on Host, buzzers locked (5s)  (click: Show question / Next question)
+ *       r2BuzzOpen    buzzers open (15s; 10s when reopened)        (timer)
+ *       r2Answering   first buzz; they say the answer out loud,
+ *                     10s countdown that never marks anything      (a buzz)
+ *       → Correct → r2Reveal                                       (click: Correct)
+ *       → Wrong   → r2BuzzOpen again for the others, or r2Reveal
+ *                   if nobody is left                              (click: Wrong)
+ *       r2BuzzOpen ends with no buzz → r2Reveal, nobody scores     (timer)
+ *       r2Scores      the finalists' points (optional)             (click: Show scores)
+ *   → suddenDeath   tie for 1st after the last question; only the
+ *                   tied finalists buzz, first correct answer wins (click: Start sudden death)
+ *                   (its questions use the r2 steps with suddenDeath: true)
+ *   → podium                                                       (click: Show winner, or End quiz now)
  */
 export type Phase =
   | "lobby"
-  | "roundIntro"
-  | "read"
-  | "answer"
-  | "reveal"
-  | "chart"
-  | "leaderboard"
-  | "roundEnd"
-  | "prediction"
-  | "duel"
+  | "r1Intro"
+  | "r1Read"
+  | "r1Answer"
+  | "r1TimesUp"
+  | "r1Reveal"
+  | "r1Results"
+  | "r1Leaderboard"
+  | "cut"
+  | "predictions"
+  | "r2Intro"
+  | "r2Read"
+  | "r2BuzzOpen"
+  | "r2Answering"
+  | "r2Reveal"
+  | "r2Scores"
+  | "suddenDeath"
   | "podium";
 
 /**
- * A countdown. Phones' clocks are often seconds off, so screens compute the
- * time left as `endsAt - (Date.now() + (serverNow - Date.now() at receipt))`.
- * While the game is paused, `remainingMs` is set and the countdown freezes.
+ * A countdown. Phone clocks are often seconds off, so screens compute the time
+ * left as `endsAt - (Date.now() + clockOffset)` where
+ * `clockOffset = view.serverNow - Date.now()` measured when the view arrived.
+ * While paused, `remainingMs` is set and the countdown freezes.
  */
 export interface Timer {
   /** Server clock time (ms) when this step ends. */
   endsAt: number;
+  /** Full length of the step, including any "+5 seconds". */
   durationMs: number;
   /** Only set while paused: the frozen time left. */
   remainingMs?: number;
 }
 
 /**
- * - active:   still in the quiz
- * - out:      knocked out at a cut; now part of the audience
- * - audience: joined after Round 1 ended; watches and backs a finalist
- * - removed:  removed by the organiser
+ * - playing:  in Round 1 (everyone who joins before Round 1 ends)
+ * - finalist: made the top 6 at the cut; plays the buzzer round
+ * - audience: cut after Round 1, or joined after it; backs a finalist
+ * - removed:  removed by the quizmaster; can't rejoin
  */
-export type PlayerStatus = "active" | "out" | "audience" | "removed";
+export type ParticipantStatus = "playing" | "finalist" | "audience" | "removed";
 
-export interface PlayerTag {
+export interface ParticipantTag {
   id: string;
   name: string;
   color: string;
 }
 
-export interface LobbyPlayer extends PlayerTag {
-  status: PlayerStatus;
-  connected: boolean;
+/** Head counts. Removed participants are only counted in `removed`. */
+export interface Counts {
+  joined: number;
+  connected: number;
+  playing: number;
+  finalists: number;
+  audience: number;
+  removed: number;
 }
 
-export interface RoundInfo {
-  /** 1-based */
-  number: number;
-  totalRounds: number;
-  /** Players starting this round. */
-  playersIn: number;
-  /** How many go through to the next stage. */
-  advance: number;
-  questionCount: number;
-  secondsPerQuestion: number;
-  /** Points lost for a wrong answer this round (0 = no penalty). */
-  wrongPenalty: number;
+/** Fixed settings of this quiz (from the server's preset), for intros and labels. */
+export interface QuizSettings {
+  preset: "event" | "demo";
+  round1Questions: number;
+  round1ReadSeconds: number;
+  round1AnswerSeconds: number;
+  finalistCount: number;
+  round2Questions: number;
+  round2ReadSeconds: number;
+  buzzSeconds: number;
+  answerSeconds: number;
+  reopenSeconds: number;
 }
 
-/** What the projector shows of a question. Options are NOT shown while answering. */
-export interface ProjectorQuestion {
+// ============================================================================
+// Round 1 pieces
+// ============================================================================
+
+/** A Round 1 question as the Host shows it. Options are never on the Host in Round 1. */
+export interface Round1Question {
+  /** Opaque id of this question run. Changes on "restart question". */
   id: string;
-  /** 1-based, within the round */
+  /** 1-based within Round 1. */
   number: number;
   count: number;
   text: string;
@@ -130,324 +190,536 @@ export interface ProjectorQuestion {
   image: string | null;
 }
 
-/** One answer button. `id` is opaque; it says nothing about which one is right. */
+/** One answer button on a phone. `id` is opaque; it says nothing about which one is right. */
 export interface AnswerOption {
   id: string;
   text: string;
 }
 
-/** After the answer is revealed: how the room voted. */
+/** Results bar chart: how many picked each option (after the reveal only). */
 export interface OptionResult {
-  id: string;
+  letter: OptionLetter;
   text: string;
   count: number;
   correct: boolean;
 }
 
-export interface LeaderRow extends PlayerTag {
+export interface LeaderRow extends ParticipantTag {
   rank: number;
-  /** Round score (every round starts at 0). */
   score: number;
-  /** Rank before this question, null if they had no rank yet. */
+  /** Rank before this question, null if they had none yet (first question, late joiner). */
   previousRank: number | null;
-  /** Points won (or lost) on the question just played. */
-  lastChange: number;
+  /** Points won on the question just played. */
+  change: number;
 }
 
-export interface Standing extends PlayerTag {
+/** One line of the end-of-Round-1 ranking. */
+export interface Standing extends ParticipantTag {
   rank: number;
   score: number;
-  advanced: boolean;
-}
-
-export interface Finalist extends PlayerTag {
-  points: number;
+  /** Above the cut line. */
+  finalist: boolean;
 }
 
 // ============================================================================
-// The final duel
+// Round 2 (buzzer) pieces
 // ============================================================================
 
-/**
- * One duel question goes through these steps:
- *
- *   read    question + 4 options on the projector (crowd plays along)
- *   buzz    both finalists can buzz (15s)
- *   answer  the buzzer says the answer out loud (10s); the organiser marks it
- *   steal   the buzzer was wrong, so they're in the DEATH ZONE: the other
- *           finalist gets one try (10s). Right = they win the whole duel.
- *   result  what happened, then the next question (or the podium)
- *
- * If the answer/steal timer runs out, the step waits for the organiser's mark.
- */
-export type DuelStep = "read" | "buzz" | "answer" | "steal" | "result";
-
-export type DuelOutcome =
-  | { kind: "correct"; playerId: string } // +1 point
-  | { kind: "steal"; playerId: string } // won the duel from the death zone
-  | { kind: "bothWrong" }
-  | { kind: "noBuzz" };
-
-export interface DuelQuestion {
-  /** 1-based */
+/** A buzzer question. The options ARE shown on the Host (A–D) so the room can play along. */
+export interface BuzzerQuestion {
+  /** Opaque id of this question run. Phones send it with a buzz. */
+  id: string;
+  /** 1-based. Sudden-death questions count from 1 again. */
   number: number;
+  /** Planned questions in the round (sudden death: 0, open-ended). */
+  count: number;
+  suddenDeath: boolean;
   text: string;
   image: string | null;
-  /** Shown on the projector in the duel, in A–D order. */
+  /** In A–D order (shuffled once per question, the same for everyone). */
   options: string[];
 }
 
-export interface DuelState {
-  finalists: [Finalist, Finalist];
-  pointsToWin: number;
-  step: DuelStep;
-  question: DuelQuestion;
-  /** Who buzzed first this question. */
-  buzzedId: string | null;
-  /** Who is in the death zone (buzzed and got it wrong). */
-  deathZoneId: string | null;
-  /** Set on the result step. */
-  outcome: DuelOutcome | null;
-  /** Set on the result step. */
-  correctText: string | null;
-  /** After the planned duel questions run out, the next correct answer wins. */
-  suddenDeath: boolean;
+export interface FinalistState extends ParticipantTag {
+  points: number;
+  /** Seat order on screen = their Round 1 rank among finalists (1 = top). */
+  seat: number;
+  connected: boolean;
+  /** Buzzed and was marked wrong on this question. */
+  lockedOut: boolean;
+  /** Takes part in this question (false for non-tied finalists in sudden death). */
+  inPlay: boolean;
+}
+
+export type BuzzOutcome =
+  | { kind: "correct"; by: ParticipantTag }
+  /** allWrong: everyone in play was marked wrong. timeUp: buzz window ended with no buzz. */
+  | { kind: "nobody"; reason: "allWrong" | "timeUp" }
+  /** The quizmaster voided the question: no points either way. */
+  | { kind: "voided" };
+
+export interface Round2State {
+  question: BuzzerQuestion;
+  finalists: FinalistState[];
+  /** Who has the turn right now (only during r2Answering). */
+  buzzedBy: ParticipantTag | null;
+  /** The spoken-answer countdown ran out; waiting for Correct / Wrong. */
+  answerTimeUp: boolean;
+  /** Marked wrong on this question, in order. */
+  wrong: ParticipantTag[];
+  /** Set on r2Reveal only. */
+  outcome: BuzzOutcome | null;
+  /** Set on r2Reveal only. */
+  correct: { letter: OptionLetter; text: string } | null;
+  /** Sudden death decided. */
+  winner: ParticipantTag | null;
+}
+
+/** Live backing counts (predictions onward). */
+export interface Backing {
+  /** finalist id → number of audience members backing them */
+  counts: Record<string, number>;
+  /** Audience members who backed someone. */
+  backers: number;
+  /** Everyone who can back (audience, connected or not). */
+  audience: number;
+}
+
+export interface PodiumEntry extends ParticipantTag {
+  /** 1-based final place. */
+  place: number;
+  /** Buzzer points (basis "buzzer") or Round 1 score (basis "round1"). */
+  points: number;
+  round1Rank: number | null;
 }
 
 // ============================================================================
-// What the PROJECTOR receives
+// What the HOST (projector) receives
 // ============================================================================
 
 export type HostStage =
   | { phase: "lobby" }
-  | { phase: "roundIntro"; round: RoundInfo }
-  | { phase: "read"; round: RoundInfo; question: ProjectorQuestion }
+  | { phase: "r1Intro" }
+  | { phase: "r1Read"; question: Round1Question }
+  | { phase: "r1Answer"; question: Round1Question; answered: number; expected: number }
+  | { phase: "r1TimesUp"; question: Round1Question; answered: number; expected: number }
   | {
-      phase: "answer";
-      round: RoundInfo;
-      question: ProjectorQuestion;
-      answeredCount: number;
-      activeCount: number;
+      phase: "r1Reveal";
+      question: Round1Question;
+      /** null when the question was voided */
+      correctText: string | null;
+      voided: boolean;
     }
-  | { phase: "reveal"; round: RoundInfo; question: ProjectorQuestion; correctText: string; voided: boolean }
+  | { phase: "r1Results"; question: Round1Question; options: OptionResult[]; answered: number; expected: number }
+  | { phase: "r1Leaderboard"; question: Round1Question; rows: LeaderRow[] }
+  | { phase: "cut"; standings: Standing[] }
+  | { phase: "predictions"; finalists: FinalistState[]; backing: Backing }
+  | { phase: "r2Intro"; finalists: FinalistState[]; backing: Backing }
+  | { phase: "r2Read" | "r2BuzzOpen" | "r2Answering" | "r2Reveal"; round2: Round2State; backing: Backing }
   | {
-      phase: "chart";
-      round: RoundInfo;
-      question: ProjectorQuestion;
-      options: OptionResult[];
-      answeredCount: number;
-      activeCount: number;
+      phase: "r2Scores";
+      /** Sorted by points, best first. */
+      finalists: FinalistState[];
+      questionNumber: number;
+      questionCount: number;
+      suddenDeath: boolean;
+      backing: Backing;
     }
-  | { phase: "leaderboard"; round: RoundInfo; question: ProjectorQuestion; top: LeaderRow[] }
-  | { phase: "roundEnd"; round: RoundInfo; standings: Standing[] }
-  | {
-      phase: "prediction";
-      finalists: [PlayerTag, PlayerTag];
-      /** finalist id → number of backers */
-      backing: Record<string, number>;
-      audienceCount: number;
-    }
-  | { phase: "duel"; duel: DuelState; backing: Record<string, number> }
+  | { phase: "suddenDeath"; tied: FinalistState[]; backing: Backing }
   | {
       phase: "podium";
-      winner: Finalist;
-      runnerUp: Finalist;
+      /** "buzzer": finalists by buzzer points. "round1": the quiz was ended before the cut. */
+      basis: "buzzer" | "round1";
+      /** Final order. The Host puts 1–3 on the podium and the rest below. */
+      entries: PodiumEntry[];
       /** Audience members who backed the winner. */
       calledIt: number;
-      backers: number;
+      backing: Backing;
     };
 
 export interface HostView {
   roomCode: string;
   /** Address phones open, e.g. http://192.168.1.5:3000/play */
   joinUrl: string;
-  /** Everyone who joined, for the lobby wall. */
-  players: LobbyPlayer[];
-  activeCount: number;
-  audienceCount: number;
+  /** The quizmaster can hide the code (and QR) once everyone has joined. */
+  roomCodeVisible: boolean;
+  /** Host sound effects on/off (Admin toggle). */
+  soundOn: boolean;
+  settings: QuizSettings;
+  /** Everyone who joined (not removed), in join order: the lobby wall. */
+  participants: ParticipantTag[];
+  counts: Counts;
   timer: Timer | null;
   paused: boolean;
   serverNow: number;
-  /** Image the projector should preload for the next question. */
+  /** Image to preload for whatever question comes next. */
   nextImage: string | null;
   stage: HostStage;
 }
 
 // ============================================================================
-// What each PHONE receives
+// What each PARTICIPANT (phone) receives
 // ============================================================================
 
-export type PlayerScreen =
+/** Buzzer-round sub-step, for phones. */
+export type Round2Step = "intro" | "read" | "buzzOpen" | "answering" | "reveal" | "scores" | "suddenDeath";
+
+/** What every phone sees of the buzzer round. */
+export interface Round2Phone {
+  step: Round2Step;
+  /** Send this with a buzz. null outside a question. */
+  questionId: string | null;
+  questionNumber: number | null;
+  questionCount: number;
+  suddenDeath: boolean;
+  finalists: FinalistState[];
+  buzzedBy: ParticipantTag | null;
+  wrong: ParticipantTag[];
+  outcome: BuzzOutcome | null;
+  winner: ParticipantTag | null;
+}
+
+export type ParticipantScreen =
   /** Joined, waiting for the quiz to start. */
-  | { kind: "lobby"; playerCount: number }
-  /** A round is about to start. `playing` is false for audience members. */
-  | { kind: "roundIntro"; round: RoundInfo; playing: boolean }
-  /** Read time: the question is on the projector, options appear next. */
-  | { kind: "getReady"; questionNumber: number; questionCount: number }
-  /** The 4 options in THIS phone's order. No correct flag, ever. */
-  | {
-      kind: "answer";
-      questionId: string;
-      questionNumber: number;
-      questionCount: number;
-      options: AnswerOption[];
-    }
-  /** Tapped. Waiting for the reveal. */
-  | { kind: "lockedIn"; choiceText: string }
-  /** After the reveal: right or wrong only (no points or rank here). */
-  | { kind: "result"; outcome: "correct" | "wrong" | "missed"; penalty: number }
-  /** End of a round: the only time a phone shows its rank. */
-  | { kind: "roundResult"; rank: number; of: number; advanced: boolean; isFinalRound: boolean }
-  /** Nothing to do right now (audience, knocked out, between steps). */
-  | { kind: "watch"; title: string; detail?: string }
-  /** Audience: back one finalist before the duel. */
-  | { kind: "predict"; finalists: [PlayerTag, PlayerTag]; backedId: string | null }
-  /** Finalist in the duel. */
-  | {
+  | { kind: "lobby"; joined: number }
+  /** Round 1 is about to start. */
+  | { kind: "r1Intro"; settings: QuizSettings }
+  /** Joined while a question was open: plays from the next question. */
+  | { kind: "nextQuestion" }
+  /** Read time: the question is on the projector, options come next. */
+  | { kind: "eyesUp"; questionNumber: number; questionCount: number }
+  /** The 4 options in THIS phone's order. Never a correct flag. First tap locks. */
+  | { kind: "answer"; questionId: string; questionNumber: number; questionCount: number; options: AnswerOption[] }
+  /** Tapped; waiting. `timeUp` once the answer time has ended. */
+  | { kind: "lockedIn"; choiceText: string; timeUp: boolean }
+  /** Time ran out without an answer. */
+  | { kind: "timesUp" }
+  /** After the reveal: right or wrong only (no points, no rank). */
+  | { kind: "result"; outcome: "correct" | "wrong" | "missed" }
+  /** The quizmaster cancelled the question. */
+  | { kind: "voided" }
+  /** End of Round 1: the only time a phone shows its rank. */
+  | { kind: "cut"; madeIt: boolean; rank: number; of: number; finalistCount: number }
+  /** Joined after Round 1: watching until predictions open. */
+  | { kind: "audience" }
+  /** Audience: back one finalist (can change until the buzzer round starts). */
+  | { kind: "backFinalist"; finalists: FinalistState[]; backedId: string | null }
+  /** Finalist, before the buzzer round starts. */
+  | { kind: "finalist"; seat: number; finalistCount: number }
+  /** Finalist during the buzzer round. */
+  | (Round2Phone & {
       kind: "buzzer";
-      step: DuelStep;
+      /** Show the big BUZZ button as live. */
       canBuzz: boolean;
-      me: Finalist;
-      opponent: Finalist;
-      pointsToWin: number;
-      /** Who buzzed this question (may be me). */
-      buzzedId: string | null;
-      deathZoneId: string | null;
-      outcome: DuelOutcome | null;
-    }
-  /** Everyone else during the duel. */
-  | {
-      kind: "duelWatch";
-      step: DuelStep;
-      finalists: [Finalist, Finalist];
-      pointsToWin: number;
-      backedId: string | null;
-    }
+      /** This finalist takes part in this question (sudden death: only the tied ones). */
+      inPlay: boolean;
+      lockedOut: boolean;
+      points: number;
+      /** This finalist's own result on the current question. */
+      myResult: "correct" | "wrong" | null;
+    })
+  /** Audience during the buzzer round. */
+  | (Round2Phone & { kind: "buzzerWatch"; backedId: string | null })
   /** The quiz is over. */
   | {
-      kind: "end";
-      place: "winner" | "runnerUp" | "out" | "audience";
-      /** The round they were knocked out in, if any. */
-      outInRound: number | null;
-      /** Audience: did their finalist win? null if they didn't back anyone. */
+      kind: "podium";
+      basis: "buzzer" | "round1";
+      /** Finalists (or everyone, basis "round1"): their final place. Audience: null. */
+      place: number | null;
+      /** How many places there are. */
+      of: number;
+      winner: ParticipantTag | null;
+      /** Audience only: who they backed, and whether that was the winner. */
+      backed: ParticipantTag | null;
       calledIt: boolean | null;
-      winnerName: string;
+      round1Rank: number | null;
     }
-  /** Removed by the organiser. */
+  /** Removed by the quizmaster. */
   | { kind: "removed" };
 
-export interface PlayerView {
+export interface ParticipantView {
   roomCode: string;
-  me: PlayerTag & { status: PlayerStatus };
+  me: ParticipantTag & { status: ParticipantStatus };
   timer: Timer | null;
   paused: boolean;
   serverNow: number;
-  screen: PlayerScreen;
+  screen: ParticipantScreen;
 }
 
 // ============================================================================
-// What the ORGANISER page receives
+// What ADMIN (the quizmaster) receives
 // ============================================================================
 
-export interface AdminPlayer extends LobbyPlayer {
-  roundScore: number;
-  /** How many times they left the quiz page while a question was open. */
-  awayCount: number;
+/**
+ * Everything the quizmaster can do. Send with "admin:command".
+ * "Next step" = whatever `AdminView.primary.action` is right now.
+ */
+export type AdminAction =
+  // ---- the flow (the primary button sends one of these)
+  | { type: "startQuiz" }
+  | { type: "showQuestion" }
+  | { type: "revealAnswer" }
+  | { type: "showResults" }
+  | { type: "showLeaderboard" }
+  | { type: "nextQuestion" }
+  | { type: "endRound1" }
+  | { type: "openPredictions" }
+  | { type: "startBuzzerRound" }
+  | { type: "showScores" }
+  | { type: "startSuddenDeath" }
+  | { type: "showWinner" }
+  // ---- judging the buzzer round
+  | { type: "markCorrect" }
+  | { type: "markWrong" }
+  /** Reverts the last Correct / Wrong (the point and the lockout) and goes back to judging. */
+  | { type: "undoMark" }
+  // ---- timers
+  | { type: "pause" }
+  | { type: "resume" }
+  /** +ADD_TIME_MS on the running timer (or a fresh 5s on the spoken-answer countdown). */
+  | { type: "addTime" }
+  /** End the running timer now, as if it ran out. */
+  | { type: "skipTimer" }
+  // ---- fixing mistakes
+  /** Cancel the current question: nobody gains or loses points. */
+  | { type: "voidQuestion" }
+  /** Undo the current question's points and play it again from its read step. */
+  | { type: "restartQuestion" }
+  /** Round 1: everyone back to 0, back to the Round 1 intro. Round 2: points to 0, back to its intro. */
+  | { type: "restartRound" }
+  // ---- room
+  | { type: "removeParticipant"; participantId: string }
+  | { type: "setRoomCodeVisible"; visible: boolean }
+  | { type: "setSound"; on: boolean }
+  /** Straight to the podium with the standings as they are. */
+  | { type: "endQuiz" };
+
+export type AdminActionType = AdminAction["type"];
+
+export const ADMIN_ACTION_TYPES: readonly AdminActionType[] = [
+  "startQuiz",
+  "showQuestion",
+  "revealAnswer",
+  "showResults",
+  "showLeaderboard",
+  "nextQuestion",
+  "endRound1",
+  "openPredictions",
+  "startBuzzerRound",
+  "showScores",
+  "startSuddenDeath",
+  "showWinner",
+  "markCorrect",
+  "markWrong",
+  "undoMark",
+  "pause",
+  "resume",
+  "addTime",
+  "skipTimer",
+  "voidQuestion",
+  "restartQuestion",
+  "restartRound",
+  "removeParticipant",
+  "setRoomCodeVisible",
+  "setSound",
+  "endQuiz",
+];
+
+/**
+ * Commands that apply whatever step the quiz is on, because sending them twice
+ * changes nothing (pausing twice is still paused). Every OTHER command is
+ * ignored unless its stepId matches the current step, so a double tap or two
+ * Admin devices can never skip two steps or mark one answer twice.
+ */
+export const STEP_INDEPENDENT_ACTIONS: readonly AdminActionType[] = [
+  "pause",
+  "resume",
+  "removeParticipant",
+  "setRoomCodeVisible",
+  "setSound",
+  "endQuiz",
+];
+
+/** The big button: does exactly what its label says. */
+export interface PrimaryAction {
+  action: AdminAction;
+  label: string;
+}
+
+/** The current question, with the answer, for the quizmaster only. */
+export interface AdminQuestion {
+  id: string;
+  round: 1 | 2;
+  number: number;
+  /** Planned questions in the round (sudden death: 0). */
+  count: number;
+  suddenDeath: boolean;
+  text: string;
+  image: string | null;
+  /** In the Host's A–D order. */
+  options: { letter: OptionLetter; text: string; correct: boolean }[];
+  correctLetter: OptionLetter;
+  correctText: string;
+}
+
+/** What "Show question" / "Next question" will put up next. */
+export interface QuestionPreview {
+  round: 1 | 2;
+  number: number;
+  count: number;
+  suddenDeath: boolean;
+  text: string;
+  image: string | null;
+}
+
+export interface AdminParticipant extends ParticipantTag {
+  status: ParticipantStatus;
+  connected: boolean;
+  /** Joined after Round 1 ended. */
+  joinedLate: boolean;
+  /** The quiz page is hidden on their phone right now. */
+  pageHidden: boolean;
+  /** Times they left the quiz page while a question was open. Admin only, never shown to anyone else. */
+  leftPageCount: number;
+  /** Round 1 score. */
+  score: number;
+  /** Round 1 rank (live during Round 1, final after the cut). null if they never played Round 1. */
+  rank: number | null;
+  /** Buzzer-round points (finalists). */
+  points: number;
+  /** Answered the current Round 1 question. null when no Round 1 question is open for them. */
+  answered: boolean | null;
+  /** Audience: the finalist they back. */
+  backingId: string | null;
 }
 
 export interface AdminView {
   roomCode: string;
+  joinUrl: string;
+  settings: QuizSettings;
   phase: Phase;
-  round: RoundInfo | null;
-  /** e.g. "Question 3 of 10" or "Duel question 2" */
+  /** Changes every time the step changes. Send it back with every command. */
+  stepId: number;
+  /** Where we are, in plain words: "Round 1, question 3 of 20: answering". */
   stepLabel: string;
-  paused: boolean;
+  /** The big button. null while a timer runs or a mark is awaited. */
+  primary: PrimaryAction | null;
+  /** One line under the button: what happens next, or why there's no button. */
+  hint: string | null;
+  /** Every action the server will accept right now. Grey out the rest. */
+  allowed: AdminActionType[];
   timer: Timer | null;
+  paused: boolean;
   serverNow: number;
-  players: AdminPlayer[];
-  /** The duel, so the judge sees who to mark. Null outside the duel. */
-  duel: DuelState | null;
-  /** True when a Correct / Wrong mark is expected. */
-  awaitingJudge: boolean;
-  /** Who the judge is marking right now. */
-  judgingPlayerId: string | null;
-  /** The correct answer, so the judge can mark spoken answers. Duel only. */
-  duelAnswer: string | null;
-  canStart: boolean;
+  roomCodeVisible: boolean;
+  soundOn: boolean;
+  /** The current question with its correct answer, or null between questions. */
+  question: AdminQuestion | null;
+  nextQuestion: QuestionPreview | null;
+  counts: Counts & {
+    /** Current Round 1 question: answered / expected. null outside answering. */
+    answered: number | null;
+    expected: number | null;
+  };
+  /** Everyone who ever joined, removed ones included, in join order. */
+  participants: AdminParticipant[];
+  /** The current buzzer question, while one is on (r2Read through r2Reveal). */
+  round2: Round2State | null;
+  /** The finalists with live points, from the cut onward (empty before). */
+  finalists: FinalistState[];
+  backing: Backing | null;
+  /** "Undo last mark" is possible right now. */
+  canUndo: boolean;
+  /** The last Correct / Wrong on this question (for the undo button label). */
+  lastMark: { by: ParticipantTag; correct: boolean } | null;
 }
 
 // ============================================================================
 // Socket.IO events
 // ============================================================================
 
-export type JoinError =
-  | "room-not-found"
-  | "name-taken"
-  | "name-invalid"
-  | "quiz-ended"
-  | "removed";
+export type JoinError = "room-not-found" | "name-taken" | "name-invalid" | "quiz-ended" | "removed" | "room-full";
 
 export type JoinResult =
-  | { ok: true; playerId: string; roomCode: string; status: PlayerStatus }
+  | { ok: true; participantId: string; roomCode: string; status: ParticipantStatus }
   | { ok: false; error: JoinError };
+
+export type AdminAuthResult = { ok: true; roomCode: string } | { ok: false; error: "room-not-found" | "wrong-pin" };
+
+export interface AdminCommandPayload {
+  /** The AdminView.stepId this command was issued from. */
+  stepId: number;
+  action: AdminAction;
+}
+
+export type CommandResult =
+  | { ok: true }
+  | {
+      ok: false;
+      /**
+       * stale-step:    the step moved on before this arrived (double tap, second device); nothing happened
+       * not-allowed:   that action doesn't apply to this step
+       * not-signed-in: this socket hasn't passed admin:auth
+       * invalid:       malformed command
+       */
+      reason: "stale-step" | "not-allowed" | "not-signed-in" | "invalid";
+    };
 
 /** Events browsers send to the server. */
 export interface ClientToServerEvents {
-  // ---- Projector
+  // ---- Host
+  /** Create a new quiz room. Keep the hostToken (sessionStorage) to resume after a refresh. */
   "host:create": (ack: (result: { roomCode: string; hostToken: string }) => void) => void;
-  "host:resume": (
-    payload: { roomCode: string; hostToken: string },
-    ack: (result: { ok: boolean }) => void,
-  ) => void;
+  "host:resume": (payload: { roomCode: string; hostToken: string }, ack: (result: { ok: boolean }) => void) => void;
 
-  // ---- Phones
-  /** Join, or rejoin with the playerId saved from an earlier join. */
-  "player:join": (
-    payload: { roomCode: string; name: string; playerId?: string },
+  // ---- Participant
+  /**
+   * Join with a name, or rejoin with the participantId saved from an earlier join.
+   * Typing the same name again also rejoins, if that person's phone is disconnected.
+   */
+  "participant:join": (
+    payload: { roomCode: string; name: string; participantId?: string },
     ack: (result: JoinResult) => void,
   ) => void;
-  /** First tap wins; later taps are ignored. */
-  "player:answer": (payload: { questionId: string; optionId: string }) => void;
-  /** Audience backs a finalist (can change their mind until the duel starts). */
-  "player:predict": (payload: { finalistId: string }) => void;
-  /** Finalist presses the buzzer. */
-  "player:buzz": () => void;
-  /** Sent when the quiz page is hidden/shown. Flag for the organiser only. */
-  "player:away": (payload: { away: boolean }) => void;
+  /** Round 1. First tap wins; later taps are ignored. */
+  "participant:answer": (payload: { questionId: string; optionId: string }) => void;
+  /** Buzzer round. First buzz of the window wins the turn. */
+  "participant:buzz": (payload: { questionId: string }) => void;
+  /** Audience backs a finalist (can change until the buzzer round starts). */
+  "participant:back": (payload: { finalistId: string }) => void;
+  /** The quiz page was hidden/shown (switched app or tab). Flag for Admin only. */
+  "participant:visibility": (payload: { hidden: boolean }) => void;
 
-  // ---- Organiser (all need a successful admin:auth on this socket)
-  "admin:auth": (
-    payload: { roomCode: string; pin: string },
-    ack: (result: { ok: boolean }) => void,
-  ) => void;
-  "admin:start": () => void;
-  "admin:pause": () => void;
-  "admin:resume": () => void;
-  /** End the current step's timer now. */
-  "admin:skip": () => void;
-  /** Cancel the current question: nobody gains or loses points for it. */
-  "admin:void": () => void;
-  "admin:remove": (payload: { playerId: string }) => void;
-  /** Scores back to 0 and replay the current round from its first question. */
-  "admin:restartRound": () => void;
-  /** Duel judge: mark the spoken answer. */
-  "admin:judge": (payload: { correct: boolean }) => void;
-  /** Results as CSV text (name, status, round reached, round scores). */
-  "admin:results": (ack: (csv: string) => void) => void;
+  // ---- Admin (everything below needs a successful admin:auth on this socket)
+  "admin:auth": (payload: { roomCode: string; pin: string }, ack: (result: AdminAuthResult) => void) => void;
+  "admin:command": (payload: AdminCommandPayload, ack: (result: CommandResult) => void) => void;
+  /** Results as CSV text, for prizes. */
+  "admin:results": (ack: (result: { csv: string; filename: string } | null) => void) => void;
 }
 
 /** Events the server sends to browsers. */
 export interface ServerToClientEvents {
   "host:state": (view: HostView) => void;
-  "player:state": (view: PlayerView) => void;
+  "participant:state": (view: ParticipantView) => void;
   "admin:state": (view: AdminView) => void;
+  /** The room is gone (Host started a new one, or it was abandoned). */
   "room:closed": (payload: { reason: string }) => void;
 }
 
+// ============================================================================
+// Messages
+// ============================================================================
+
 export const JOIN_ERROR_MESSAGES: Record<JoinError, string> = {
   "room-not-found": "No quiz with that code. Check the code on the projector.",
-  "name-taken": "Someone already joined with that name. Add your surname initial, like \"Rahul S\".",
-  "name-invalid": "Enter your name (up to 20 characters).",
+  "name-taken": 'Someone already joined with that name. Add your surname initial, like "Rahul S".',
+  "name-invalid": `Enter your name (up to ${NAME_MAX_LENGTH} characters).`,
   "quiz-ended": "This quiz has already finished.",
-  removed: "The organiser removed you from this quiz.",
+  removed: "The quizmaster removed you from this quiz.",
+  "room-full": "This quiz is full.",
+};
+
+export const ADMIN_AUTH_ERROR_MESSAGES: Record<"room-not-found" | "wrong-pin", string> = {
+  "room-not-found": "No quiz with that room code. Check the code on the Host screen.",
+  "wrong-pin": "Wrong PIN.",
 };

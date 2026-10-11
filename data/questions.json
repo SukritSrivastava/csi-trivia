@@ -1,5 +1,5 @@
 {
-  "_format": "Each question: id, round (1-5 to pin it to a round, \"duel\" for the final, null for any), text, image (path under /public or null), options (exactly 4), correct (index 0-3 of the right option). Options are shuffled for every phone, so order here doesn't matter.",
+  "_format": "Each question: id (unique), round (1 = Round 1, 2 = buzzer round, null = either), text, image (path under /public, shown on the Host only, or null), options (exactly 4, all different), correct (index 0-3 of the right option). Options are shuffled for every phone, so order here doesn't matter.",
   "questions": [
     {
       "id": "demo-1",

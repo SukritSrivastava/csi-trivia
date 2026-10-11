@@ -2,15 +2,18 @@
   "name": "hermes-quiz",
   "version": "0.1.0",
   "private": true,
-  "description": "Live elimination MCQ quiz: questions on the projector, answers on phones.",
+  "description": "Hermes Quiz: a live MCQ quiz for 60–100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
   "scripts": {
     "dev": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"npm:dev:game\"",
+    "dev:event": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"tsx watch mock-server/index.ts --preset event\"",
     "dev:web": "next dev -H 0.0.0.0 -p 3000",
     "dev:game": "tsx watch mock-server/index.ts",
     "build": "next build",
     "start": "concurrently -k -n web,game \"next start -H 0.0.0.0 -p 3000\" \"tsx mock-server/index.ts\"",
     "typecheck": "tsc --noEmit",
-    "simulate": "tsx mock-server/simulate.ts"
+    "simulate": "tsx mock-server/simulate.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "bots": "tsx scripts/bots.ts"
   },
   "dependencies": {
     "@number-flow/react": "^0.6.2",

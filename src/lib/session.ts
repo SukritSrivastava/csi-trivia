@@ -3,8 +3,8 @@
  * back into the quiz.
  *
  * sessionStorage (not localStorage) is deliberate: each tab gets its own, so
- * several player tabs can be tested on one laptop. If a phone closes the tab
- * completely, typing the same name again reclaims the seat.
+ * several Participant tabs can be tested on one laptop. If a phone closes the
+ * tab completely, typing the same name again reclaims the seat.
  */
 
 export interface HostSession {
@@ -12,9 +12,9 @@ export interface HostSession {
   hostToken: string;
 }
 
-export interface PlayerSession {
+export interface ParticipantSession {
   roomCode: string;
-  playerId: string;
+  participantId: string;
 }
 
 export interface AdminSession {
@@ -46,8 +46,8 @@ const local = () => window.localStorage;
 export const loadHostSession = () => read<HostSession>(session, "hermes:host");
 export const saveHostSession = (s: HostSession | null) => write(session, "hermes:host", s);
 
-export const loadPlayerSession = () => read<PlayerSession>(session, "hermes:player");
-export const savePlayerSession = (s: PlayerSession | null) => write(session, "hermes:player", s);
+export const loadParticipantSession = () => read<ParticipantSession>(session, "hermes:participant");
+export const saveParticipantSession = (s: ParticipantSession | null) => write(session, "hermes:participant", s);
 
 export const loadAdminSession = () => read<AdminSession>(session, "hermes:admin");
 export const saveAdminSession = (s: AdminSession | null) => write(session, "hermes:admin", s);

@@ -119,9 +119,38 @@ Quizmaster clicks **Start buzzer round**, then for each question:
   the quiz during a question; shown to the quizmaster only).
 - **Results CSV** download (name, result, round 1 score and rank, buzzer points).
 - Keyboard shortcuts on a laptop: Space = primary button, C = Correct, W = Wrong, P = pause/resume,
-  U = undo last mark. Destructive actions (restart round, end quiz, remove) need a second tap to confirm.
+  U = undo last mark. Destructive actions (void, restart, end quiz, remove) need a second tap to confirm.
   No browser pop-up dialogs.
 - Protected by a PIN (`ADMIN_PIN`, default 1234). Several Admin devices can be signed in at once.
+
+## Edge cases (decided in build phase 1)
+
+The rules above didn't cover these; this is how the quiz behaves.
+
+- **Late joiners in Round 1** play from the next question whose answers haven't opened yet
+  (joining during a read step = they play that question). Questions before they joined count
+  as missed (the full 8s) for the answer-time tie-break.
+- **End round 1** is available from any question's reveal onward, so the quizmaster can cut
+  Round 1 short if the night runs late. On the last question it's the natural next step.
+- **Start buzzer round** works straight from the cut too (predictions are optional).
+- **Removing a finalist before the first buzzer question** gives their seat to the next-best
+  Round 1 participant (their backers' picks are cleared). After the buzzer round has started,
+  removing a finalist just takes them out; if they had the turn, buzzers reopen for the others.
+- **Undo last mark** is available until someone else buzzes or the quizmaster moves on
+  (Show scores / Next question). It restores the point, the lockout and the turn.
+- **Void in the buzzer round:** the question doesn't count; the next one takes its number, so
+  the round still has its full number of real questions. (Round 1 has no spares: a voided
+  Round 1 question is simply dropped.)
+- **Restart question** undoes that question's points and replays it from its read step with
+  fresh option ids. **Restart round** in Round 1 puts everyone back to 0 at the Round 1 intro
+  (allowed until predictions open); in Round 2 it puts the finalists' points back to 0.
+- **Podium places 2 and below** with equal buzzer points are ordered by Round 1 rank.
+- **End quiz now** before the cut puts the Round 1 ranking on the podium; after the cut, the
+  finalists by buzzer points.
+- **A double tap or two Admin devices** never skip a step or mark an answer twice: every
+  command carries the step it was sent from, and a command from an old step is ignored.
+- **PIN:** after 5 wrong PINs a connection is refused (reload the page to try again). Use a
+  longer `ADMIN_PIN` than 1234 on the night.
 
 ## Rules that don't change
 
