@@ -1,0 +1,23 @@
+# Render Blueprint for the Hermes Quiz game server (mock-server/).
+# Render dashboard → New → Blueprint → pick this repo. See docs/DEPLOY.md.
+# Values marked "sync: false" are asked for in the dashboard (never commit them).
+services:
+  - type: web
+    name: hermes-quiz-game
+    runtime: node
+    plan: free
+    branch: frontend # switch to main once the frontend branch is merged
+    buildCommand: npm ci
+    startCommand: npm run start:game
+    healthCheckPath: /health
+    envVars:
+      - key: GAME_PRESET
+        value: event
+      - key: ADMIN_PIN # quizmaster PIN; use something longer than 1234
+        sync: false
+      - key: DATABASE_URL # Supabase → Connect → Session pooler, password filled in
+        sync: false
+      - key: PUBLIC_WEB_URL # the Vercel address, e.g. https://hermes-quiz.vercel.app
+        sync: false
+      - key: CORS_ORIGIN # the same Vercel address
+        sync: false

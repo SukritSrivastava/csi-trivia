@@ -8,7 +8,7 @@
  * Environment (all optional):
  *   GAME_PRESET     demo (default) or event
  *   ADMIN_PIN       quizmaster PIN for /admin (default 1234)
- *   GAME_PORT       default 3001
+ *   GAME_PORT       default: PORT (set by Render), else 3001
  *   WEB_PORT        default 3000 (only used to print the right links)
  *   PUBLIC_WEB_URL  the site's address once deployed (for the join link)
  *   CORS_ORIGIN     comma-separated allowed origins (default: any)
@@ -36,7 +36,8 @@ try {
   console.error(`\n  ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 }
-const GAME_PORT = Number(process.env.GAME_PORT ?? 3001);
+// Render (and most hosts) say which port to use in PORT.
+const GAME_PORT = Number(process.env.GAME_PORT ?? process.env.PORT ?? 3001);
 const WEB_PORT = Number(process.env.WEB_PORT ?? 3000);
 const ADMIN_PIN = process.env.ADMIN_PIN ?? "1234";
 

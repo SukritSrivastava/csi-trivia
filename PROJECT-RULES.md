@@ -156,6 +156,8 @@ AGENTS.md / CLAUDE.md       short pointers + the must-follow rules
 data/questions.json         the questions (MCQ, 4 options, correct = index, round 1/2/null)
 docs/SPEC.md                game rules v2.1 (source of truth for rules)
 docs/BUILD-PHASES.md        the 5 build prompts (v4)
+docs/DEPLOY.md              Supabase + Render + Vercel, step by step
+render.yaml                 Render Blueprint for the game server
 mock-server/config.ts       presets: every timing and count
 mock-server/quiz.ts         all the rules (QuizRoom), no socket code
 mock-server/rooms.ts        Socket.IO glue: roles, PIN, rooms, sending views
@@ -231,7 +233,7 @@ question centred, hint under it. At 1920 px, 1% of the width ≈ 1.2rem (`html:h
 | Mock server | Node ≥ 20.9, **tsx** (`tsx watch mock-server/index.ts`) | `concurrently` runs web + game |
 | Tests | `mock-server/simulate.ts` (rules, fake clock), `scripts/smoke.ts` (real sockets), Playwright for screenshots | |
 | Game server = backend | `mock-server/` (Socket.IO, tsx) + **pg** to Supabase Postgres (`mock-server/db.ts`, the teammate's schema, on when `DATABASE_URL` is set) | decided 12 Oct, see §8.9 |
-| Hosting plan | Frontend on **Vercel**; game server on **Render** (or similar, WebSocket-capable) | not deployed yet |
+| Hosting | Website on **Vercel**, game server on **Render** (`render.yaml`, `npm run start:game`), results in **Supabase** Postgres | decided 12 Oct; step by step in `docs/DEPLOY.md`; not deployed yet |
 
 npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `typecheck`, `simulate`, `smoke`, `bots`.
 
@@ -241,7 +243,7 @@ Environment variables (`.env.local`, see `.env.example`):
 | `NEXT_PUBLIC_SOCKET_URL` | same host, port 3001 | browser: where the game server is |
 | `GAME_PRESET` | `demo` | server: `demo` or `event` |
 | `ADMIN_PIN` | `1234` | server |
-| `GAME_PORT` / `WEB_PORT` | `3001` / `3000` | server (web port only for printed links) |
+| `GAME_PORT` / `WEB_PORT` | `PORT` (Render) else `3001` / `3000` | server (web port only for printed links) |
 | `PUBLIC_WEB_URL` | `http://<LAN-IP>:3000` | server: builds the join link |
 | `CORS_ORIGIN` | any | server: comma-separated allowed origins |
 | `DATABASE_URL` | unset (memory only) | server: Postgres/Supabase; saves rooms, players, every Round 1 answer |
@@ -270,7 +272,7 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 ### Not in a phase yet
 - 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `mock-server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed server and try it against the real Supabase; the teammate reviews the `frontend` branch and merges.
 - ⬜ Write the **real Hermes questions** (round 1 count, 10+ buzzer questions plus spares) into `data/questions.json`.
-- ⬜ Deploy: frontend to Vercel, game server to Render; set `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, `DATABASE_URL` (Supabase), `ADMIN_PIN`, `GAME_PRESET=event`.
+- ⬜ Deploy (follow `docs/DEPLOY.md`): frontend to Vercel, game server to Render (Blueprint `render.yaml`); set `NEXT_PUBLIC_SOCKET_URL`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, `DATABASE_URL` (Supabase), `ADMIN_PIN`, `GAME_PRESET=event`.
 - ⬜ CSI club logo in a corner (optional, "later").
 - ⬜ Rehearsal in the actual hall with the real projector (brightness, hall lights, sound).
 

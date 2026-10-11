@@ -2,12 +2,13 @@
   "name": "hermes-quiz",
   "version": "0.1.0",
   "private": true,
-  "description": "Hermes Quiz: a live MCQ quiz for 60Ã¢â‚¬â€œ100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
+  "description": "Hermes Quiz: a live MCQ quiz for 60ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
   "scripts": {
     "dev": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"npm:dev:game\"",
     "dev:event": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"tsx watch mock-server/index.ts --preset event\"",
     "dev:web": "next dev -H 0.0.0.0 -p 3000",
     "dev:game": "tsx watch mock-server/index.ts",
+    "start:game": "tsx mock-server/index.ts",
     "build": "next build",
     "start": "concurrently -k -n web,game \"next start -H 0.0.0.0 -p 3000\" \"tsx mock-server/index.ts\"",
     "typecheck": "tsc --noEmit",
@@ -28,6 +29,7 @@
     "react-dom": "^19.2.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
+    "tsx": "^4.23.15",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
@@ -41,7 +43,6 @@
     "pg-mem": "^3.0.14",
     "playwright": "^1.64.0",
     "tailwindcss": "^4.1.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.3"
   },
   "engines": {

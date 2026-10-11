@@ -70,6 +70,8 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - `npm run dev` (demo preset) / `npm run dev:event`: Next.js on 3000 + mock server on 3001.
 - `npm run bots -- --room ABCD --count 80`: fake participants for scale tests.
 - `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
+- Deploy: website on Vercel, game server on Render (`render.yaml`, `npm run start:game`, uses `PORT`),
+  results in Supabase. Step by step: `docs/DEPLOY.md`. `tsx` and `pg` are runtime dependencies.
 - `npm run db-check`: plays a game with the results database on (in-memory Postgres) and checks the rows.
 - The backend is `mock-server/` (decided 12 Oct). `DATABASE_URL` (Supabase) turns on `mock-server/db.ts`,
   which saves to the teammate's `backend/db.js` tables (additive columns only). `quiz.ts` stays I/O-free:
