@@ -17,6 +17,9 @@ try {
     console.error('[Server] Failed to load questions.json:', err);
 }
 
+// In-memory game state per room: 
+// roomCode -> { gameState, currentQuestionIndex, questionStartTime, timeLimit, currentQuestion, answers, scores }
+const roomsState = new Map();
 
 const generateRoomCode = () => {
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -108,6 +111,11 @@ wss.on('connection', (ws, req) => {
                 }
                 // Host ends question manually or timer expires
                 else if (message.event === 'end_question') {
+                    const room = roomsState.get(code);
+                    if (!room || !room.currentQuestion) {
+                        console.log(`[Host ${code}] Tried to end question, but no question is active.`);
+                        return;
+                    }
                     room.gameState = 'QUESTION_ENDED';
 
                     const correctOpt = room.currentQuestion.correctOption;
