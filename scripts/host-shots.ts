@@ -10,7 +10,7 @@
  * Everything is driven over sockets as Admin; the browser only watches.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Page } from "playwright";
 import { io, type Socket } from "socket.io-client";
@@ -209,6 +209,27 @@ async function main() {
     await send({ type: "endQuiz" });
     await phase("podium");
     await shot("18-podium", 3600);
+
+    // The two projector frames from public/finaldesign.html, next to ours.
+    const ref = await (await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 2 })).newPage();
+    await ref.goto(`${WEB}/finaldesign.html`);
+    await ref.waitForTimeout(800);
+    await ref.locator(".tv.e").nth(0).screenshot({ path: path.join(OUT, "ref-answer.png") });
+    await ref.locator(".tv.e").nth(1).screenshot({ path: path.join(OUT, "ref-read.png") });
+    const img = (f: string) => `data:image/png;base64,${readFileSync(path.join(OUT, f)).toString("base64")}`;
+    const cmp = await (await browser.newContext({ viewport: { width: 1960, height: 600 } })).newPage();
+    await cmp.setContent(
+      `<body style="margin:0;background:#0f0d14;color:#ccc;font:14px sans-serif;padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px">${[
+        ["ref-read.png", "design: read step"],
+        ["03-read-1920x1080.png", "app: read step"],
+        ["ref-answer.png", "design: answer step"],
+        ["04-answer-1920x1080.png", "app: answer step"],
+      ]
+        .map(([f, t]) => `<figure style="margin:0"><img src="${img(f)}" style="width:100%"><figcaption>${t}</figcaption></figure>`)
+        .join("")}</body>`,
+    );
+    await cmp.screenshot({ path: path.join(OUT, "compare.png"), fullPage: true });
+    console.log("  📸 compare.png (design | app)");
     console.log(pageErrors.length ? `\nPage errors:\n  ${pageErrors.join("\n  ")}` : "\nNo page errors.");
     console.log(`Done. Screenshots in ${OUT}`);
   } finally {

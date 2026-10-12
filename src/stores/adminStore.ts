@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { gameServerUrl, getSocket } from "@/lib/socket";
+import { clearServerRestarted, gameServerUrl, getSocket, serverRestarted } from "@/lib/socket";
 import { loadAdminSession, saveAdminSession } from "@/lib/session";
 import {
   ADMIN_AUTH_ERROR_MESSAGES,
@@ -16,6 +16,7 @@ import {
   type Quiz,
   type QuizSummary,
   type SaveQuizResult,
+  SERVER_RESTARTED_MESSAGE,
 } from "@/shared/protocol";
 import type { ConnectionStatus } from "./hostStore";
 
@@ -112,6 +113,7 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
     new Promise<boolean>((resolve) => {
       socket().emit("admin:auth", { roomCode: roomCode.trim().toUpperCase(), pin }, (result) => {
         if (result.ok) {
+          clearServerRestarted();
           saveAdminSession({ pin, roomCode: result.roomCode });
           set({ error: null });
           resolve(true);
@@ -121,9 +123,11 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
             view: null,
             error:
               result.error === "room-not-found"
-                ? quiet
-                  ? "That room is no longer open (the game server may have restarted). Open it again from a quiz."
-                  : ADMIN_AUTH_ERROR_MESSAGES["room-not-found"]
+                ? serverRestarted()
+                  ? `${SERVER_RESTARTED_MESSAGE} Open the quiz again from the list below.`
+                  : quiet
+                    ? "That room is no longer open. Open it again from a quiz."
+                    : ADMIN_AUTH_ERROR_MESSAGES["room-not-found"]
                 : ADMIN_AUTH_ERROR_MESSAGES[result.error],
           });
           resolve(false);

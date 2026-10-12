@@ -29,8 +29,33 @@ const MUTE_KEY = "hermes:host-muted";
 export function HostApp() {
   const connect = useHostStore((s) => s.connect);
   const view = useHostStore((s) => s.view);
+  const fontsReady = useFontsReady();
   useEffect(() => connect(), [connect]);
-  return <MotionConfig reducedMotion="user">{view ? <HostScreen view={view} /> : <HostGate />}</MotionConfig>;
+  // Nothing on the projector until Special Elite and VT323 are in: no flash of a fallback font.
+  return (
+    <MotionConfig reducedMotion="user">
+      <div className="contents" style={fontsReady ? undefined : { visibility: "hidden" }} data-fonts-ready={fontsReady}>
+        {view ? <HostScreen view={view} /> : <HostGate />}
+      </div>
+    </MotionConfig>
+  );
+}
+
+/** True once the page's fonts have loaded (or after 3 s, so a font problem never blanks the projector). */
+function useFontsReady() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let done = false;
+    const finish = () => {
+      if (!done) setReady((done = true));
+    };
+    const t = window.setTimeout(finish, 3000);
+    void Promise.all([document.fonts.load('1rem "Special Elite"'), document.fonts.load("1rem VT323")])
+      .then(() => document.fonts.ready)
+      .then(finish, finish);
+    return () => window.clearTimeout(t);
+  }, []);
+  return ready;
 }
 
 /** Which dark pool goes behind the text (design: split for the answer step, center for single blocks, full for lists). */

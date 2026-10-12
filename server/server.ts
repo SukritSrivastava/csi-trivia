@@ -6,6 +6,7 @@
  * Every payload from a browser is checked here before it reaches the quiz or
  * the library, so a bad or malicious message can never crash the server.
  */
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Server } from "socket.io";
@@ -68,6 +69,8 @@ const IMAGE_TYPES: [string, (b: Buffer) => boolean][] = [
 ];
 
 export async function startGameServer(options: GameServerOptions): Promise<RunningGameServer> {
+  /** New on every start: screens compare it to spot a restart (server:hello). */
+  const BOOT_ID = randomUUID();
   const library = options.library ?? new MemoryLibrary();
   await ensureDemoQuiz(library, options.config, options.questionsFile);
   const log = options.log ?? (() => {});
@@ -204,6 +207,7 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
 
   io.on("connection", (socket) => {
     socket.data = {};
+    socket.emit("server:hello", { bootId: BOOT_ID });
 
     socket.on("host:auth", (payload, ack) => {
       if (typeof ack !== "function") return;

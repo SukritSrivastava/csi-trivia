@@ -9,6 +9,7 @@
 import NumberFlow from "@number-flow/react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, botDelay } from "@/components/ui/Bot";
+import { assetUrl } from "@/lib/socket";
 import type { Backing, FinalistState, HostStage, HostView } from "@/shared/protocol";
 import { OPTION_LETTERS } from "@/shared/protocol";
 import { Clock, contentTop, Heading, Panel, useMoods } from "../parts";
@@ -130,7 +131,10 @@ export function BuzzerStage({ view, stage }: { view: HostView; stage: Stage<"r2R
             </>
           )}
         </p>
-        <h2 className="host-q host-q-center !text-[4.6rem]">{q.text}</h2>
+        <div className="flex items-center justify-center gap-[2.4rem]">
+          {q.image && <img src={assetUrl(q.image)} alt="" className="h-[10rem] w-[10rem] shrink-0 rounded-[1rem] border border-line bg-panel object-contain p-[0.8rem]" />}
+          <h2 className="host-q host-q-center !text-[4.6rem]">{q.text}</h2>
+        </div>
         <ol className="grid w-[86%] grid-cols-2 gap-x-[5rem] gap-y-[1.4rem] font-type text-[2.8rem] text-bright">
           {q.options.map((o, i) => (
             <li key={o} className="host-opt" data-correct={correctText === o} data-dim={!!correctText && correctText !== o}>

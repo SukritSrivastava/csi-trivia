@@ -6,28 +6,9 @@ export function ordinal(n: number): string {
   return `${n}${suffixes[n % 10] ?? "th"}`;
 }
 
-export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
-  return letters.toUpperCase();
-}
-
 /** Strips the scheme so the projector shows a short, typeable address. */
 export function displayUrl(url: string): string {
   return url.replace(/^https?:\/\//, "");
-}
-
-/** Ink or paper, whichever reads better on the given background colour. */
-export function textOn(hex: string): string {
-  const n = parseInt(hex.replace("#", ""), 16);
-  const channel = (v: number) => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  const lum = 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
-  const contrastWithInk = (lum + 0.05) / (0.012 + 0.05);
-  const contrastWithPaper = (0.97 + 0.05) / (lum + 0.05);
-  return contrastWithInk >= contrastWithPaper ? "#1b1340" : "#fffbf0";
 }
 
 /** A short buzz on phones that support it (Android). Silently does nothing elsewhere. */

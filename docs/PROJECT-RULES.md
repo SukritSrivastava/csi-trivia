@@ -29,9 +29,9 @@ on the **Hermes AI agent**. The **event is within a week of 11 Oct 2026**.
   **`src/shared/protocol.ts`**, and saves results to Supabase. It's what's deployed on Render.
   (Lelouch's first prototype is kept in `archive/ws-backend-v1/`.)
 
-**Where we are:** Phases 1–4 are done: the design system and bots, Admin (`/admin`), the phones
-(`/play`) and the Host (`/host`), all in the final look. Next: Phase 5 (event-proofing and handover)
-in `docs/BUILD-PHASES.md` (see §4).
+**Where we are:** all 5 phases are done (13 Oct): the design system and bots, Admin (`/admin`),
+the phones (`/play`), the Host (`/host`) and event-proofing (drills, a 100-player rehearsal,
+`docs/RUN-SHEET.md`, `docs/BACKEND-NOTES.md`). Left: the real Hermes questions and a run-through in the hall.
 
 ### Read these, in this order
 1. **This file.**
@@ -209,8 +209,7 @@ src/lib/                    socket, session, useCountdown, useWakeLock, usePageV
 
 Classes: `host-q`, `host-q-center`, `host-opts`, `host-opt`, `opt-num`, `host-count`, `host-hint`,
 `host-banner`, `host-watermark`, `host-name`, `phone-bg`, `phone-opt`, `phone-go`, `phone-result`,
-`clock`, `bot` (+`data-head`, `data-mood`), `corridor-*`. Legacy marigold tokens (`plate`, `press`,
-`bg-paper`…) are unused leftovers; delete in Phase 5.
+`phone-buzz`, `clock`, `bot` (+`data-head`, `data-mood`), `corridor-*`. (The old marigold tokens were deleted in Phase 5.)
 
 Components (`src/components/ui/`):
 - `<Bot color head mood size delay label />`: a robot. `mood` ∈ idle/thinking/locked/right/wrong/out.

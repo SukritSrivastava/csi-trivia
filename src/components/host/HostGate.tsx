@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { Corridor } from "@/components/ui/Corridor";
+import { SERVER_RESTARTED_MESSAGE } from "@/shared/protocol";
 import { useHostStore } from "@/stores/hostStore";
 
 export function HostGate() {
@@ -16,6 +17,7 @@ export function HostGate() {
   const signingIn = useHostStore((s) => s.signingIn);
   const signIn = useHostStore((s) => s.signIn);
   const signOut = useHostStore((s) => s.signOut);
+  const restarted = useHostStore((s) => s.restarted);
   const [pin, setPin] = useState("");
 
   return (
@@ -26,6 +28,12 @@ export function HostGate() {
 
         {status !== "online" ? (
           <p className="host-hint">{status === "connecting" ? "Connecting to the game server…" : "Can't reach the game server. Retrying…"}</p>
+        ) : stage === "waiting" && restarted ? (
+          <div className="flex flex-col items-center gap-[1.6rem]" data-testid="host-restarted">
+            <p className="host-banner !text-[4.4rem]">&gt; server restarted</p>
+            <p className="host-q host-q-center !text-[4rem]">{SERVER_RESTARTED_MESSAGE}</p>
+            <p className="host-hint">The quizmaster opens it again from Admin. It appears here by itself.</p>
+          </div>
         ) : stage === "waiting" ? (
           <>
             <p className="host-hint">Waiting for the quizmaster to open a room…</p>

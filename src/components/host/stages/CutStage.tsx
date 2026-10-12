@@ -83,7 +83,7 @@ export function CutStage({ view, stage }: { view: HostView; stage: CutStageData 
           <ul className="flex max-w-[80rem] flex-wrap justify-center gap-[0.5rem]" aria-label={`${rest.length} more`}>
             {rest.slice(0, 60).map((s) => (
               <li key={s.id}>
-                <Bot color={s.color} head={s.head} mood={lineDrawn ? mood(s.id, "out") : "idle"} size="1.8rem" delay={botDelay(s.id)} />
+                <Bot color={s.color} head={s.head} mood={lineDrawn ? mood(s.id, "out") : "idle"} size="1.8rem" delay={botDelay(s.id)} label={`${s.rank}. ${s.name}`} />
               </li>
             ))}
           </ul>

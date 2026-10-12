@@ -961,11 +961,20 @@ export interface ServerToClientEvents {
   "admin:state": (view: AdminView) => void;
   /** The room is gone (Host started a new one, or it was abandoned). */
   "room:closed": (payload: { reason: string }) => void;
+  /**
+   * Sent to every new connection. `bootId` changes each time the game server
+   * starts, so a screen that reconnects to a different bootId knows the server
+   * restarted and every room was lost (see SERVER_RESTARTED_MESSAGE).
+   */
+  "server:hello": (payload: { bootId: string }) => void;
 }
 
 // ============================================================================
 // Messages
 // ============================================================================
+
+/** What every screen says when the game server restarted mid-quiz (rooms live in memory). */
+export const SERVER_RESTARTED_MESSAGE = "The quiz server restarted, so the quiz has to start again.";
 
 export const JOIN_ERROR_MESSAGES: Record<JoinError, string> = {
   "room-not-found": "No quiz with that code. Check the code on the projector.",

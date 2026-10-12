@@ -179,6 +179,13 @@ async function main() {
     await meera.page.getByTestId("result-wrong").waitFor();
     check((await meera.page.getByTestId("result-wrong").textContent())?.includes(correct), "WRONG says what the answer was");
     await shot("12-result", phones, 1200);
+    // Reduced motion: no hop or shake, but the bot still shows its mood (red X eyes).
+    await meera.page.emulateMedia({ reducedMotion: "reduce" });
+    await sleep(300);
+    const xEyes = await meera.page.locator('[data-testid="result-wrong"] .bot-eye').first().evaluate((el) => getComputedStyle(el, "::before").opacity);
+    check(xEyes === "1", "reduced motion: the bot still shows its mood (WRONG: X eyes)");
+    await shot("12b-reduced-motion", [meera], 100);
+    await meera.page.emulateMedia({ reducedMotion: "no-preference" });
     await send({ type: "showResults" });
     await send({ type: "showLeaderboard" });
 

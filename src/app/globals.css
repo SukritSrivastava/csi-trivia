@@ -31,15 +31,6 @@
   --color-clock: #fffbf0; /* timer face */
   --color-fog: #7d9690; /* muted labels, disabled */
 
-  /* ---- Legacy marigold tokens: only the Phase 1 temporary pages use these. Don't use in new screens. */
-  --color-ink: #1b1340;
-  --color-ink-soft: #4a3f7a;
-  --color-marigold: #ffb627;
-  --color-marigold-deep: #f29a00;
-  --color-paper: #fffbf0;
-  --color-side-a: #ff3d7f;
-  --color-side-b: #00a6a6;
-
   /* ---- Type */
   --font-type: var(--font-special-elite), "Courier New", ui-monospace, monospace; /* words: questions, answers, names, labels */
   --font-term: var(--font-vt323), ui-monospace, Menlo, monospace; /* numbers: answer keys, timer, counts, room code */
@@ -59,40 +50,6 @@ html:has(.host-root) {
 }
 
 @layer components {
-  /* Archivo has a width axis (legacy pages). */
-  .type-wide {
-    font-stretch: 125%;
-  }
-  .type-narrow {
-    font-stretch: 85%;
-  }
-
-  /* ---- Legacy (Phase 1 temporary pages only) */
-  .plate {
-    background: var(--color-paper);
-    border: 0.25rem solid var(--color-ink);
-    border-radius: 1.25rem;
-    box-shadow: 0.5rem 0.5rem 0 var(--color-ink);
-  }
-  .press {
-    border: 3px solid var(--color-ink);
-    border-radius: 16px;
-    box-shadow: 0 5px 0 var(--color-ink);
-    transition:
-      transform 80ms ease-out,
-      box-shadow 80ms ease-out;
-  }
-  .press:active:not(:disabled) {
-    transform: translateY(4px);
-    box-shadow: 0 1px 0 var(--color-ink);
-  }
-  .press:disabled {
-    opacity: 0.4;
-    transform: translateY(5px);
-    box-shadow: none;
-    cursor: not-allowed;
-  }
-
   /* ======================================================================
      THE CORRIDOR (Host background; <Corridor /> renders these layers)
      ====================================================================== */
@@ -642,6 +599,10 @@ html:has(.host-root) {
   }
   .bot[data-mood="out"] .bot-head::after {
     animation: none;
+  }
+  /* Phase 5 fix: the visor band powers down with the head (the reference left it lit). */
+  .bot[data-mood="out"][data-head="visor"] .bot-eyes {
+    outline-color: #55646a;
   }
 }
 

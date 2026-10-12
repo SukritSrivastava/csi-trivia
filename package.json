@@ -9,6 +9,7 @@
     "dev:web": "next dev -H 0.0.0.0 -p 3000",
     "dev:game": "tsx watch server/index.ts",
     "start:game": "tsx server/index.ts",
+    "preview": "concurrently -k -n web,game -c magenta,cyan \"next start -H 0.0.0.0 -p 3000\" \"tsx watch server/index.ts\"",
     "build": "next build",
     "start": "concurrently -k -n web,game \"next start -H 0.0.0.0 -p 3000\" \"tsx server/index.ts\"",
     "typecheck": "tsc --noEmit",
@@ -18,6 +19,10 @@
     "admin-run": "tsx scripts/admin-run.ts",
     "host-shots": "tsx scripts/host-shots.ts",
     "play-shots": "tsx scripts/play-shots.ts",
+    "drills": "tsx scripts/drills.ts",
+    "rehearsal": "tsx scripts/rehearsal.ts",
+    "check-questions": "tsx scripts/check-questions.ts",
+    "washout": "tsx scripts/washout.ts",
     "db-check": "tsx scripts/db-check.ts",
     "deploy": "tsx scripts/deploy.ts"
   },

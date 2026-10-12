@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { getSocket } from "@/lib/socket";
+import { clearServerRestarted, getSocket, serverRestarted } from "@/lib/socket";
 import { loadHostSession, saveHostSession } from "@/lib/session";
 import type { HostView } from "@/shared/protocol";
 
@@ -22,6 +22,8 @@ interface HostStore {
   /** Sign-in error, shown on the PIN screen. */
   error: string | null;
   signingIn: boolean;
+  /** The game server restarted while a room was on screen: say so until a new room opens. */
+  restarted: boolean;
   /** Opens the connection; signs back in after a refresh. Returns a cleanup function. */
   connect: () => () => void;
   signIn: (pin: string) => void;
@@ -62,6 +64,7 @@ export const useHostStore = create<HostStore>()((set, get) => {
     clockOffset: 0,
     error: null,
     signingIn: false,
+    restarted: false,
 
     connect: () => {
       const socket = getSocket();
@@ -75,7 +78,14 @@ export const useHostStore = create<HostStore>()((set, get) => {
         clearRetry();
         set({ status: "offline" });
       };
-      const onState = (view: HostView) => set({ view, stage: "showing", clockOffset: view.serverNow - Date.now() });
+      const onState = (view: HostView) => {
+        if (get().restarted) clearServerRestarted();
+        set({ view, stage: "showing", clockOffset: view.serverNow - Date.now(), restarted: false });
+      };
+      const onHello = () => {
+        // Rooms live in the server's memory: a restart loses the one on screen.
+        if (serverRestarted() && (get().view || loadHostSession()?.roomCode)) set({ view: null, restarted: true });
+      };
       const onClosed = () => {
         // That room is gone: wait for (or show) the next one.
         const saved = loadHostSession();
@@ -88,6 +98,7 @@ export const useHostStore = create<HostStore>()((set, get) => {
       socket.on("connect_error", onDisconnect);
       socket.on("host:state", onState);
       socket.on("room:closed", onClosed);
+      socket.on("server:hello", onHello);
       socket.connect();
 
       return () => {
@@ -97,6 +108,7 @@ export const useHostStore = create<HostStore>()((set, get) => {
         socket.off("connect_error", onDisconnect);
         socket.off("host:state", onState);
         socket.off("room:closed", onClosed);
+        socket.off("server:hello", onHello);
         socket.disconnect();
       };
     },

@@ -1,9 +1,9 @@
 "use client";
 
 import { create } from "zustand";
-import { getSocket } from "@/lib/socket";
+import { clearServerRestarted, getSocket, serverRestarted } from "@/lib/socket";
 import { loadParticipantSession, saveLastName, saveParticipantSession } from "@/lib/session";
-import { BOT_ERROR_MESSAGES, type BotLook, JOIN_ERROR_MESSAGES, type ParticipantView } from "@/shared/protocol";
+import { BOT_ERROR_MESSAGES, type BotLook, JOIN_ERROR_MESSAGES, type ParticipantView, SERVER_RESTARTED_MESSAGE } from "@/shared/protocol";
 import type { ConnectionStatus } from "./hostStore";
 
 interface ParticipantStore {
@@ -68,7 +68,9 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
             view: null,
             notice:
               result.error === "room-not-found"
-                ? "That quiz isn't running any more (the quiz server may have restarted). Join again with the code on the projector."
+                ? serverRestarted()
+                  ? `${SERVER_RESTARTED_MESSAGE} Join again with the new code on the projector.`
+                  : "That quiz isn't running any more. Join again with the code on the projector."
                 : JOIN_ERROR_MESSAGES[result.error],
           });
         }
@@ -82,6 +84,9 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
       set({ view: null, notice: reason });
     };
 
+    // The browser knows about a dropped Wi-Fi long before the socket's ping times out.
+    const onOffline = () => set({ status: "offline" });
+    window.addEventListener("offline", onOffline);
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("connect_error", onConnectError);
@@ -91,6 +96,7 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
     socket.connect();
 
     return () => {
+      window.removeEventListener("offline", onOffline);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);
@@ -108,6 +114,7 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
       answered = true;
       set({ joining: false });
       if (result.ok) {
+        clearServerRestarted();
         saveParticipantSession({ roomCode: result.roomCode, participantId: result.participantId });
         saveLastName(name.trim());
       } else {

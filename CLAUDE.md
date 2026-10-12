@@ -4,7 +4,7 @@
 skills, agents, plugins, API). This file is the short version.**
 
 Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2.1). Build plan:
-`docs/BUILD-PHASES.md` (v4, 5 phases; phases 1–4 done (design, Admin, phones, Host); phase 5, event-proofing, next).
+`docs/BUILD-PHASES.md` (v4, 5 phases, all done 13 Oct). Quizmaster: `docs/RUN-SHEET.md`. Backend teammate: `docs/BACKEND-NOTES.md`.
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
@@ -34,9 +34,8 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   exactly (open it at http://localhost:3000/finaldesign.html); don't redesign it. Tokens and classes
   are in `src/app/globals.css` (`host-q`, `host-opts`, `opt-num`, `host-count`, `phone-opt`,
   `phone-go`, `clock`, `bot`, `corridor-*`). Components: `Bot` + `botDelay`, `BotBuilder`,
-  `Corridor`, `TimerRing` in `src/components/ui/`. The old marigold tokens (`plate`, `press`,
-  `bg-paper`, `bg-marigold`…) are unused leftovers; delete in Phase 5. `Avatar.tsx` is the old
-  initials circle: use `Bot` instead. The Host sizes everything in `rem` (scaled by
+  `Corridor`, `TimerRing` in `src/components/ui/`. The old marigold tokens and classes are gone
+  (Phase 5); never bring them back. The Host sizes everything in `rem` (scaled by
   `html:has(.host-root)`, so the Host root element needs the `host-root` class); at 1920 px,
   1% of the screen width is about 1.2rem.
 - Bots: `ParticipantTag` has `color` + `head`. The server assigns a free bot on join; phones change
@@ -88,6 +87,12 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   `Moment` screen); `BuzzerScreens` (backing, the finalist's `phone-buzz` button, the audience view);
   `parts.tsx`). Phone bot moods follow the phone's own screen state (only the Host uses `HostView.cast`).
   `/play` sets `viewportFit: "cover"` and pads with the safe-area insets. `src/components/temp/` is gone.
+- Event-proofing (phase 5): every connection gets `server:hello { bootId }`; `src/lib/socket.ts`
+  remembers it per tab (`serverRestarted()`), so after a game-server restart every screen says
+  `SERVER_RESTARTED_MESSAGE` (Host: `hostStore.restarted` → HostGate panel). Coming back online forces a
+  reconnect (no stale view after a Wi-Fi blip); phones show RECONNECTING… on the browser's `offline`
+  event. The Host renders nothing until Special Elite and VT323 have loaded (`useFontsReady`, 3 s cap).
+  Out-mood visor bots grey their eye band. Buzzer questions show their image on the Host.
 - `src/css.d.ts` only lets TypeScript accept `import "./globals.css"`.
 
 ## Commands
@@ -112,4 +117,11 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - `npm run play-shots [-- --bots 20 --out screenshots/play]` (with `npm run dev`, database off): 4 phone tabs
   (360/375/390/430 wide) play a whole game with checks (name clash, shared bot, refresh mid-question and
   mid-buzzer-round, removal, undo) and screenshot every phone state; `compare.png` = design | app.
+- `npm run drills` (against `npm run dev` or `npm run preview`): failure drills on all three screens,
+  including a game-server restart (it touches `server/index.ts`, so `tsx watch` must be running).
+- `npm run rehearsal -- --gpu` (against `npm run build; npm run preview` with `GAME_PRESET=event`, database
+  off): 100 bots + 4 phone tabs + Host 1920 + Admin at phone size, lobby to podium with a void, an undo and
+  a refresh; prints Host fps, memory and Admin→view latency. `--gpu` draws like a real laptop.
+- `npm run check-questions [-- --preset event]`, `npm run washout [-- --in screenshots/host]` (washout
+  views + contrast table). `npm run preview` = production build + a watched game server.
 - `next dev` appends a Next.js block to `AGENTS.md`; that's expected, keep it committed.
