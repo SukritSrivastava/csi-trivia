@@ -4,7 +4,18 @@
  * runs in about a second. Run: npm run simulate
  */
 import assert from "node:assert/strict";
-import { type AdminAction, BOT_HEADS, type CommandResult, type LibraryQuestion, PARTICIPANT_COLORS, type Phase, type Quiz } from "../src/shared/protocol";
+import {
+  type AdminAction,
+  BOT_HEADS,
+  BOT_LIGHTNESS,
+  type CommandResult,
+  hexToHsl,
+  type LibraryQuestion,
+  normalizeBotColor,
+  PARTICIPANT_COLORS,
+  type Phase,
+  type Quiz,
+} from "../src/shared/protocol";
 import { blankQuestion, cleanQuiz, importJson, importRows, importText, parseCsv, quizProblems, quizToCsv } from "../src/shared/quiz";
 import { type GameConfig, PRESETS } from "./config";
 import { quizToGame } from "./library";
@@ -242,33 +253,41 @@ test("joining: duplicate and blank names, rejoin by id and by name, room full", 
   assert.ok(byId.ok && byId.participantId === riya, "rejoin with the saved id");
 });
 
-test("bots: unique colours first, then unique colour + head; lobby only; moods follow the game; one 1–4 answer order", () => {
+test("bots: any colour (wheel), shared bots allowed, names unique; lobby only; moods follow the game; one 1–4 answer order", () => {
   const g = new Game(PRESETS.demo);
-  const ids = Array.from({ length: 14 }, (_, i) => g.join(`P${i}`));
+  const ids = Array.from({ length: 100 }, (_, i) => g.join(`P${i}`));
   const looks = () => ids.map((id) => g.phone(id).me);
-  assert.equal(new Set(looks().slice(0, 12).map((m) => m.color)).size, 12, "the first 12 get 12 different colours");
-  assert.equal(new Set(looks().map((m) => `${m.color}|${m.head}`)).size, 14, "nobody shares colour and head");
-  assert.ok(looks().every((m) => PARTICIPANT_COLORS.includes(m.color as never) && BOT_HEADS.includes(m.head)));
+  assert.equal(new Set(looks().slice(0, 12).map((m) => m.color)).size, 12, "starting bots are varied: the first 12 get 12 colours");
+  assert.ok(looks().every((m) => PARTICIPANT_COLORS.includes(m.color as never) && BOT_HEADS.includes(m.head)), "100 people all get a bot");
 
-  // All 12 colours are in use, so colours unlock; only exact pairs stay taken.
-  const lobby = g.screen(ids[0]);
-  assert.ok(lobby.kind === "lobby" && lobby.botPicker.lockedColors.length === 0 && lobby.botPicker.taken.length === 13);
+  // Sharing is fine: copy someone else's exact bot.
   const p1 = g.phone(ids[1]).me;
-  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: p1.head }), { ok: false, error: "taken" });
-  const free = BOT_HEADS.find((h) => !looks().some((m) => m.color === p1.color && m.head === h))!;
-  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: free }), { ok: true });
-  assert.equal(g.phone(ids[0]).me.head, free);
-  assert.deepEqual(g.room.setBot(ids[0], { color: "#000000", head: "box" }), { ok: false, error: "invalid" });
+  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: p1.head }), { ok: true });
+  assert.deepEqual([g.phone(ids[0]).me.color, g.phone(ids[0]).me.head], [p1.color.toLowerCase(), p1.head], "same colour and head as P1");
+  const lobby = g.screen(ids[0]);
+  assert.ok(lobby.kind === "lobby" && !("botPicker" in lobby), "nothing to lock or grey out any more");
+
+  // Any colour from the wheel; very dark ones are brightened so they show on the dark screens.
+  assert.deepEqual(g.room.setBot(ids[2], { color: "#3A86FF", head: "visor" }), { ok: true });
+  assert.equal(g.phone(ids[2]).me.color, "#3a86ff");
+  assert.deepEqual(g.room.setBot(ids[3], { color: "#000000", head: "box" }), { ok: true });
+  assert.equal(hexToHsl(g.phone(ids[3]).me.color).l >= BOT_LIGHTNESS.min, true, "black becomes visible grey");
+  assert.deepEqual(g.room.setBot(ids[4], { color: "#140028", head: "box" }), { ok: true });
+  const dark = hexToHsl(g.phone(ids[4]).me.color);
+  assert.ok(Math.abs(dark.h - 270) < 3 && dark.l >= BOT_LIGHTNESS.min - 0.5, "a dark purple stays purple, just lighter");
+  assert.equal(normalizeBotColor("#fff"), normalizeBotColor("#ffffff"), "#rgb short form works");
+  assert.ok(hexToHsl(normalizeBotColor("#ffffff")!).l <= BOT_LIGHTNESS.max + 0.5, "pure white is toned down a little");
+  assert.deepEqual(g.room.setBot(ids[0], { color: "red", head: "box" }), { ok: false, error: "invalid" });
+  assert.deepEqual(g.room.setBot(ids[0], { color: "#12345", head: "box" }), { ok: false, error: "invalid" });
   assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: "wings" }), { ok: false, error: "invalid" });
 
-  // With a colour free, held colours are locked.
+  // Names stay unique (case-insensitive), whatever the bots.
+  const dupe = g.room.join("p1");
+  assert.ok(!dupe.ok && dupe.error === "name-taken", "two people can't share a name");
+
   const g2 = new Game(PRESETS.demo);
   const a = g2.join("A");
   const b = g2.join("B");
-  const aColor = g2.phone(a).me.color;
-  const pick = g2.screen(b);
-  assert.ok(pick.kind === "lobby" && pick.botPicker.lockedColors.includes(aColor));
-  assert.deepEqual(g2.room.setBot(b, { color: aColor, head: "visor" }), { ok: false, error: "taken" }, "a held colour is locked while others are free");
 
   // Moods on the Host.
   const mood = (game: Game, id: string) => game.host().cast.find((c) => c.id === id)!.mood;

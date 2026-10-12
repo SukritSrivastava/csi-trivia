@@ -40,7 +40,7 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   `html:has(.host-root)`, so the Host root element needs the `host-root` class); at 1920 px,
   1% of the screen width is about 1.2rem.
 - Bots: `ParticipantTag` has `color` + `head`. The server assigns a free bot on join; phones change
-  it in the lobby with `participant:bot` (`BotPicker` on the lobby screen says what's taken).
+  it in the lobby with `participant:bot`: any colour (12 quick picks + a colour wheel in `BotBuilder`), any head, and bots may be shared (100 people); names stay unique. The server stores `normalizeBotColor(colour)` (dark colours brightened).
   `HostView.cast` gives every bot's `mood` for the current step; screens never work moods out
   themselves. Give each bot `delay={botDelay(id)}` so a wall of them doesn't blink in sync.
 - Animation: `motion` (`motion/react`), `@number-flow/react` for numbers, `canvas-confetti` via

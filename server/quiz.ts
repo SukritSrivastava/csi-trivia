@@ -22,7 +22,6 @@ import {
   BOT_HEADS,
   type BotHead,
   type BotMood,
-  type BotPicker,
   type BotResult,
   type BuzzerQuestion,
   type BuzzOutcome,
@@ -36,6 +35,7 @@ import {
   NAME_MAX_LENGTH,
   OPTION_LETTERS,
   type OptionResult,
+  normalizeBotColor,
   PARTICIPANT_COLORS,
   type ParticipantScreen,
   type ParticipantStatus,
@@ -339,19 +339,15 @@ export class QuizRoom {
     return ok(participant);
   }
 
-  /** Lobby only: change a participant's bot (see the uniqueness rule on PARTICIPANT_COLORS). */
+  /** Lobby only: change a participant's bot. Any colour (dark ones brightened), any head; bots may be shared. */
   setBot(id: string, look: { color: string; head: string }): BotResult {
     const p = this.find(id);
     if (!p || p.status === "removed") return { ok: false, error: "invalid" };
     if (this.phase !== "lobby") return { ok: false, error: "too-late" };
-    const color = PARTICIPANT_COLORS.find((c) => c.toLowerCase() === String(look?.color ?? "").toLowerCase());
+    const color = normalizeBotColor(look?.color);
     const head = BOT_HEADS.find((h) => h === look?.head);
     if (!color || !head) return { ok: false, error: "invalid" };
     if (p.color === color && p.head === head) return { ok: true };
-    const picker = this.botPicker(p);
-    if (picker.lockedColors.includes(color) || picker.taken.some((t) => t.color === color && t.head === head)) {
-      return { ok: false, error: "taken" };
-    }
     p.color = color;
     p.head = head;
     this.changed();
@@ -1040,9 +1036,10 @@ export class QuizRoom {
   }
 
   /**
-   * A bot for a new participant: the least-used colour (palette order breaks
-   * ties), with the first head nobody has in that colour. Unique for 96
-   * people; past that, pairs repeat.
+   * A starting bot for a new participant, so the room looks varied before anyone
+   * customises: the least-used of the 12 quick-pick colours (palette order breaks
+   * ties), with the first head nobody has in that colour. Repeats are fine
+   * (bots may be shared); people change it in the lobby.
    */
   private freeBot(): { color: string; head: BotHead } {
     const others = this.active();
@@ -1050,17 +1047,6 @@ export class QuizRoom {
     const color = [...PARTICIPANT_COLORS].sort((a, b) => uses(a) - uses(b))[0];
     const head = BOT_HEADS.find((h) => !others.some((o) => o.color === color && o.head === h)) ?? BOT_HEADS[uses(color) % BOT_HEADS.length];
     return { color, head };
-  }
-
-  /** What the lobby bot builder can offer `p` (everyone else's bots count as taken). */
-  private botPicker(p: Participant): BotPicker {
-    const others = this.active().filter((o) => o.id !== p.id);
-    const held = new Set(others.map((o) => o.color));
-    const anyColourFree = PARTICIPANT_COLORS.some((c) => !held.has(c));
-    return {
-      lockedColors: anyColourFree ? PARTICIPANT_COLORS.filter((c) => held.has(c)) : [],
-      taken: others.map((o) => ({ color: o.color, head: o.head })),
-    };
   }
 
   /** What `p`'s bot eyes are doing on the Host right now (see BotMood). */
@@ -1797,7 +1783,7 @@ export class QuizRoom {
 
     switch (this.phase) {
       case "lobby":
-        return { kind: "lobby", joined: this.counts().joined, botPicker: this.botPicker(p) };
+        return { kind: "lobby", joined: this.counts().joined };
       case "r1Intro":
         return { kind: "r1Intro", settings: this.settings() };
       case "cut":

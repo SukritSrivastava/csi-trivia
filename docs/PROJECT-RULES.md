@@ -90,7 +90,8 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 11 Oct | SPEC v2: two rounds, 6-player buzzer round, quizmaster controls everything. |
 | 11 Oct | Look: "Server Corridor, Lights Low" (Direction E v2). Approved, final. |
 | 11 Oct | Fonts: Special Elite (words), VT323 (numbers); Archivo only for dense Admin tables. |
-| 11 Oct | Bots: 12 colours × 8 heads, picked in the lobby; unique colour while any colour is free, then unique colour+head (96 unique). |
+| 11 Oct | Bots: 12 colours × 8 heads, picked in the lobby; unique colour while any colour is free, then unique colour+head (96 unique). *Replaced 12 Oct, see below.* |
+| 12 Oct | Bots for 100 people: any colour (12 quick picks + a colour wheel), 8 heads, and **bots may be shared**; only names must be unique. Dark colours are brightened by the server. |
 | 11 Oct | Bot eyes show the game: idle / thinking / locked / right / wrong / out, computed by the server (`HostView.cast`). |
 | 11 Oct | One 1–4 answer order on the Host and every phone in Round 1 (no per-phone shuffle). |
 | 11 Oct | Host cast: up to 12 bots in a named row; 13+ as a dense wall of smaller bots without names. |
@@ -392,7 +393,7 @@ exactly this**; `server/` is the working reference.
 | `library:delete` | `{ id }` | `{ ok }` | Delete a quiz. |
 | *(HTTP)* `POST /api/images` | image bytes (JPEG/PNG/WebP, ≤ 2.5 MB), header `x-admin-pin` | `{ url: "/images/<id>" }` | Question pictures. `GET /images/<id>` serves them (cached forever). |
 | `participant:join` | `{ roomCode, name, participantId? }` | `JoinResult` = `{ ok:true, participantId, roomCode, status }` or `{ ok:false, error: JoinError }` | Phone joins or rejoins (with saved id, or same name if the old phone dropped). |
-| `participant:bot` | `BotLook` `{ color, head }` | `BotResult` = `{ ok:true }` or `{ ok:false, error: "taken"\|"invalid"\|"too-late" }` | Phone changes its bot. **Lobby only.** |
+| `participant:bot` | `BotLook` `{ color, head }` | `BotResult` = `{ ok:true }` or `{ ok:false, error: "invalid"\|"too-late" }` | Phone changes its bot (any colour, any head, may match others). **Lobby only.** |
 | `participant:answer` | `{ questionId, optionId }` | none | Round 1 answer step. First tap wins; later ones ignored. |
 | `participant:buzz` | `{ questionId }` | none | Finalist, buzz window. First buzz wins the turn. |
 | `participant:back` | `{ finalistId }` | none | Audience backs a finalist (changeable until the buzzer round starts). |
@@ -426,7 +427,7 @@ with **`options` 1–4** plus `answered`/`expected`; `r1Reveal` has `correctText
 
 **`ParticipantView`**: `roomCode`, `me: ParticipantTag & { status }`, `timer`, `paused`,
 `serverNow`, `screen: ParticipantScreen` (a union keyed by `kind`): `lobby` (with
-**`botPicker: { lockedColors, taken }`**), `r1Intro`, `nextQuestion`, `eyesUp`, `answer`
+), `r1Intro`, `nextQuestion`, `eyesUp`, `answer`
 (`questionId`, options in the Host's 1–4 order, **never a correct flag**), `lockedIn`, `timesUp`,
 `result` (`outcome`, **`correctText`**, sent only after the reveal), `voided`, `cut` (`madeIt`,
 `rank`; the only time a rank shows), `audience`, `backFinalist`, `finalist`, `buzzer` (finalist:
@@ -456,10 +457,11 @@ Step-independent (accepted from any step): `pause`, `resume`, `removeParticipant
 Destructive (UI asks for a second tap): `voidQuestion`, `restartQuestion`, `restartRound`, `endQuiz`, `removeParticipant`.
 
 ### 8.6 Bot rules the server enforces
-- On join, assign a free bot: least-used colour (palette order breaks ties), first head nobody has in that colour.
-- `participant:bot` is accepted only in `lobby`. Colour must be in `PARTICIPANT_COLORS`, head in `BOT_HEADS`.
-- While **any colour is unused**, a colour held by someone else is **locked** (`taken`). Once all 12
-  are in use, colours can be shared but **never the same colour + head**.
+- On join, assign a starting bot: least-used of the 12 `PARTICIPANT_COLORS` (palette order breaks ties), first head nobody has in that colour. Repeats are fine.
+- `participant:bot` is accepted only in `lobby`. **Any colour** (`#rrggbb` or `#rgb`), stored by
+  `normalizeBotColor` (lowercase, lightness clamped to `BOT_LIGHTNESS` 45–92 % so it shows on the dark
+  screens); head in `BOT_HEADS`. **Nothing is ever taken:** several people may share a colour and head
+  (decided 12 Oct for 100 people). Names stay unique (`name-taken`).
 - **Moods** (`HostView.cast`): lobby/intro/read → `idle`; Round 1 answer step → `thinking` (not
   answered) / `locked` (answered); time's up → `locked` / `idle`; reveal/results/leaderboard →
   `right` / `wrong` (miss = wrong; voided → idle); from the cut on, non-finalists → `out`; buzzer
@@ -486,7 +488,7 @@ Admin  → revealAnswer → Host r1Reveal {correctText} · phones {kind:"result"
 // participant:state (lobby)
 { "roomCode":"KJSC", "me":{"id":"3f9c…","name":"Riya","color":"#4CC9F0","head":"antenna","status":"playing"},
   "timer":null, "paused":false, "serverNow":1791735000000,
-  "screen":{"kind":"lobby","joined":12,"botPicker":{"lockedColors":["#6CF0B0","#FF5FA2"],"taken":[{"color":"#6CF0B0","head":"box"}]}} }
+  "screen":{"kind":"lobby","joined":12} }
 // admin:command
 { "stepId": 12, "action": { "type": "markWrong" } }
 ```
@@ -523,6 +525,7 @@ Whichever is chosen: record it in §1.3 and §4.
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
 | 12 Oct 2026 | `AdminView.podium` (`PodiumSummary`, or null before the podium) (same data as the Host podium stage) | Admin shows the winner; the real backend must send it on the podium |
+| 12 Oct 2026 (evening) | **Bots for 100:** removed `BotPicker` and the lobby's `botPicker`; `BotError` no longer has `"taken"`; `participant:bot` takes any `#rrggbb`; new `normalizeBotColor`, `hexToHsl`, `hslToHex`, `BOT_LIGHTNESS`. | `BotBuilder` has no `picker` prop; colour swatches + wheel; nothing greyed out |
 | 12 Oct 2026 (later) | **Quiz library.** Removed `host:create`/`host:resume`; added `host:auth` (PIN), `admin:login`, `admin:rooms`, `admin:openRoom`, `admin:closeRoom`, `library:list/get/create/duplicate/save/delete`, HTTP `POST /api/images` + `GET /images/<id>`; types `Quiz`, `QuizRules`, `LibraryQuestion`, `QuizSummary`, `OpenRoomSummary`, `QUIZ_LIMITS`; `AdminView.quizTitle`. Rules/imports shared in `src/shared/quiz.ts`. Server: `server/library.ts` (Supabase tables `quizzes`, `quiz_images`), per-question `readMs`/`openMs`. | Admin opens rooms from a quiz; the Host asks for the PIN; question images via `assetUrl()` |
 | 11 Oct 2026 (night) | `ParticipantTag.head`; `PARTICIPANT_COLORS` = 12 bot colours; `BOT_HEADS`, `BotMood`, `BotLook`, `BotPicker`, `CastMember`; `HostView.cast`; lobby `botPicker`; `participant:bot` + `BotResult`; `Round1Question.options`; phones get the Host's order; `result.correctText` | draw bots everywhere a person appears; use `cast[i].mood`; number options 1–4 |
 

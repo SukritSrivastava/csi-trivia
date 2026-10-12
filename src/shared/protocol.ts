@@ -56,12 +56,13 @@ export type OptionLetter = (typeof OPTION_LETTERS)[number];
 
 /**
  * Every participant is a little robot: a colour and a head shape, picked on the
- * phone in the lobby (the server assigns a free one on join, so nobody has to).
+ * phone in the lobby (the server assigns one on join, so nobody has to).
  * Look: docs/SPEC.md "Look" and public/finaldesign.html.
  *
- * Uniqueness: while any colour is still unused, a colour can only be taken by
- * one person. Once all 12 are in use, a colour can be shared, but never the
- * same colour AND head (12 × 8 = 96 unique bots).
+ * Any colour is allowed (the phone has these 12 as quick picks plus a colour
+ * wheel), and several people may have the same colour and head: people are told
+ * apart by their names, which are unique. The server brightens colours that would
+ * vanish on the dark screens (normalizeBotColor).
  */
 export const PARTICIPANT_COLORS = [
   "#6CF0B0", // mint
@@ -94,10 +95,58 @@ export type BotHead = (typeof BOT_HEADS)[number];
  */
 export type BotMood = "idle" | "thinking" | "locked" | "right" | "wrong" | "out";
 
-/** A bot choice: one of PARTICIPANT_COLORS and one of BOT_HEADS. */
+/** A bot choice: any "#rrggbb" colour and one of BOT_HEADS. */
 export interface BotLook {
   color: string;
   head: BotHead;
+}
+
+/** Bots stay visible on the near-black screens: lightness is kept within this range (HSL, %). */
+export const BOT_LIGHTNESS = { min: 45, max: 92 } as const;
+
+/**
+ * A bot colour as the server stores it: "#rrggbb" (lowercase), with lightness
+ * clamped to BOT_LIGHTNESS so no bot disappears into the dark. Accepts "#rgb"
+ * and "#rrggbb". null if it isn't a colour.
+ */
+export function normalizeBotColor(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  let hex = input.trim().toLowerCase();
+  if (/^#[0-9a-f]{3}$/.test(hex)) hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`;
+  if (!/^#[0-9a-f]{6}$/.test(hex)) return null;
+  const { h, s, l } = hexToHsl(hex);
+  if (l >= BOT_LIGHTNESS.min && l <= BOT_LIGHTNESS.max) return hex;
+  // Keep the hue and saturation, move the lightness into range.
+  return hslToHex(h, s, Math.min(BOT_LIGHTNESS.max, Math.max(BOT_LIGHTNESS.min, l)));
+}
+
+/** "#rrggbb" → h 0–360, s and l 0–100. */
+export function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: s * 100, l: l * 100 };
+}
+
+/** h 0–360, s and l 0–100 → "#rrggbb". */
+export function hslToHex(h: number, s: number, l: number): string {
+  const sat = s / 100;
+  const lig = l / 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = sat * Math.min(lig, 1 - lig);
+  const f = (n: number) => lig - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return `#${[f(0), f(8), f(4)].map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("")}`;
 }
 
 // ============================================================================
@@ -183,7 +232,7 @@ export type ParticipantStatus = "playing" | "finalist" | "audience" | "removed";
 export interface ParticipantTag {
   id: string;
   name: string;
-  /** Bot colour, one of PARTICIPANT_COLORS. */
+  /** Bot colour, "#rrggbb" (any colour; see normalizeBotColor). Others may share it. */
   color: string;
   /** Bot head shape. */
   head: BotHead;
@@ -435,8 +484,8 @@ export interface Round2Phone {
 }
 
 export type ParticipantScreen =
-  /** Joined, waiting for the quiz to start. Build your bot here (participant:bot). */
-  | { kind: "lobby"; joined: number; botPicker: BotPicker }
+  /** Joined, waiting for the quiz to start. Build your bot here (participant:bot): any colour, any head. */
+  | { kind: "lobby"; joined: number }
   /** Round 1 is about to start. */
   | { kind: "r1Intro"; settings: QuizSettings }
   /** Joined while a question was open: plays from the next question. */
@@ -496,14 +545,6 @@ export type ParticipantScreen =
     }
   /** Removed by the quizmaster. */
   | { kind: "removed" };
-
-/** What the lobby bot builder can offer this phone. */
-export interface BotPicker {
-  /** Colours held by someone else that this phone can't pick right now (greyed out). */
-  lockedColors: string[];
-  /** Colour + head pairs held by someone else (that head is greyed out for that colour). */
-  taken: BotLook[];
-}
 
 export interface ParticipantView {
   roomCode: string;
@@ -826,7 +867,8 @@ export type JoinResult =
   | { ok: true; participantId: string; roomCode: string; status: ParticipantStatus }
   | { ok: false; error: JoinError };
 
-export type BotError = "taken" | "invalid" | "too-late";
+/** invalid: not a colour or not a head · too-late: the quiz has started. (Nothing is ever "taken": bots can be shared.) */
+export type BotError = "invalid" | "too-late";
 
 export type BotResult = { ok: true } | { ok: false; error: BotError };
 
@@ -871,8 +913,9 @@ export interface ClientToServerEvents {
     ack: (result: JoinResult) => void,
   ) => void;
   /**
-   * Lobby only: change this participant's bot. Rejected if the colour is locked
-   * or the colour + head pair is taken (see PARTICIPANT_COLORS), or the quiz started.
+   * Lobby only: change this participant's bot. Any "#rrggbb" colour (the server
+   * brightens very dark ones) and any head; others may have the same bot.
+   * Rejected only if it isn't a colour/head ("invalid") or the quiz started ("too-late").
    */
   "participant:bot": (payload: BotLook, ack: (result: BotResult) => void) => void;
   /** Round 1. First tap wins; later taps are ignored. */
@@ -934,7 +977,6 @@ export const JOIN_ERROR_MESSAGES: Record<JoinError, string> = {
 };
 
 export const BOT_ERROR_MESSAGES: Record<BotError, string> = {
-  taken: "Someone just took that one. Pick another colour or head.",
   invalid: "That bot isn't available.",
   "too-late": "The quiz has started, so your bot is locked in.",
 };

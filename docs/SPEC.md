@@ -45,11 +45,13 @@ Lobby → Round 1 (everyone) → Top 6 revealed → Audience backs a finalist �
 - Host: room code tiles, QR code, join link, a wall of every name, a live player count.
 - Participants join with room code + **real name**. An exact duplicate name is rejected
   ("add your surname initial, like Rahul S").
-- **Build your bot:** every participant is a robot. The server gives each new joiner a free bot;
-  in the lobby they can change its **colour (12)** and **head (8)** on their phone. While any colour
-  is unused, each colour belongs to one person (taken colours are greyed out). Once all 12 are in
-  use, colours can be shared but never the same colour **and** head (96 unique bots). Bots are
-  locked when the quizmaster clicks Start quiz.
+- **Build your bot:** every participant is a robot. The server gives each new joiner a starting
+  bot (varied, so the room looks colourful); in the lobby they can change its **colour** (12 quick
+  picks or **any colour from a colour wheel**) and **head (8)** on their phone. **Bots can be
+  shared:** with 100 people, several may pick the same colour and head; they're told apart by their
+  **names, which must be unique**. Very dark colours are brightened so every bot shows on the dark
+  screens. Bots are locked when the quizmaster clicks Start quiz. (Changed 12 Oct 2026; before, each
+  colour/head pair was unique.)
 - Quizmaster clicks **Start quiz**.
 
 ### Round 1: everyone plays (MCQ)

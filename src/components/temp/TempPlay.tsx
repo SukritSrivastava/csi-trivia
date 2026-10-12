@@ -195,7 +195,7 @@ function ScreenBody({ screen: s, view }: { screen: ParticipantScreen; view: Part
       return (
         <div className="flex flex-col gap-2" data-testid="bot-builder">
           <p className="text-xl">Build your bot</p>
-          <BotBuilder value={{ color: me.color, head: me.head }} picker={s.botPicker} onPick={setBot} busy={botPending} />
+          <BotBuilder value={{ color: me.color, head: me.head }} onPick={setBot} busy={botPending} />
           {botNotice && (
             <p className="text-sm text-wrong" role="alert">
               {botNotice}
