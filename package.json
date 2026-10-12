@@ -2,7 +2,7 @@
   "name": "hermes-quiz",
   "version": "0.1.0",
   "private": true,
-  "description": "Hermes Quiz: a live MCQ quiz for 60ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
+  "description": "Hermes Quiz: a live MCQ quiz for 60ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“100 people. Questions on the projector, answers on phones, a 6-player buzzer final, run by a quizmaster.",
   "scripts": {
     "dev": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"npm:dev:game\"",
     "dev:event": "concurrently -k -n web,game -c magenta,cyan \"npm:dev:web\" \"tsx watch server/index.ts --preset event\"",
@@ -16,6 +16,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "bots": "tsx scripts/bots.ts",
     "admin-run": "tsx scripts/admin-run.ts",
+    "host-shots": "tsx scripts/host-shots.ts",
     "db-check": "tsx scripts/db-check.ts",
     "deploy": "tsx scripts/deploy.ts"
   },

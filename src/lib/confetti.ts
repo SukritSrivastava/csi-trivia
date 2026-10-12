@@ -2,14 +2,15 @@
 
 /**
  * Confetti bursts, loaded only when needed. Respects "reduce motion".
- * Colours are the quiz palette.
+ * Default colours are the corridor's light (mint, amber, ghost); pass the bots'
+ * colours for the podium.
  */
-const COLORS = ["#ffb627", "#ff3d7f", "#00a6a6", "#7b5cff", "#fffbf0"];
+const COLORS = ["#6cf0b0", "#ffb627", "#e7fff4", "#4cc9f0"];
 
-export async function celebrate(size: "small" | "big" = "small") {
+export async function celebrate(size: "small" | "big" = "small", colors: string[] = COLORS) {
   if (typeof window === "undefined") return;
   const { default: confetti } = await import("canvas-confetti");
-  const base = { colors: COLORS, disableForReducedMotion: true, zIndex: 60 };
+  const base = { colors: colors.length ? colors : COLORS, disableForReducedMotion: true, zIndex: 60 };
   if (size === "small") {
     void confetti({ ...base, particleCount: 80, spread: 70, origin: { y: 0.65 } });
     return;

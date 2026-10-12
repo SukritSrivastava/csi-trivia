@@ -273,7 +273,7 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 1. 🟡 **Prompt 1, design foundation check** (partly, 12 Oct: git on `frontend` from the bundle, leftovers removed, `npm install`, all four checks green, Playwright installed; still to do: the extra smoke tests for bots/moods/1–4 order and `bots.ts` picking a free bot): git setup (`.git-setup/setup.ps1` exists; read it first), delete the leftovers (§2.4), `npm install`, make typecheck/build/simulate/smoke pass, extend `smoke` (bots, moods, 1–4 order), `bots.ts` picks a free bot, screenshots vs `finaldesign.html`.
 2. 🟡 **Prompt 2, Admin screen**: built 12 Oct (`src/components/admin/`), verified with `npm run admin-run` (41 checks, demo + event preset with 80 bots); waiting for Sukrit's approval.
 3. ⬜ **Prompt 3, Participant screens** (join, bot builder, answers 1–4, results with bot, buzzer, podium).
-4. ⬜ **Prompt 4, Host screens** (corridor, cast wall, motion, sound).
+4. 🟡 **Prompt 4, Host screens**: built 12 Oct (`src/components/host/`), verified with `npm run host-shots` (30 and 100 players, every state at 1920×1080 + 1366×768, sound on, no page errors, ~30 fps headless with 100 bots) and admin-run (52). Waiting for Sukrit's approval. Not pushed/deployed (phase rule).
 5. ⬜ **Prompt 5, event-proofing** (failure drills, 100-bot scale test, design QA, run sheet, backend notes, deploy notes).
 
 ### Not in a phase yet

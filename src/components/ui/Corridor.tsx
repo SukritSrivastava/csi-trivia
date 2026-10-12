@@ -9,6 +9,8 @@ interface CorridorProps {
   scrim?: "split" | "center" | "full" | "none";
   /** The red alarm pulse from above. On by default. */
   alarm?: boolean;
+  /** Seconds per alarm pulse (3.2 in the design; faster when buzzers are open). */
+  alarmSeconds?: number;
 }
 
 /**
@@ -16,7 +18,7 @@ interface CorridorProps {
  * Fills its nearest positioned parent; put it first inside a `relative` box
  * and the screen's content after it with a higher z-index.
  */
-export function Corridor({ scrim = "split", alarm = true }: CorridorProps) {
+export function Corridor({ scrim = "split", alarm = true, alarmSeconds }: CorridorProps) {
   return (
     <div className="corridor" aria-hidden>
       <i className="corridor-ceil" />
@@ -24,7 +26,7 @@ export function Corridor({ scrim = "split", alarm = true }: CorridorProps) {
       <i className="corridor-left" />
       <i className="corridor-right" />
       <i className="corridor-end" />
-      {alarm && <i className="corridor-alarm" />}
+      {alarm && <i className="corridor-alarm" style={alarmSeconds ? { animationDuration: `${alarmSeconds}s` } : undefined} />}
       {scrim !== "none" && <i className={`corridor-scrim-${scrim}`} />}
       <i className="corridor-vignette" />
     </div>

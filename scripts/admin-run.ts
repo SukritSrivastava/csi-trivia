@@ -417,7 +417,7 @@ async function main() {
     check(true, "projector: a wrong PIN is refused");
     await projector.locator('input[name="pin"]').fill(PIN);
     await projector.getByTestId("host-sign-in").click();
-    await projector.getByText(newest!.roomCode).first().waitFor({ timeout: 15_000 });
+    await projector.getByLabel(`Room code ${newest!.roomCode}`).waitFor({ timeout: 15_000 });
     await sleep(800);
     await projector.screenshot({ path: path.join(OUT, "19-host-room-1920x1080.png") });
     check(true, `projector: the right PIN shows the newest room (${newest!.roomCode})`);

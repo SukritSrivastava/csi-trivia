@@ -4,7 +4,7 @@
 skills, agents, plugins, API). This file is the short version.**
 
 Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2.1). Build plan:
-`docs/BUILD-PHASES.md` (v4, 5 phases; phase 1, design foundation and phase 2 (Admin) done).
+`docs/BUILD-PHASES.md` (v4, 5 phases; phase 1, design foundation, phase 2 (Admin) and phase 4 (Host) done; phase 3 (phones) next).
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
@@ -71,8 +71,18 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   and `buzzedOn`. `src/stores/hostStore.ts`: creates/resumes the room.
 - Phones: `useWakeLock`, `usePageVisibility` (reports hidden/shown; Admin-only flag), `vibrate`
   in `src/lib/format.ts`. Countdown: `useCountdown(timer, clockOffset)`; `TimerRing` for the Host.
-- `src/components/temp/` holds the phase 1 test pages. `/admin` is replaced (TempAdmin deleted);
-  replace `/play` (phase 3), `/host` (phase 4), then delete the folder.
+- Host (phase 4): `src/components/host/HostApp.tsx` (gate → screen; corridor scrim per phase, faster
+  alarm while buzzers are open; stage switch with AnimatePresence keyed by `stageKey` so the read and
+  answer steps are one screen and the question glides; sound; cursor hide; mute/full-screen buttons
+  shown on mouse move; next-image preload). `parts.tsx`: `Cast` (≤12 named row; 13+ wall, 2–3 rows
+  sized by count), `Clock`, `Panel`, `Heading`, `contentTop(castCount)`, `useMoods(view)` (moods only
+  from `HostView.cast`). `stages/`: Lobby, Round1Stages (intro, QuestionStage, Results, Leaderboard,
+  `TypeOut` banner), CutStage, FinalStages (predictions, r2 intro, BuzzerStage with the buzz flash,
+  scores, sudden death), PodiumStage. `sound.ts`: Web Audio beeps, unlocked by a click; plays only if
+  `view.soundOn` and the Host's own mute is off. Live counters are plain numbers (NumberFlow only for
+  scores/percentages, which change once). `npm run host-shots` screenshots every Host state.
+- `src/components/temp/` now only holds the temporary `/play` page (TempPlay + TempKit); replace it
+  in phase 3, then delete the folder.
 - `src/css.d.ts` only lets TypeScript accept `import "./globals.css"`.
 
 ## Commands
@@ -90,6 +100,8 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 - The backend is `server/` (decided 12 Oct). `DATABASE_URL` (Supabase) turns on `server/db.ts`,
   which saves to the teammate's tables (from `archive/ws-backend-v1/db.js`) (additive columns only). `quiz.ts` stays I/O-free:
   it calls `room.recorder` (`QuizRecorder`) and exposes `snapshot()`.
+- `npm run host-shots [-- --bots 94 --out screenshots/host-100]` (with `npm run dev`, database off): plays a game and
+  screenshots every Host state at 1920×1080 and 1366×768, enables sound, reports fps and page errors.
 - `npm run admin-run [-- --bots 80 --out screenshots/x]` (with `npm run dev` running): Playwright drives a
   whole game from Admin (3 devices), 41 checks, screenshots in `screenshots/` (git-ignored).
 - `next dev` appends a Next.js block to `AGENTS.md`; that's expected, keep it committed.
