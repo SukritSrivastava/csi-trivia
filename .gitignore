@@ -27,3 +27,6 @@ screenshots/
 
 # Vercel CLI link
 .vercel
+
+# Quiz library when running without a database (server/library.ts FileLibrary)
+data/library/

@@ -15,6 +15,7 @@ import { useAdminStore } from "@/stores/adminStore";
 import { Controls } from "./Controls";
 import { Dock } from "./Dock";
 import { BuzzSummary, Counts, Finalists, JudgePanel, Podium, QuestionCard, UndoMark, type Send } from "./GamePanels";
+import { AdminHome } from "./library/AdminHome";
 import { ControlButton, Panel } from "./parts";
 import { ParticipantsPanel } from "./ParticipantsPanel";
 import { SignIn } from "./SignIn";
@@ -24,8 +25,13 @@ import { useShortcuts } from "./useShortcuts";
 export function AdminApp() {
   const connect = useAdminStore((s) => s.connect);
   const view = useAdminStore((s) => s.view);
+  const signedIn = useAdminStore((s) => s.signedIn);
   useEffect(() => connect(), [connect]);
-  return <div className="min-h-dvh bg-void font-type text-ghost">{view ? <Panelled view={view} /> : <SignIn />}</div>;
+  return (
+    <div className="min-h-dvh bg-void font-type text-ghost">
+      {view ? <Panelled view={view} /> : signedIn ? <AdminHome /> : <SignIn />}
+    </div>
+  );
 }
 
 type Tab = "game" | "controls" | "people";
@@ -48,7 +54,7 @@ function Panelled({ view }: { view: AdminView }) {
   const pendingAction = useAdminStore((s) => s.pending);
   const status = useAdminStore((s) => s.status);
   const clockOffset = useAdminStore((s) => s.clockOffset);
-  const signOut = useAdminStore((s) => s.signOut);
+  const leaveRoom = useAdminStore((s) => s.leaveRoom);
   const downloadResults = useAdminStore((s) => s.downloadResults);
   const wide = useWide();
   const [tab, setTab] = useState<Tab>("game");
@@ -78,7 +84,7 @@ function Panelled({ view }: { view: AdminView }) {
       <Finalists view={view} />
     </div>
   );
-  const controls = <Controls view={view} send={send} pending={pending} onDownload={downloadResults} onSignOut={signOut} />;
+  const controls = <Controls view={view} send={send} pending={pending} onDownload={downloadResults} onLeave={leaveRoom} />;
   const people = <ParticipantsPanel view={view} send={send} />;
 
   return (
@@ -153,6 +159,9 @@ function TimerControls({ view, send, pending }: { view: AdminView; send: Send; p
 function JoinInfo({ view }: { view: AdminView }) {
   return (
     <Panel title="Lobby">
+      <p className="mb-2 text-[17px] leading-snug text-bright" data-testid="room-quiz">
+        {view.quizTitle}
+      </p>
       <p className="text-[15px] leading-snug text-mint-soft">
         Phones join with code <span className="font-term text-2xl leading-none tracking-[0.15em] text-mint">{view.roomCode}</span> at
       </p>

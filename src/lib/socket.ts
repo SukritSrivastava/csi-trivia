@@ -29,3 +29,8 @@ export function getSocket(): GameSocket {
   }
   return socket;
 }
+
+/** A question image's address: uploaded ones ("/images/...") live on the game server, the rest on this site. */
+export function assetUrl(path: string): string {
+  return path.startsWith("/images/") ? `${gameServerUrl()}${path}` : path;
+}

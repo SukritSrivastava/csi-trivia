@@ -56,6 +56,14 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   two columns from 1024 px; `Dock` = hint + primary button; `GamePanels`; `Controls`;
   `ParticipantsPanel`; `parts.tsx` = `Panel`, `ControlButton`, `useConfirm` (two taps, cancels after 3 s);
   `useShortcuts`). Buttons send the stepId of the view they were drawn from.
+- Quiz library (12 Oct): quizzes are made in Admin and saved by the server (`server/library.ts`:
+  Supabase tables `quizzes`/`quiz_images`, or `data/library/` without a database). Shared rules,
+  imports (text/CSV/Excel rows/JSON) and exports: `src/shared/quiz.ts`. Admin UI:
+  `src/components/admin/library/` (`AdminHome`, `QuizEditor`, `QuestionForm`, `RulesForm`, `ImportPanel`).
+  Rooms are opened by Admin (`admin:openRoom`, a frozen copy of the quiz); the Host signs in with the
+  same PIN (`host:auth`, `HostGate`) and shows the newest open room. Question images are uploaded over
+  HTTP to the game server; show them with `assetUrl(path)` from `src/lib/socket.ts`.
+  `data/questions.json` only seeds the "Demo quiz" when the library is empty.
 - `src/stores/adminStore.ts` `send(action, stepId?)`: adds the stepId, ignores a repeat of the same command
   within 600 ms (and any big/judge button within 600 ms of another one), tracks `pending` and `lastResult`. Labels: `src/lib/adminLabels.ts`
   (`ACTION_LABELS`, `DESTRUCTIVE_ACTIONS`, `COMMAND_ERROR_TEXT`).
@@ -70,6 +78,8 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
 ## Commands
 
 - `npm run dev` (demo preset) / `npm run dev:event`: Next.js on 3000 + game server on 3001.
+  `.env.local` has the real Supabase `DATABASE_URL`: for local tests run `$env:DATABASE_URL="off"; npm run dev`
+  so nothing is written to the live database (the server's env wins over `.env.local`).
 - `npm run bots -- --room ABCD --count 80`: fake participants for scale tests.
 - `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
 - Deploy: website on Vercel, game server on Render (`render.yaml`, `npm run start:game`, uses `PORT`),

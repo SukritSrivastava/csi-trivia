@@ -1,6 +1,12 @@
 /**
- * Glue between Socket.IO and the quiz rooms: which socket is the Host, which
- * are Participants and Admins, PIN sign-in, and pushing fresh views.
+ * Glue between Socket.IO and the quiz rooms: PIN sign-in, which sockets are
+ * Hosts, Participants and Admins, opening rooms from the quiz library, and
+ * pushing fresh views.
+ *
+ * Rooms are opened by Admin (admin:openRoom) with a frozen copy of a quiz. The
+ * Host (projector) signs in with the same PIN and shows a room; several Host
+ * screens may show the same room. A room nobody is watching (no Host, no Admin)
+ * closes after ABANDONED_AFTER_MS.
  *
  * Views: phones get theirs straight away, and only when it changed. The Host
  * and Admin views change on every single answer (counts), so between step
@@ -14,22 +20,27 @@ import {
   type AdminView,
   type ClientToServerEvents,
   type CommandResult,
+  type HostAuthResult,
   type HostView,
   type JoinResult,
+  type OpenRoomSummary,
   type ParticipantView,
+  type Quiz,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   type ServerToClientEvents,
 } from "../src/shared/protocol";
-import type { GameConfig } from "./config";
+import { type GameConfig, withTimingScale } from "./config";
 import type { Database, RoomRecorder } from "./db";
-import { loadQuestions } from "./questions";
+import { quizToGame } from "./library";
 import { type Clock, QuizRoom, realClock } from "./quiz";
 
 export interface SocketData {
   roomCode?: string;
   role?: "host" | "participant" | "admin";
   participantId?: string;
+  /** Passed the PIN (admin:login, admin:auth or host:auth): may use the quiz library. */
+  authed?: boolean;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -37,8 +48,10 @@ export type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, Reco
 
 interface RoomEntry {
   room: QuizRoom;
-  hostSocketId: string | null;
-  hostLeftAt: number | null;
+  openedAt: number;
+  hostSockets: Set<string>;
+  /** When the last Host and Admin left (null while someone is watching). */
+  emptySince: number | null;
   participantSockets: Map<string, string>;
   adminSockets: Set<string>;
   /** Last view sent to each socket (without serverNow), so unchanged views aren't resent. */
@@ -54,13 +67,15 @@ interface RoomEntry {
 
 export interface RoomManagerOptions {
   joinUrl: string;
+  /** Base settings (scoring, room size…); each quiz overrides its own timings and counts. */
   config: GameConfig;
   adminPin: string;
-  questionsFile?: string;
   clock?: Clock;
   log?: (message: string) => void;
   /** Saves results to Postgres when set (DATABASE_URL). */
   database?: Database | null;
+  /** Tests only: run every timer of every room at this speed (0.1 = ten times faster). */
+  timingScale?: number;
 }
 
 /** The room is saved to the database at most this often while it changes. */
@@ -68,7 +83,7 @@ const SAVE_EVERY_MS = 2000;
 
 /** Host/Admin views between step changes: at most this often. */
 const SCREEN_THROTTLE_MS = 150;
-/** A room whose Host has been gone this long (and has no Admin) is closed. */
+/** A room with no Host and no Admin for this long is closed. */
 const ABANDONED_AFTER_MS = 30 * 60 * 1000;
 /**
  * Wrong PINs allowed per connection before that connection is refused. Per
@@ -96,28 +111,41 @@ export class RoomManager {
     return this.rooms.size;
   }
 
-  // ------------------------------------------------------------------ Host
+  // ------------------------------------------------------------------ PIN
 
-  createRoom(socket: GameSocket) {
-    const previous = socket.data.role === "host" ? socket.data.roomCode : undefined;
-    if (previous && this.rooms.get(previous)?.hostSocketId === socket.id) {
-      this.closeRoom(previous, "The Host started a new quiz. Join again with the new code.");
+  /** Checks the PIN for this socket (5 wrong tries and it's refused). */
+  checkPin(socket: GameSocket, pin: string): boolean {
+    const failures = this.failedPins.get(socket.id) ?? 0;
+    if (failures >= PIN_ATTEMPTS) return false;
+    if (pin !== this.options.adminPin) {
+      this.failedPins.set(socket.id, failures + 1);
+      return false;
     }
-    this.detach(socket);
+    socket.data.authed = true;
+    return true;
+  }
+
+  isAuthed(socket: GameSocket) {
+    return socket.data.authed === true;
+  }
+
+  // ------------------------------------------------------------------ Rooms
+
+  /** Opens a room playing a frozen copy of `quiz`, and signs `socket` into it as Admin. */
+  openRoom(socket: GameSocket, quiz: Quiz): string {
     const code = this.newCode();
-    // Re-read each time, so question edits apply to the next room without a restart.
-    const questions = loadQuestions(this.options.questionsFile);
+    let { config, questions } = quizToGame(quiz, this.options.config);
+    const scale = this.options.timingScale;
+    if (scale) {
+      const s = (ms: number | undefined) => (ms === undefined ? undefined : Math.max(50, Math.round(ms * scale)));
+      config = withTimingScale(config, scale);
+      questions = questions.map((q) => ({ ...q, readMs: s(q.readMs), openMs: s(q.openMs) }));
+    }
     const entry: RoomEntry = {
-      room: new QuizRoom(
-        code,
-        this.options.joinUrl,
-        this.options.config,
-        questions,
-        () => this.queueFlush(code),
-        this.options.clock ?? realClock,
-      ),
-      hostSocketId: socket.id,
-      hostLeftAt: null,
+      room: new QuizRoom(code, this.options.joinUrl, config, questions, () => this.queueFlush(code), this.options.clock ?? realClock),
+      openedAt: Date.now(),
+      hostSockets: new Set(),
+      emptySince: null,
       participantSockets: new Map(),
       adminSockets: new Set(),
       lastSent: new Map(),
@@ -129,25 +157,41 @@ export class RoomManager {
       saveTimer: null,
     };
     entry.room.recorder = entry.recorder;
+    entry.room.quizTitle = quiz.title;
     this.rooms.set(code, entry);
-    socket.data = { roomCode: code, role: "host" };
-    this.queueFlush(code);
-    this.log(`[room ${code}] created (${this.options.config.name} preset, ${questions.length} questions in the file)`);
-    return { roomCode: code, hostToken: entry.room.hostToken };
+    this.attachAdmin(socket, entry);
+    this.log(`[room ${code}] opened with "${quiz.title}" (${quiz.round1.length} + ${quiz.buzzer.length} questions)`);
+    return code;
   }
 
-  resumeHost(socket: GameSocket, roomCode: string, hostToken: string) {
-    const entry = this.rooms.get(normaliseCode(roomCode));
-    if (!entry || entry.room.hostToken !== hostToken) return false;
+  listRooms(): OpenRoomSummary[] {
+    return [...this.rooms.values()]
+      .sort((a, b) => b.openedAt - a.openedAt)
+      .map((e) => ({
+        roomCode: e.room.code,
+        quizTitle: e.room.quizTitle,
+        phase: e.room.adminView().phase,
+        joined: e.room.adminView().counts.joined,
+        openedAt: e.openedAt,
+      }));
+  }
+
+  // ------------------------------------------------------------------ Host
+
+  /** The projector: the room asked for, else the newest open room. */
+  authHost(socket: GameSocket, pin: string, roomCode?: string): HostAuthResult {
+    if (!this.checkPin(socket, pin)) return { ok: false, error: "wrong-pin" };
+    const asked = roomCode ? this.rooms.get(normaliseCode(roomCode)) : undefined;
+    const entry = asked ?? [...this.rooms.values()].sort((a, b) => b.openedAt - a.openedAt)[0];
+    if (!entry) return { ok: false, error: "no-room" };
     this.detach(socket);
-    if (entry.hostSocketId && entry.hostSocketId !== socket.id) entry.lastSent.delete(entry.hostSocketId);
-    entry.hostSocketId = socket.id;
-    entry.hostLeftAt = null;
+    socket.data = { roomCode: entry.room.code, role: "host", authed: true };
+    entry.hostSockets.add(socket.id);
+    entry.emptySince = null;
     entry.lastSent.delete(socket.id);
     entry.screensStep = -1;
-    socket.data = { roomCode: entry.room.code, role: "host" };
     this.queueFlush(entry.room.code);
-    return true;
+    return { ok: true, roomCode: entry.room.code };
   }
 
   // ------------------------------------------------------------------ Participants
@@ -183,22 +227,22 @@ export class RoomManager {
   // ------------------------------------------------------------------ Admin
 
   authAdmin(socket: GameSocket, roomCode: string, pin: string): AdminAuthResult {
-    const failures = this.failedPins.get(socket.id) ?? 0;
-    if (failures >= PIN_ATTEMPTS) return { ok: false, error: "wrong-pin" };
-
+    if ((this.failedPins.get(socket.id) ?? 0) >= PIN_ATTEMPTS) return { ok: false, error: "wrong-pin" };
     const entry = this.rooms.get(normaliseCode(roomCode));
     if (!entry) return { ok: false, error: "room-not-found" };
-    if (pin !== this.options.adminPin) {
-      this.failedPins.set(socket.id, failures + 1);
-      return { ok: false, error: "wrong-pin" };
-    }
+    if (!this.checkPin(socket, pin)) return { ok: false, error: "wrong-pin" };
+    this.attachAdmin(socket, entry);
+    return { ok: true, roomCode: entry.room.code };
+  }
+
+  private attachAdmin(socket: GameSocket, entry: RoomEntry) {
     this.detach(socket);
     entry.adminSockets.add(socket.id);
+    entry.emptySince = null;
     entry.lastSent.delete(socket.id);
     entry.screensStep = -1;
-    socket.data = { roomCode: entry.room.code, role: "admin" };
+    socket.data = { roomCode: entry.room.code, role: "admin", authed: true };
     this.queueFlush(entry.room.code);
-    return { ok: true, roomCode: entry.room.code };
   }
 
   adminCommand(socket: GameSocket, payload: AdminCommandPayload): CommandResult {
@@ -231,37 +275,36 @@ export class RoomManager {
     this.detach(socket);
   }
 
-  /** Forgets whatever role this socket had (it's leaving, or taking a new role). */
+  /** Forgets whatever room role this socket had (it's leaving, or taking a new role). Keeps `authed`. */
   private detach(socket: GameSocket) {
-    const { roomCode, role, participantId } = socket.data ?? {};
+    const { roomCode, role, participantId, authed } = socket.data ?? {};
     const entry = roomCode ? this.rooms.get(roomCode) : undefined;
+    socket.data = authed ? { authed } : {};
     if (!entry) return;
     entry.lastSent.delete(socket.id);
-    if (role === "host" && entry.hostSocketId === socket.id) {
-      entry.hostSocketId = null;
-      entry.hostLeftAt = Date.now();
-    }
+    if (role === "host") entry.hostSockets.delete(socket.id);
     if (role === "admin") entry.adminSockets.delete(socket.id);
     if (role === "participant" && participantId && entry.participantSockets.get(participantId) === socket.id) {
       entry.participantSockets.delete(participantId);
       entry.room.disconnect(participantId);
     }
-    socket.data = {};
+    if (entry.hostSockets.size === 0 && entry.adminSockets.size === 0 && entry.emptySince === null) entry.emptySince = Date.now();
   }
 
   private sweep() {
     const now = Date.now();
     for (const [code, entry] of this.rooms) {
-      if (entry.hostLeftAt && entry.adminSockets.size === 0 && now - entry.hostLeftAt > ABANDONED_AFTER_MS) {
-        this.closeRoom(code, "This quiz was closed because the Host left.");
+      if (entry.emptySince && now - entry.emptySince > ABANDONED_AFTER_MS) {
+        this.closeRoom(code, "This quiz was closed because nobody was running it.");
       }
     }
   }
 
-  closeRoom(code: string, reason: string) {
+  /** Closes a room for good; false if there's no such room. */
+  closeRoom(code: string, reason: string): boolean {
     const entry = this.rooms.get(code);
-    if (!entry) return;
-    for (const socketId of [...entry.participantSockets.values(), ...entry.adminSockets]) {
+    if (!entry) return false;
+    for (const socketId of [...entry.participantSockets.values(), ...entry.adminSockets, ...entry.hostSockets]) {
       this.io.to(socketId).emit("room:closed", { reason });
     }
     if (entry.screensTimer) clearTimeout(entry.screensTimer);
@@ -270,6 +313,7 @@ export class RoomManager {
     entry.room.dispose();
     this.rooms.delete(code);
     this.log(`[room ${code}] closed: ${reason}`);
+    return true;
   }
 
   closeAll() {
@@ -335,9 +379,11 @@ export class RoomManager {
     }
     entry.screensSentAt = Date.now();
     entry.screensStep = entry.room.stepId;
-    if (entry.hostSocketId) {
+    if (entry.hostSockets.size) {
       const view = entry.room.hostView();
-      if (this.isNew(entry, entry.hostSocketId, view)) this.io.to(entry.hostSocketId).emit("host:state", view);
+      for (const socketId of entry.hostSockets) {
+        if (this.isNew(entry, socketId, view)) this.io.to(socketId).emit("host:state", view);
+      }
     }
     if (entry.adminSockets.size) {
       const view = entry.room.adminView();

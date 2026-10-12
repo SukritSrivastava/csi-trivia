@@ -15,15 +15,21 @@
  *   DATABASE_URL    Postgres (Supabase) connection string: saves rooms, scores and
  *                   every Round 1 answer to the backend tables (db.ts). Unset = memory only.
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { parseEnv } from "node:util";
 import { type GameConfig, loadConfig } from "./config";
 import { Database } from "./db";
+import { FileLibrary, PostgresLibrary } from "./library";
 import { getLanAddresses } from "./network";
-import { loadQuestions, pickRound1 } from "./questions";
+import { loadQuestions } from "./questions";
 import { startGameServer } from "./server";
 
-// Settings from .env.local (the same file Next.js reads), if there is one.
+// Settings from .env.local (the same file Next.js reads), if there is one. Like Next.js,
+// anything already set in the environment wins, so `$env:DATABASE_URL=""` runs without the database.
 try {
-  process.loadEnvFile?.(".env.local");
+  const fromFile = parseEnv(readFileSync(".env.local", "utf8"));
+  for (const [key, value] of Object.entries(fromFile)) if (process.env[key] === undefined) process.env[key] = value;
 } catch {
   // No .env.local: defaults it is.
 }
@@ -45,14 +51,18 @@ const lanIp = getLanAddresses()[0] ?? "localhost";
 const webUrl = (process.env.PUBLIC_WEB_URL ?? `http://${lanIp}:${WEB_PORT}`).replace(/\/$/, "");
 const joinUrl = `${webUrl}/play`;
 
-// Fail fast, with a readable message, if the question file is broken.
-let round1Count = 0;
+// Fail fast, with a readable message, if the question file (the Demo quiz's source) is broken.
 try {
-  round1Count = pickRound1(loadQuestions(), config.round1.questions).length;
+  loadQuestions();
 } catch (error) {
   console.error(`\n  ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 }
+
+const log = (message: string) => console.log(`  ${message}`);
+const database = Database.fromEnv(log);
+// Quizzes live in Supabase when it's connected; otherwise in data/library/ (git-ignored).
+const library = database ? new PostgresLibrary(database) : new FileLibrary(path.join(process.cwd(), "data", "library"));
 
 startGameServer({
   port: GAME_PORT,
@@ -60,20 +70,22 @@ startGameServer({
   adminPin: ADMIN_PIN,
   joinUrl,
   corsOrigin: process.env.CORS_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean),
-  log: (message) => console.log(`  ${message}`),
-  database: Database.fromEnv((message) => console.log(`  ${message}`)),
+  log,
+  database,
+  library,
 })
-  .then(({ port }) => {
+  .then(async ({ port, library }) => {
     const local = `http://localhost:${WEB_PORT}`;
+    const quizzes = (await library.list()).length;
     console.log(
       [
         "",
         `  Hermes Quiz game server on port ${port}`,
-        `  ${config.name} preset: ${round1Count} Round 1 questions, top ${config.finalists}, ${config.round2.questions} buzzer questions`,
-        `  Results database: ${process.env.DATABASE_URL ? "on (DATABASE_URL)" : "off (set DATABASE_URL to save to Postgres/Supabase)"}`,
+        `  Quiz library: ${quizzes} quiz${quizzes === 1 ? "" : "zes"} (${database ? "Supabase" : "data/library/"}); defaults from the ${config.name} preset`,
+        `  Results database: ${database ? "on (DATABASE_URL)" : "off (set DATABASE_URL to save to Postgres/Supabase)"}`,
         "",
-        `  Host (projector):  ${local}/host`,
-        `  Admin:             ${local}/admin   (PIN ${ADMIN_PIN})`,
+        `  Admin:             ${local}/admin   (PIN ${ADMIN_PIN === "1234" ? "1234" : "from ADMIN_PIN"}): open a room`,
+        `  Host (projector):  ${local}/host    (same PIN)`,
         `  Participants:      ${joinUrl}   (phones on the same Wi-Fi)`,
         "",
       ].join("\n"),

@@ -55,7 +55,25 @@ const SCHEMA = [
   `ALTER TABLE players ADD COLUMN IF NOT EXISTS buzzer_points INTEGER DEFAULT 0`,
   `ALTER TABLE game_history ADD COLUMN IF NOT EXISTS round INTEGER DEFAULT 1`,
   `ALTER TABLE game_history ADD COLUMN IF NOT EXISTS answer_ms INTEGER`,
+  // The quiz library (library.ts): each quiz as JSON, images as base64.
+  `CREATE TABLE IF NOT EXISTS quizzes (
+     id TEXT PRIMARY KEY,
+     title TEXT,
+     data JSONB NOT NULL,
+     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+   )`,
+  `CREATE TABLE IF NOT EXISTS quiz_images (
+     id TEXT PRIMARY KEY,
+     mime TEXT NOT NULL,
+     data TEXT NOT NULL,
+     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+   )`,
 ];
+
+/** Best effort (not every Postgres supports it): only the server, as the owner, reads these tables. */
+const LOCK_TABLES = ["rooms", "players", "game_history", "quizzes", "quiz_images"].map(
+  (t) => `ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`,
+);
 
 export class Database {
   private chain: Promise<void> = Promise.resolve();
@@ -68,6 +86,7 @@ export class Database {
   ) {
     this.ready = this.run("create tables", async () => {
       for (const sql of SCHEMA) await this.db.query(sql);
+      for (const sql of LOCK_TABLES) await this.db.query(sql).catch(() => {});
     }).then(
       () => true,
       () => false,
@@ -77,7 +96,8 @@ export class Database {
   /** Connects with DATABASE_URL (Supabase needs SSL). null when it isn't set. */
   static fromEnv(log?: (message: string) => void): Database | null {
     const url = process.env.DATABASE_URL;
-    if (!url) return null;
+    // "off" lets you run locally without the database even when .env.local has one.
+    if (!url || /^(off|none|false|0)$/i.test(url.trim())) return null;
     const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
     const pool = new pg.Pool({
       connectionString: url,
@@ -88,6 +108,16 @@ export class Database {
     // An idle connection dropping must not take the quiz down (archive/ws-backend-v1/db.js exits here).
     pool.on("error", (error) => log?.(`[db] connection error: ${error.message}`));
     return new Database(pool, log);
+  }
+
+  /**
+   * Runs a query now and returns its rows (the quiz library needs answers, so
+   * unlike the result writes this throws on failure).
+   */
+  async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
+    if (!(await this.ready)) throw new Error("The database isn't available.");
+    const result = (await this.db.query(sql, params)) as { rows?: T[] };
+    return result.rows ?? [];
   }
 
   /** Waits until every queued write is done (tests, shutdown). */

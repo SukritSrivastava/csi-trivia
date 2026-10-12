@@ -3,14 +3,26 @@
  * database switched on (an in-memory Postgres, pg-mem), then checks what was
  * saved in the backend tables (rooms, players, game_history): scores, ranks,
  * one answer row per player per question, and a voided question's rows gone.
+ * Also the quiz library in the database (quizzes, quiz_images): the Demo quiz
+ * seeded on first start, and an image upload round trip over HTTP.
  */
 import assert from "node:assert/strict";
 import { newDb } from "pg-mem";
 import { io, type Socket } from "socket.io-client";
-import { PRESETS, withTimingScale } from "../server/config";
+import { PRESETS } from "../server/config";
 import { Database, type Queryable } from "../server/db";
+import { PostgresLibrary } from "../server/library";
 import { startGameServer } from "../server/server";
-import type { AdminAction, AdminView, ClientToServerEvents, ParticipantView, ServerToClientEvents } from "../src/shared/protocol";
+import {
+  type AdminAction,
+  type AdminView,
+  type ClientToServerEvents,
+  IMAGE_PIN_HEADER,
+  IMAGE_UPLOAD_PATH,
+  type OpenRoomResult,
+  type ParticipantView,
+  type ServerToClientEvents,
+} from "../src/shared/protocol";
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -25,10 +37,12 @@ async function main() {
   const server = await startGameServer({
     port: 0,
     host: "127.0.0.1",
-    config: withTimingScale(PRESETS.demo, 0.1),
+    config: PRESETS.demo,
+    timingScale: 0.1,
     adminPin: "1234",
     joinUrl: "http://localhost:3000/play",
     database,
+    library: new PostgresLibrary(database),
   });
   const url = `http://127.0.0.1:${server.port}`;
   const connect = () =>
@@ -39,15 +53,37 @@ async function main() {
 
   const sockets: Client[] = [];
   try {
-    const host = await connect();
-    sockets.push(host);
-    const { roomCode } = await new Promise<{ roomCode: string }>((r) => host.emit("host:create", r));
+    // ---- The quiz library lives in the database too: the Demo quiz was seeded there
+    const stored = mem.public.many("SELECT id, title FROM quizzes") as { id: string; title: string }[];
+    assert.deepEqual(stored, [{ id: "demo", title: "Demo quiz" }]);
+    console.log("✓ quizzes: the Demo quiz was saved to the database on first start");
 
+    // ---- An image upload goes into quiz_images and comes back byte for byte
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const wrongPin = await fetch(`${url}${IMAGE_UPLOAD_PATH}`, { method: "POST", headers: { [IMAGE_PIN_HEADER]: "0000" }, body: png });
+    assert.equal(wrongPin.status, 401, "image upload needs the PIN");
+    const up = await fetch(`${url}${IMAGE_UPLOAD_PATH}`, { method: "POST", headers: { [IMAGE_PIN_HEADER]: "1234", "content-type": "image/png" }, body: png });
+    const { url: imagePath } = (await up.json()) as { url: string };
+    assert.match(imagePath, /^\/images\/[a-f0-9]{20}$/);
+    const back = await fetch(`${url}${imagePath}`);
+    assert.equal(back.headers.get("content-type"), "image/png");
+    assert.ok(Buffer.from(await back.arrayBuffer()).equals(png), "the image comes back unchanged");
+    const notImage = await fetch(`${url}${IMAGE_UPLOAD_PATH}`, { method: "POST", headers: { [IMAGE_PIN_HEADER]: "1234" }, body: "<svg onload=alert(1)>" });
+    assert.equal(notImage.status, 415, "only JPEG/PNG/WebP are accepted");
+    console.log("✓ quiz_images: upload needs the PIN, only real images, served back unchanged");
+
+    // ---- Admin opens a room with the Demo quiz
     const admin = await connect();
     sockets.push(admin);
     let view: AdminView | null = null;
     admin.on("admin:state", (v) => (view = v));
-    await new Promise((r) => admin.emit("admin:auth", { roomCode, pin: "1234" }, r));
+    await new Promise((r) => admin.emit("admin:login", { pin: "1234" }, r));
+    const opened = await new Promise<OpenRoomResult>((r) => admin.emit("admin:openRoom", { quizId: "demo" }, r));
+    if (!opened.ok) throw new Error(`couldn't open a room: ${opened.error}`);
+    const roomCode = opened.roomCode;
     const until = async (test: (v: AdminView) => boolean, what: string) => {
       for (let i = 0; i < 200; i++) {
         if (view && test(view)) return view;

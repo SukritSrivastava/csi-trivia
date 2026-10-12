@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { getSocket } from "@/lib/socket";
+import { gameServerUrl, getSocket } from "@/lib/socket";
 import { loadAdminSession, saveAdminSession } from "@/lib/session";
 import {
   ADMIN_AUTH_ERROR_MESSAGES,
@@ -9,6 +9,13 @@ import {
   type AdminActionType,
   type AdminView,
   type CommandResult,
+  IMAGE_PIN_HEADER,
+  IMAGE_UPLOAD_PATH,
+  type OpenRoomResult,
+  type OpenRoomSummary,
+  type Quiz,
+  type QuizSummary,
+  type SaveQuizResult,
 } from "@/shared/protocol";
 import type { ConnectionStatus } from "./hostStore";
 
@@ -35,16 +42,20 @@ const THUMB_ACTIONS: readonly AdminActionType[] = [
   "markWrong",
 ];
 const COMMAND_TIMEOUT_MS = 5000;
+const LIBRARY_TIMEOUT_MS = 10_000;
 
 /** The server's reply, or what happened on this side: ignored double tap, or no reply in time. */
 export type SendResult = CommandResult | { ok: false; reason: "double-tap" | "no-reply" };
 
 interface AdminStore {
   status: ConnectionStatus;
+  /** Passed the PIN: the home screen (rooms + quiz library) is available. */
+  signedIn: boolean;
+  /** The room being run, or null on the home screen. */
   view: AdminView | null;
   /** server clock − this device's clock */
   clockOffset: number;
-  /** Sign-in error, shown on the sign-in form. */
+  /** Sign-in error (PIN screen) or why we're back on the home screen (room closed). */
   error: string | null;
   signingIn: boolean;
   /** A command waiting for the server's reply (disable buttons meanwhile). */
@@ -53,43 +64,91 @@ interface AdminStore {
   lastResult: { action: AdminActionType; result: SendResult } | null;
 
   connect: () => () => void;
-  signIn: (roomCode: string, pin: string) => void;
+  /** PIN, and optionally a room to go straight into (from /admin?code=ABCD). */
+  signIn: (pin: string, roomCode?: string) => void;
   signOut: () => void;
-  /**
-   * Sends a command. Pass the stepId of the view the button was drawn from, so a
-   * tap that lands just as the step changes is refused instead of acting on the
-   * new step. Defaults to the latest view's stepId.
-   */
+  /** Run an open room (a second Admin device, or after leaving it). */
+  joinRoom: (roomCode: string) => Promise<boolean>;
+  /** Back to the home screen; the room keeps running. */
+  leaveRoom: () => void;
+  /** Sends a command (with the stepId of the view the button was drawn from). */
   send: (action: AdminAction, stepId?: number) => Promise<SendResult>;
   downloadResults: () => void;
+
+  // ---- home screen and quiz library (null / failed result when not signed in or no reply)
+  listRooms: () => Promise<OpenRoomSummary[] | null>;
+  openRoom: (quizId: string) => Promise<OpenRoomResult>;
+  /** Closes a room for good (everyone in it is told). */
+  closeRoom: (roomCode: string) => Promise<boolean>;
+  listQuizzes: () => Promise<QuizSummary[] | null>;
+  getQuiz: (id: string) => Promise<Quiz | null>;
+  createQuiz: (title: string) => Promise<SaveQuizResult>;
+  duplicateQuiz: (id: string) => Promise<SaveQuizResult>;
+  saveQuiz: (quiz: Quiz) => Promise<SaveQuizResult>;
+  deleteQuiz: (id: string) => Promise<boolean>;
+  /** Uploads an (already shrunk) image; resolves to its path ("/images/…") or throws a readable message. */
+  uploadImage: (image: Blob) => Promise<string>;
+}
+
+/** Emits with an ack, resolving `fallback` if no reply comes in time. */
+function ask<T>(fallback: T, emit: (ack: (r: T) => void) => void): Promise<T> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (r: T) => {
+      if (done) return;
+      done = true;
+      resolve(r);
+    };
+    emit(finish);
+    window.setTimeout(() => finish(fallback), LIBRARY_TIMEOUT_MS);
+  });
 }
 
 export const useAdminStore = create<AdminStore>()((set, get) => {
   let lastSent: { type: AdminActionType; at: number; thumb: boolean } | null = null;
+  const socket = () => getSocket();
 
-  const auth = (roomCode: string, pin: string, quiet = false) => {
-    const code = roomCode.trim().toUpperCase();
+  const enterRoom = (pin: string, roomCode: string, quiet: boolean) =>
+    new Promise<boolean>((resolve) => {
+      socket().emit("admin:auth", { roomCode: roomCode.trim().toUpperCase(), pin }, (result) => {
+        if (result.ok) {
+          saveAdminSession({ pin, roomCode: result.roomCode });
+          set({ error: null });
+          resolve(true);
+        } else {
+          saveAdminSession({ pin });
+          set({
+            view: null,
+            error:
+              result.error === "room-not-found"
+                ? quiet
+                  ? "That room is no longer open (the game server may have restarted). Open it again from a quiz."
+                  : ADMIN_AUTH_ERROR_MESSAGES["room-not-found"]
+                : ADMIN_AUTH_ERROR_MESSAGES[result.error],
+          });
+          resolve(false);
+        }
+      });
+    });
+
+  const login = (pin: string, roomCode: string | undefined, quiet: boolean) => {
     set({ signingIn: true, error: quiet ? get().error : null });
-    getSocket().emit("admin:auth", { roomCode: code, pin }, (result) => {
-      set({ signingIn: false });
-      if (result.ok) {
-        saveAdminSession({ roomCode: result.roomCode, pin });
-        set({ error: null });
-      } else {
+    socket().emit("admin:login", { pin }, (result) => {
+      if (!result.ok) {
         saveAdminSession(null);
-        set({
-          view: null,
-          error:
-            result.error === "room-not-found" && quiet
-              ? "That quiz no longer exists (the quiz server may have restarted). Sign in with the new room code."
-              : ADMIN_AUTH_ERROR_MESSAGES[result.error],
-        });
+        set({ signingIn: false, signedIn: false, view: null, error: ADMIN_AUTH_ERROR_MESSAGES["wrong-pin"] });
+        return;
       }
+      saveAdminSession({ pin, roomCode });
+      set({ signedIn: true });
+      if (roomCode) void enterRoom(pin, roomCode, quiet).then(() => set({ signingIn: false }));
+      else set({ signingIn: false });
     });
   };
 
   return {
     status: "connecting",
+    signedIn: false,
     view: null,
     clockOffset: 0,
     error: null,
@@ -98,43 +157,60 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
     lastResult: null,
 
     connect: () => {
-      const socket = getSocket();
+      const s = socket();
       const onConnect = () => {
         set({ status: "online" });
-        // After a refresh or a dropped connection, sign straight back in.
+        // After a refresh or a dropped connection, sign straight back in (and into the room).
         const saved = loadAdminSession();
-        if (saved) auth(saved.roomCode, saved.pin, true);
+        if (saved) login(saved.pin, saved.roomCode, true);
       };
       const onDisconnect = () => set({ status: "offline", pending: null });
       const onState = (view: AdminView) => set({ view, clockOffset: view.serverNow - Date.now() });
       const onClosed = ({ reason }: { reason: string }) => {
-        saveAdminSession(null);
+        const saved = loadAdminSession();
+        if (saved) saveAdminSession({ pin: saved.pin });
         set({ view: null, error: reason });
       };
-      socket.on("connect", onConnect);
-      socket.on("disconnect", onDisconnect);
-      socket.on("connect_error", onDisconnect);
-      socket.on("admin:state", onState);
-      socket.on("room:closed", onClosed);
-      socket.connect();
+      s.on("connect", onConnect);
+      s.on("disconnect", onDisconnect);
+      s.on("connect_error", onDisconnect);
+      s.on("admin:state", onState);
+      s.on("room:closed", onClosed);
+      s.connect();
       return () => {
-        socket.off("connect", onConnect);
-        socket.off("disconnect", onDisconnect);
-        socket.off("connect_error", onDisconnect);
-        socket.off("admin:state", onState);
-        socket.off("room:closed", onClosed);
-        socket.disconnect();
+        s.off("connect", onConnect);
+        s.off("disconnect", onDisconnect);
+        s.off("connect_error", onDisconnect);
+        s.off("admin:state", onState);
+        s.off("room:closed", onClosed);
+        s.disconnect();
       };
     },
 
-    signIn: (roomCode, pin) => auth(roomCode, pin),
+    signIn: (pin, roomCode) => login(pin.trim(), roomCode?.trim().toUpperCase() || undefined, false),
 
     signOut: () => {
       saveAdminSession(null);
-      set({ view: null, error: null });
-      const socket = getSocket();
-      socket.disconnect();
-      socket.connect();
+      set({ signedIn: false, view: null, error: null });
+      const s = socket();
+      s.disconnect();
+      s.connect();
+    },
+
+    joinRoom: async (roomCode) => {
+      const saved = loadAdminSession();
+      if (!saved) return false;
+      return enterRoom(saved.pin, roomCode, false);
+    },
+
+    leaveRoom: () => {
+      const saved = loadAdminSession();
+      if (saved) saveAdminSession({ pin: saved.pin });
+      set({ view: null, error: null, lastResult: null });
+      // A fresh connection drops the room role; the PIN is re-sent on connect.
+      const s = socket();
+      s.disconnect();
+      s.connect();
     },
 
     send: (action, stepId) =>
@@ -158,12 +234,12 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
           set({ pending: null, lastResult: { action: action.type, result } });
           resolve(result);
         };
-        getSocket().emit("admin:command", { stepId: stepId ?? view.stepId, action }, finish);
+        socket().emit("admin:command", { stepId: stepId ?? view.stepId, action }, finish);
         window.setTimeout(() => finish({ ok: false, reason: "no-reply" }), COMMAND_TIMEOUT_MS);
       }),
 
     downloadResults: () =>
-      getSocket().emit("admin:results", (result) => {
+      socket().emit("admin:results", (result) => {
         if (!result) return;
         const url = URL.createObjectURL(new Blob([result.csv], { type: "text/csv;charset=utf-8" }));
         const a = document.createElement("a");
@@ -172,5 +248,42 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
         a.click();
         URL.revokeObjectURL(url);
       }),
+
+    listRooms: () => ask<OpenRoomSummary[] | null>(null, (ack) => socket().emit("admin:rooms", ack)),
+    openRoom: (quizId) =>
+      ask<OpenRoomResult>({ ok: false, error: "not-signed-in" }, (ack) =>
+        socket().emit("admin:openRoom", { quizId }, (result) => {
+          if (result.ok) {
+            const saved = loadAdminSession();
+            if (saved) saveAdminSession({ pin: saved.pin, roomCode: result.roomCode });
+            set({ error: null });
+          }
+          ack(result);
+        }),
+      ),
+    closeRoom: async (roomCode) => (await ask<{ ok: boolean }>({ ok: false }, (ack) => socket().emit("admin:closeRoom", { roomCode }, ack))).ok,
+    listQuizzes: () => ask<QuizSummary[] | null>(null, (ack) => socket().emit("library:list", ack)),
+    getQuiz: (id) => ask<Quiz | null>(null, (ack) => socket().emit("library:get", { id }, ack)),
+    createQuiz: (title) => ask<SaveQuizResult>({ ok: false, error: "not-signed-in" }, (ack) => socket().emit("library:create", { title }, ack)),
+    duplicateQuiz: (id) => ask<SaveQuizResult>({ ok: false, error: "not-signed-in" }, (ack) => socket().emit("library:duplicate", { id }, ack)),
+    saveQuiz: (quiz) => ask<SaveQuizResult>({ ok: false, error: "not-signed-in" }, (ack) => socket().emit("library:save", quiz, ack)),
+    deleteQuiz: async (id) => (await ask<{ ok: boolean }>({ ok: false }, (ack) => socket().emit("library:delete", { id }, ack))).ok,
+
+    uploadImage: async (image) => {
+      const pin = loadAdminSession()?.pin ?? "";
+      let res: Response;
+      try {
+        res = await fetch(`${gameServerUrl()}${IMAGE_UPLOAD_PATH}`, {
+          method: "POST",
+          headers: { "content-type": image.type || "application/octet-stream", [IMAGE_PIN_HEADER]: pin },
+          body: image,
+        });
+      } catch {
+        throw new Error("Couldn't reach the game server to upload the image.");
+      }
+      const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!res.ok || !body.url) throw new Error(body.error ?? "The image upload failed.");
+      return body.url;
+    },
   };
 });

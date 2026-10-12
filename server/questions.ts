@@ -12,6 +12,10 @@ export interface QuizQuestion {
   options: [string, string, string, string];
   /** Index (0–3) of the right option. */
   correct: number;
+  /** This question's own read time (ms), overriding the quiz's. From the quiz library only. */
+  readMs?: number;
+  /** Round 1: answer time; buzzer round: buzz window (ms), overriding the quiz's. */
+  openMs?: number;
 }
 
 export const QUESTIONS_FILE = path.join(process.cwd(), "data", "questions.json");

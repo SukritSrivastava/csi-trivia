@@ -203,9 +203,10 @@ const ROUND2_PHASES: Phase[] = ["r2Intro", ...ROUND2_QUESTION_PHASES, "r2Scores"
 // ============================================================================
 
 export class QuizRoom {
-  readonly hostToken = randomUUID();
   /** Set by the server to save results; null in tests. */
   recorder: QuizRecorder | null = null;
+  /** The library quiz this room plays (shown on Admin). */
+  quizTitle = "Quiz";
 
   private participants: Participant[] = [];
   private phase: Phase = "lobby";
@@ -573,17 +574,17 @@ export class QuizRoom {
       hostOrder: shuffle([0, 1, 2, 3], this.random),
       answers: new Map(),
       applied: new Map(),
-      limitMs: this.config.round1.answerMs,
+      limitMs: question.openMs ?? this.config.round1.answerMs,
       scored: false,
       voided: false,
     };
-    this.go("r1Read", this.config.round1.readMs, () => this.openAnswers());
+    this.go("r1Read", question.readMs ?? this.config.round1.readMs, () => this.openAnswers());
   }
 
   private openAnswers() {
     const run = this.r1!;
-    run.limitMs = this.config.round1.answerMs;
-    this.go("r1Answer", this.config.round1.answerMs, () => this.timesUp());
+    run.limitMs = run.question.openMs ?? this.config.round1.answerMs;
+    this.go("r1Answer", run.limitMs, () => this.timesUp());
     this.endAnswerIfEveryoneAnswered();
   }
 
@@ -686,7 +687,8 @@ export class QuizRoom {
   }
 
   private startRound2Read() {
-    this.go("r2Read", this.config.round2.readMs, () => this.openBuzzers(this.config.round2.buzzMs));
+    const q = this.r2!.question;
+    this.go("r2Read", q.readMs ?? this.config.round2.readMs, () => this.openBuzzers(q.openMs ?? this.config.round2.buzzMs));
   }
 
   private openBuzzers(ms: number) {
@@ -1138,11 +1140,11 @@ export class QuizRoom {
   /** Round 1 participants, best first: score, then lower total answer time, then who joined first. */
   private round1Ranking(): Participant[] {
     return this.cached("r1ranking", () => {
-      const answerMs = this.config.round1.answerMs;
+      const answerMs = (index: number) => this.round1Questions[index]?.openMs ?? this.config.round1.answerMs;
       const tieTime = (p: Participant) => {
         let missedBeforeJoining = 0;
-        for (const [index, scored] of this.r1Scored) if (scored && index < p.firstQuestion) missedBeforeJoining += 1;
-        return p.playedTimeMs + missedBeforeJoining * answerMs;
+        for (const [index, scored] of this.r1Scored) if (scored && index < p.firstQuestion) missedBeforeJoining += answerMs(index);
+        return p.playedTimeMs + missedBeforeJoining;
       };
       return this.participants
         .filter((p) => p.status === "playing")
@@ -1307,7 +1309,7 @@ export class QuizRoom {
       case "r1Intro":
         return {
           primary: { action: { type: "showQuestion" }, label: "Show question" },
-          hint: `Question 1 goes up. ${this.config.round1.readMs / 1000}s to read, then ${this.config.round1.answerMs / 1000}s to answer.`,
+          hint: `Question 1 goes up. ${(this.round1Questions[0]?.readMs ?? this.config.round1.readMs) / 1000}s to read, then ${(this.round1Questions[0]?.openMs ?? this.config.round1.answerMs) / 1000}s to answer.`,
         };
       case "r1Read":
         return { primary: null, hint: "Reading time. Answers open by themselves." };
@@ -1357,7 +1359,7 @@ export class QuizRoom {
       case "r2Intro":
         return {
           primary: finalistCount ? { action: { type: "showQuestion" }, label: "Show question" } : null,
-          hint: `Buzzer question 1 goes up with its options. ${this.config.round2.readMs / 1000}s to read, then buzzers open.`,
+          hint: `Buzzer question 1 goes up with its options. ${(this.round2Questions[0]?.readMs ?? this.config.round2.readMs) / 1000}s to read, then buzzers open.`,
         };
       case "r2Read":
         return { primary: null, hint: "Reading time. Buzzers open by themselves." };
@@ -2038,6 +2040,7 @@ export class QuizRoom {
       canUndo: this.canUndo,
       lastMark: mark && markBy ? { by: this.tag(markBy), correct: mark.correct } : null,
       podium: this.podiumSummary(),
+      quizTitle: this.quizTitle,
     };
   }
 }

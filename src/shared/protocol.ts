@@ -702,7 +702,110 @@ export interface AdminView {
   lastMark: { by: ParticipantTag; correct: boolean } | null;
   /** The final order, on the podium only (same as the Host's podium stage), so the quizmaster can announce it. */
   podium: PodiumSummary | null;
+  /** The quiz this room is playing (a frozen copy, taken when the room was opened). */
+  quizTitle: string;
 }
+
+// ============================================================================
+// The quiz library (Admin creates and edits quizzes; a room plays a frozen copy)
+// ============================================================================
+
+/** Everything a quiz can set for itself. Seconds, not ms, so it reads naturally in the editor. */
+export interface QuizRules {
+  /** Round 1 questions played (the first N of the Round 1 list; the rest are spares). */
+  round1Questions: number;
+  round1ReadSeconds: number;
+  round1AnswerSeconds: number;
+  /** How many make the cut into the buzzer round. */
+  finalists: number;
+  /** Buzzer questions that count (the first N of the buzzer list; the rest are spares for voids and sudden death). */
+  buzzerQuestions: number;
+  buzzerReadSeconds: number;
+  buzzWindowSeconds: number;
+  /** The countdown while a finalist says their answer out loud (never marks anything). */
+  spokenAnswerSeconds: number;
+  /** Buzz window after a wrong answer, for the others. */
+  reopenSeconds: number;
+}
+
+/** One question in the library. Always 4 options; shuffled once per question when played. */
+export interface LibraryQuestion {
+  /** Stable id inside the quiz (not shown to players; rooms use fresh opaque ids). */
+  id: string;
+  text: string;
+  options: [string, string, string, string];
+  /** Index (0–3) of the right option. */
+  correct: number;
+  /** "/images/<id>" served by the game server (or a /public path), shown on the Host only. */
+  image: string | null;
+  /** This question's read time, overriding the quiz's (null = use the quiz's). */
+  readSeconds: number | null;
+  /** Round 1: answer time. Buzzer round: buzz window. null = use the quiz's. */
+  openSeconds: number | null;
+}
+
+export interface Quiz {
+  id: string;
+  title: string;
+  rules: QuizRules;
+  /** Played top to bottom; the first rules.round1Questions count. */
+  round1: LibraryQuestion[];
+  /** Played top to bottom; the first rules.buzzerQuestions count, the rest are spares. */
+  buzzer: LibraryQuestion[];
+  /** ms since epoch. */
+  updatedAt: number;
+}
+
+export interface QuizSummary {
+  id: string;
+  title: string;
+  round1: number;
+  buzzer: number;
+  updatedAt: number;
+  /** Problems that stop it being played (empty = ready). */
+  problems: string[];
+}
+
+/** A room that's open now (Admin's home screen, and where the Host attaches). */
+export interface OpenRoomSummary {
+  roomCode: string;
+  quizTitle: string;
+  phase: Phase;
+  joined: number;
+  /** ms since epoch. */
+  openedAt: number;
+}
+
+export type SaveQuizResult = { ok: true; quiz: Quiz } | { ok: false; error: "not-signed-in" | "not-found" | "invalid"; problems?: string[] };
+
+export type OpenRoomResult =
+  | { ok: true; roomCode: string }
+  | { ok: false; error: "not-signed-in" | "not-found" | "not-ready"; problems?: string[] };
+
+export type HostAuthResult = { ok: true; roomCode: string } | { ok: false; error: "wrong-pin" | "no-room" };
+
+/**
+ * Question images are uploaded over HTTP (not Socket.IO, to keep socket messages small):
+ *   POST {game server}{IMAGE_UPLOAD_PATH}, body = the image bytes (image/jpeg, image/png or image/webp),
+ *   header IMAGE_PIN_HEADER = the Admin PIN  →  200 { url: "/images/<id>" }
+ * The game server then serves GET /images/<id>. Use it as LibraryQuestion.image.
+ */
+export const IMAGE_UPLOAD_PATH = "/api/images";
+export const IMAGE_PIN_HEADER = "x-admin-pin";
+
+/** Limits the server enforces on a quiz (the editor shows them too). */
+export const QUIZ_LIMITS = {
+  title: 80,
+  questionText: 300,
+  optionText: 140,
+  questionsPerList: 200,
+  /** Uploaded image size after the editor shrinks it. */
+  imageBytes: 2_500_000,
+  finalists: { min: 2, max: 12 },
+  readSeconds: { min: 1, max: 60 },
+  /** Answer time, buzz window, spoken answer, reopen. */
+  openSeconds: { min: 3, max: 120 },
+} as const;
 
 /** The result of the quiz: what the Host's podium shows. */
 export interface PodiumSummary {
@@ -751,9 +854,12 @@ export type CommandResult =
 /** Events browsers send to the server. */
 export interface ClientToServerEvents {
   // ---- Host
-  /** Create a new quiz room. Keep the hostToken (sessionStorage) to resume after a refresh. */
-  "host:create": (ack: (result: { roomCode: string; hostToken: string }) => void) => void;
-  "host:resume": (payload: { roomCode: string; hostToken: string }, ack: (result: { ok: boolean }) => void) => void;
+  /**
+   * The projector signs in with the Admin PIN and shows a room: `roomCode` if given and open,
+   * otherwise the most recently opened room. "no-room": nothing is open yet (ask again shortly).
+   * Rooms are opened by Admin (admin:openRoom).
+   */
+  "host:auth": (payload: { pin: string; roomCode?: string }, ack: (result: HostAuthResult) => void) => void;
 
   // ---- Participant
   /**
@@ -778,7 +884,27 @@ export interface ClientToServerEvents {
   /** The quiz page was hidden/shown (switched app or tab). Flag for Admin only. */
   "participant:visibility": (payload: { hidden: boolean }) => void;
 
-  // ---- Admin (everything below needs a successful admin:auth on this socket)
+  // ---- Admin
+  /** Sign in with the PIN only (quiz library, open rooms). After 5 wrong PINs the socket is refused. */
+  "admin:login": (payload: { pin: string }, ack: (result: { ok: true } | { ok: false; error: "wrong-pin" }) => void) => void;
+  /** Rooms open right now (needs admin:login). null = not signed in. */
+  "admin:rooms": (ack: (rooms: OpenRoomSummary[] | null) => void) => void;
+  /** Closes a room for good (phones, Admins and Hosts in it are told). Needs admin:login. */
+  "admin:closeRoom": (payload: { roomCode: string }, ack: (result: { ok: boolean }) => void) => void;
+  /** Opens a new room playing a frozen copy of this quiz, and signs this socket into it. */
+  "admin:openRoom": (payload: { quizId: string }, ack: (result: OpenRoomResult) => void) => void;
+  /** Quiz library (needs admin:login). null / not-signed-in when not signed in. */
+  "library:list": (ack: (quizzes: QuizSummary[] | null) => void) => void;
+  "library:get": (payload: { id: string }, ack: (quiz: Quiz | null) => void) => void;
+  /** A new quiz with the server's default rules and no questions, already saved. */
+  "library:create": (payload: { title: string }, ack: (result: SaveQuizResult) => void) => void;
+  "library:duplicate": (payload: { id: string }, ack: (result: SaveQuizResult) => void) => void;
+  /** Saves a quiz (create or replace by id). Drafts may be incomplete; opening a room needs it ready. */
+  "library:save": (quiz: Quiz, ack: (result: SaveQuizResult) => void) => void;
+  "library:delete": (payload: { id: string }, ack: (result: { ok: boolean }) => void) => void;
+
+  // ---- Admin in a room (everything below needs admin:auth or admin:openRoom on this socket)
+  /** Sign into a room (also signs in to the library). */
   "admin:auth": (payload: { roomCode: string; pin: string }, ack: (result: AdminAuthResult) => void) => void;
   "admin:command": (payload: AdminCommandPayload, ack: (result: CommandResult) => void) => void;
   /** Results as CSV text, for prizes. */

@@ -8,45 +8,40 @@ import { useAdminStore } from "@/stores/adminStore";
 const input =
   "w-full rounded-[0.9rem] border-2 border-line bg-void px-4 py-3 text-ghost outline-none transition-colors focus:border-mint";
 
-/** Room code (prefilled from /admin?code=ABCD) and PIN. */
+/** The quizmaster's PIN. /admin?code=ABCD goes straight into that room afterwards. */
 export function SignIn() {
   const params = useSearchParams();
   const signIn = useAdminStore((s) => s.signIn);
   const signingIn = useAdminStore((s) => s.signingIn);
   const error = useAdminStore((s) => s.error);
   const status = useAdminStore((s) => s.status);
-  const [code, setCode] = useState(() => (params.get("code") ?? "").toUpperCase().slice(0, ROOM_CODE_LENGTH));
+  const roomCode = (params.get("code") ?? "").toUpperCase().slice(0, ROOM_CODE_LENGTH);
   const [pin, setPin] = useState("");
-  const ready = code.length === ROOM_CODE_LENGTH && pin.length > 0 && !signingIn && status === "online";
+  const ready = pin.trim().length > 0 && !signingIn && status === "online";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-6 px-5 py-10">
       <div>
         <p className="font-term text-2xl leading-none text-mint [text-shadow:0_0_8px_var(--color-mint)]">hermes://admin</p>
         <h1 className="mt-2 text-3xl leading-tight text-bright">Quizmaster sign in</h1>
-        <p className="mt-2 text-[15px] text-mint-soft">The room code is on the Host screen.</p>
+        <p className="mt-2 text-[15px] text-mint-soft">
+          {roomCode ? (
+            <>
+              Then you&apos;ll go straight into room <span className="font-term text-xl leading-none tracking-[0.15em] text-mint">{roomCode}</span>.
+            </>
+          ) : (
+            "Create quizzes, open a room, and run it."
+          )}
+        </p>
       </div>
 
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (ready) signIn(code, pin);
+          if (ready) signIn(pin, roomCode || undefined);
         }}
       >
-        <label className="flex flex-col gap-1.5 text-[15px] text-mint-soft">
-          Room code
-          <input
-            className={`${input} font-term text-4xl leading-none tracking-[0.3em] uppercase`}
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/[^a-z]/gi, "").toUpperCase().slice(0, ROOM_CODE_LENGTH))}
-            autoCapitalize="characters"
-            autoComplete="off"
-            spellCheck={false}
-            name="code"
-            aria-invalid={error?.includes("code") || undefined}
-          />
-        </label>
         <label className="flex flex-col gap-1.5 text-[15px] text-mint-soft">
           PIN
           <input
@@ -59,6 +54,7 @@ export function SignIn() {
             autoCorrect="off"
             spellCheck={false}
             autoComplete="current-password"
+            autoFocus
             name="pin"
           />
         </label>

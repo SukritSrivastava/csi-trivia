@@ -94,6 +94,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 11 Oct | Bot eyes show the game: idle / thinking / locked / right / wrong / out, computed by the server (`HostView.cast`). |
 | 11 Oct | One 1–4 answer order on the Host and every phone in Round 1 (no per-phone shuffle). |
 | 11 Oct | Host cast: up to 12 bots in a named row; 13+ as a dense wall of smaller bots without names. |
+| 12 Oct | **Quiz library in Admin:** quizzes are made in Admin (type, paste text, CSV/Excel, JSON), saved in Supabase; two lists (Round 1, buzzer + spares), always 4 options, shuffled, played in the order arranged; every count and timer per quiz, timers overridable per question; optional picture per question (projector only); a room plays a frozen copy (no live edits). **Admin opens rooms**; the **Host needs the same PIN** and shows the newest open room. |
 | 12 Oct | **Backend = option 1 (§8.9):** the game server in `server/` is the real backend; the teammate's Postgres/Supabase tables (`archive/ws-backend-v1/db.js`) are wired in via `server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
 
 ---
@@ -131,8 +132,8 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
   `clockOffset = serverNow − Date.now()` and count down to `timer.endsAt` with it.
 - **Server computes everything the UI needs:** Admin's big button (`primary`), what's allowed
   (`allowed`), labels (`stepLabel`, `hint`), bot moods (`cast[i].mood`), the cut, the podium.
-- **Sessions:** `sessionStorage` per tab (so several test tabs work on one laptop). Host keeps
-  `hostToken` to resume after a refresh; phones keep `participantId` to rejoin; typing the same
+- **Sessions:** `sessionStorage` per tab (so several test tabs work on one laptop). Host and Admin
+  keep the PIN (and their room code) to sign back in after a refresh; phones keep `participantId` to rejoin; typing the same
   name again also reclaims a dropped seat.
 
 ### 2.3 The game flow (phases, from `protocol.ts`)
@@ -276,7 +277,8 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 
 ### Not in a phase yet
 - 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed Render server; merged into `main` on 12 Oct (branches: `main`, `frontend`, `backend`). Live test against the real Supabase passed 12 Oct.
-- ⬜ Write the **real Hermes questions** (round 1 count, 10+ buzzer questions plus spares) into `data/questions.json`.
+- 🟡 **Quiz library** (12 Oct): Admin → Quizzes (create/edit/import/settings/open room), Host PIN. Verified: simulate (25), smoke, db-check, admin-run (52 checks incl. the editor on a phone and the projector PIN). Waiting for Sukrit's approval.
+- ⬜ Write the **real Hermes questions** in Admin → Quizzes (round 1 count, 10+ buzzer questions plus spares). `data/questions.json` only seeds the "Demo quiz" now.
 - ✅ **Deployed 12 Oct:** website https://hermes-quiz-nine.vercel.app (Vercel), game server https://hermes-quiz-game.onrender.com (Render, from `main`), results in Supabase. Live end-to-end test passed (41 checks, rows in Supabase). Details and how to update: `docs/DEPLOY.md`. Open: link the Vercel project to GitHub (needs the Vercel GitHub app on the repo owner's account) so the website redeploys on push.
 - ⬜ CSI club logo in a corner (optional, "later").
 - ⬜ Rehearsal in the actual hall with the real projector (brightness, hall lights, sound).
@@ -368,14 +370,27 @@ exactly this**; `server/` is the working reference.
 - CORS: allow the website's origin (`CORS_ORIGIN`).
 - **Request/response** = an event with an **ack callback** (Socket.IO acknowledgement).
   **Fire-and-forget** = an event without an ack. **Server pushes** = views and `room:closed`.
-- A socket has one role: **host**, **participant** or **admin**, set by the first successful
-  `host:create`/`host:resume`, `participant:join`, or `admin:auth`.
+- A socket has one room role: **host**, **participant** or **admin**, set by `host:auth`,
+  `participant:join`, or `admin:auth` / `admin:openRoom`. Passing the PIN (`admin:login`,
+  `admin:auth`, `host:auth`) also unlocks the quiz library on that socket.
+- **Rooms are opened by Admin** with a quiz from the library (a frozen copy: editing the quiz later
+  never changes a game in progress). The Host signs in with the same PIN and shows a room.
 
 ### 8.2 Events: client → server
 | Event | Payload | Ack result | Who / when |
 |---|---|---|---|
-| `host:create` | none | `{ roomCode, hostToken }` | Host opens `/host`. Keep `hostToken` in sessionStorage. |
-| `host:resume` | `{ roomCode, hostToken }` | `{ ok: boolean }` | Host refreshed. |
+| `host:auth` | `{ pin, roomCode? }` | `HostAuthResult` = `{ ok:true, roomCode }` or `{ ok:false, error:"wrong-pin"\|"no-room" }` | Projector: shows `roomCode` if open, else the newest open room. `no-room`: ask again in ~3 s. |
+| `admin:login` | `{ pin }` | `{ ok:true }` or `{ ok:false, error:"wrong-pin" }` | Admin's PIN screen (no room needed). |
+| `admin:rooms` | none | `OpenRoomSummary[]` (newest first) or `null` | Admin home: rooms open now. |
+| `admin:openRoom` | `{ quizId }` | `OpenRoomResult` = `{ ok:true, roomCode }` or `{ ok:false, error:"not-signed-in"\|"not-found"\|"not-ready", problems? }` | Opens a room with a frozen copy of the quiz; the socket becomes its Admin. |
+| `admin:closeRoom` | `{ roomCode }` | `{ ok }` | Closes a room for good (`room:closed` to everyone in it). |
+| `library:list` | none | `QuizSummary[]` (with `problems`) or `null` | Quiz library. All `library:*` need the PIN on this socket. |
+| `library:get` | `{ id }` | `Quiz` or `null` | Open a quiz in the editor. |
+| `library:create` | `{ title }` | `SaveQuizResult` | New empty quiz with the server's default rules. |
+| `library:duplicate` | `{ id }` | `SaveQuizResult` | Copy a quiz. |
+| `library:save` | `Quiz` | `SaveQuizResult` = `{ ok:true, quiz }` or `{ ok:false, error, problems? }` | Save (create or replace by id). The server cleans it (`cleanQuiz`); drafts may be incomplete. |
+| `library:delete` | `{ id }` | `{ ok }` | Delete a quiz. |
+| *(HTTP)* `POST /api/images` | image bytes (JPEG/PNG/WebP, ≤ 2.5 MB), header `x-admin-pin` | `{ url: "/images/<id>" }` | Question pictures. `GET /images/<id>` serves them (cached forever). |
 | `participant:join` | `{ roomCode, name, participantId? }` | `JoinResult` = `{ ok:true, participantId, roomCode, status }` or `{ ok:false, error: JoinError }` | Phone joins or rejoins (with saved id, or same name if the old phone dropped). |
 | `participant:bot` | `BotLook` `{ color, head }` | `BotResult` = `{ ok:true }` or `{ ok:false, error: "taken"\|"invalid"\|"too-late" }` | Phone changes its bot. **Lobby only.** |
 | `participant:answer` | `{ questionId, optionId }` | none | Round 1 answer step. First tap wins; later ones ignored. |
@@ -508,6 +523,7 @@ Whichever is chosen: record it in §1.3 and §4.
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
 | 12 Oct 2026 | `AdminView.podium` (`PodiumSummary`, or null before the podium) (same data as the Host podium stage) | Admin shows the winner; the real backend must send it on the podium |
+| 12 Oct 2026 (later) | **Quiz library.** Removed `host:create`/`host:resume`; added `host:auth` (PIN), `admin:login`, `admin:rooms`, `admin:openRoom`, `admin:closeRoom`, `library:list/get/create/duplicate/save/delete`, HTTP `POST /api/images` + `GET /images/<id>`; types `Quiz`, `QuizRules`, `LibraryQuestion`, `QuizSummary`, `OpenRoomSummary`, `QUIZ_LIMITS`; `AdminView.quizTitle`. Rules/imports shared in `src/shared/quiz.ts`. Server: `server/library.ts` (Supabase tables `quizzes`, `quiz_images`), per-question `readMs`/`openMs`. | Admin opens rooms from a quiz; the Host asks for the PIN; question images via `assetUrl()` |
 | 11 Oct 2026 (night) | `ParticipantTag.head`; `PARTICIPANT_COLORS` = 12 bot colours; `BOT_HEADS`, `BotMood`, `BotLook`, `BotPicker`, `CastMember`; `HostView.cast`; lobby `botPicker`; `participant:bot` + `BotResult`; `Round1Question.options`; phones get the Host's order; `result.correctText` | draw bots everywhere a person appears; use `cast[i].mood`; number options 1–4 |
 
 ---

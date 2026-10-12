@@ -18,7 +18,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Page } from "playwright";
 import { io, type Socket } from "socket.io-client";
-import type { AdminView, ClientToServerEvents, ParticipantView, Phase, ServerToClientEvents } from "../src/shared/protocol";
+import type { AdminView, ClientToServerEvents, OpenRoomResult, ParticipantView, Phase, ServerToClientEvents } from "../src/shared/protocol";
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -155,13 +155,18 @@ async function twoTaps(d: Device, testId: string) {
 async function main() {
   mkdirSync(OUT, { recursive: true });
 
-  const host = await connect();
-  const { roomCode } = await new Promise<{ roomCode: string; hostToken: string }>((r) => host.emit("host:create", r));
-  console.log(`\nRoom ${roomCode}`);
-
+  // A watching Admin socket opens a room with the Demo quiz; a Host socket shows it.
   const watcher = await connect();
   watcher.on("admin:state", (v) => (adminView = v));
-  await new Promise((r) => watcher.emit("admin:auth", { roomCode, pin: PIN }, r));
+  await new Promise((r) => watcher.emit("admin:login", { pin: PIN }, r));
+  const opened = await new Promise<OpenRoomResult>((r) => watcher.emit("admin:openRoom", { quizId: "demo" }, r));
+  if (!opened.ok) throw new Error(`Couldn't open a room with the Demo quiz: ${opened.error} ${opened.problems?.join("; ") ?? ""}`);
+  const roomCode = opened.roomCode;
+  /** Unique per run, and deleted at the end, so runs don't pile up in the library. */
+  const QUIZ_TITLE = `Admin run ${roomCode}`;
+  console.log(`\nRoom ${roomCode}`);
+  const host = await connect();
+  await new Promise((r) => host.emit("host:auth", { pin: PIN, roomCode }, r));
 
   const players = ["Riya", "Kabir", "Zoya", "Aadi", "Meera"].map((n) => new Player(n));
   for (const p of players) await p.join(roomCode);
@@ -188,7 +193,7 @@ async function main() {
     await phone.page.getByText("Wrong PIN").waitFor();
     check(true, "wrong PIN shows a clear error");
     for (const d of devices) {
-      check((await d.page.locator('input[name="code"]').inputValue()) === roomCode, `${d.name}: room code prefilled from ?code=`);
+      check((await d.page.locator("main").textContent())?.includes(roomCode), `${d.name}: the ?code= room is named on the sign-in screen`);
       await d.page.locator('input[name="pin"]').fill(PIN);
       await d.page.getByTestId("sign-in").click();
       await d.page.getByTestId("step-label").waitFor();
@@ -351,8 +356,81 @@ async function main() {
     check((await phone.page.getByTestId("participant-row").count()) === adminView!.finalists.length, "Finalists filter shows the finalists");
     await shot([phone, small], "11-participants");
 
+    // ---- Quiz library on the phone: leave the room, make a quiz, open a room with it
+    await tab(phone, "controls");
+    await phone.page.getByTestId("ctl-leave").click();
+    await phone.page.getByTestId("quiz-list").waitFor();
+    await phone.page.getByTestId("room-row").first().waitFor({ timeout: 10_000 });
+    check(true, "Leave room → home screen lists the open room");
+    await shot([phone], "12-home");
+
+    await phone.page.getByTestId("new-quiz").click();
+    await phone.page.getByTestId("quiz-title").fill(QUIZ_TITLE);
+    await shot([phone], "13-editor-empty");
+
+    await phone.page.getByTestId("add-question").click();
+    await phone.page.getByTestId("q-save").click();
+    check((await phone.page.getByRole("alert").filter({ hasText: "empty" }).count()) > 0, "an empty question can't be saved (says why)");
+    await phone.page.getByTestId("q-text").fill("Which planet is known as the Red Planet?");
+    for (const [i, text] of ["Venus", "Jupiter", "Mars", "Saturn"].entries()) await phone.page.getByTestId(`q-option-${i}`).fill(text);
+    await phone.page.getByTestId("q-correct-2").click();
+    await shot([phone], "14-question-form");
+    await phone.page.getByTestId("q-save").click();
+    await phone.page.getByTestId("question-card").first().waitFor();
+    check((await phone.page.getByTestId("question-card").first().textContent())?.includes("✓ Mars"), "the new question shows its right answer");
+
+    await phone.page.getByTestId("import-questions").click();
+    await phone.page.getByText("Fill in the example").click();
+    await phone.page.getByTestId("import-preview").waitFor();
+    check((await phone.page.getByTestId("import-add").textContent())?.includes("3 QUESTIONS"), "pasted text: 3 questions found (2 Round 1, 1 buzzer)");
+    await shot([phone], "15-import");
+    await phone.page.getByTestId("import-add").click();
+    check((await phone.page.getByTestId("question-card").count()) === 3, "Round 1 list now has 3 questions");
+
+    await phone.page.getByTestId("editor-tab-settings").click();
+    await phone.page.getByTestId("ready").waitFor();
+    check((await phone.page.getByTestId("ready").textContent())?.includes("buzzer round is set to"), "Settings says what's missing (buzzer count > list)");
+    await phone.page.getByRole("button", { name: "Questions that count: less" }).click();
+    await phone.page.getByTestId("ready").getByText("Yes.").waitFor();
+    await shot([phone], "16-settings");
+    await phone.page.getByTestId("save-state").filter({ hasText: "Saved" }).waitFor({ timeout: 10_000 });
+    check(true, "the quiz saves by itself");
+
+    await phone.page.getByTestId("editor-back").click();
+    const card = phone.page.getByTestId("quiz-card").filter({ hasText: QUIZ_TITLE });
+    await card.getByText("Ready to play").waitFor();
+    await card.getByTestId("open-room").click();
+    await phone.page.getByTestId("room-quiz").filter({ hasText: QUIZ_TITLE }).waitFor();
+    check(true, "Open room → a new room playing the new quiz, straight into its lobby");
+    await shot([phone], "17-new-room-lobby");
+
+    // ---- The projector: PIN, then the newest open room
+    const rooms = await new Promise<{ roomCode: string; quizTitle: string }[] | null>((r) => watcher.emit("admin:rooms", r));
+    const newest = rooms?.[0];
+    check(newest?.quizTitle === QUIZ_TITLE, "the new room is the newest");
+    const projector = await (await browser.newContext({ viewport: { width: 1920, height: 1080 } })).newPage();
+    await projector.goto(`${WEB}/host`);
+    await projector.locator('input[name="pin"]').fill("0000");
+    await projector.getByTestId("host-sign-in").click();
+    await projector.getByText("Wrong PIN").waitFor();
+    await projector.screenshot({ path: path.join(OUT, "18-host-pin-1920x1080.png") });
+    check(true, "projector: a wrong PIN is refused");
+    await projector.locator('input[name="pin"]').fill(PIN);
+    await projector.getByTestId("host-sign-in").click();
+    await projector.getByText(newest!.roomCode).first().waitFor({ timeout: 15_000 });
+    await sleep(800);
+    await projector.screenshot({ path: path.join(OUT, "19-host-room-1920x1080.png") });
+    check(true, `projector: the right PIN shows the newest room (${newest!.roomCode})`);
+
     console.log(`\nAll ${checks} checks passed. Screenshots in ${OUT}\n`);
   } finally {
+    // Leave the library and the room list as they were: delete this run's quiz, close its rooms.
+    const quizzes = await new Promise<{ id: string; title: string }[] | null>((r) => watcher.emit("library:list", r));
+    for (const q of quizzes?.filter((q) => q.title === QUIZ_TITLE) ?? []) await new Promise((r) => watcher.emit("library:delete", { id: q.id }, r));
+    const open = await new Promise<{ roomCode: string; quizTitle: string }[] | null>((r) => watcher.emit("admin:rooms", r));
+    for (const room of open?.filter((x) => x.roomCode === roomCode || x.quizTitle === QUIZ_TITLE) ?? []) {
+      await new Promise((r) => watcher.emit("admin:closeRoom", { roomCode: room.roomCode }, r));
+    }
     await browser.close();
     bots?.kill();
     if (bots?.pid && process.platform === "win32") spawn(`taskkill /pid ${bots.pid} /T /F`, { shell: true, stdio: "ignore" });

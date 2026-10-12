@@ -12,6 +12,10 @@ Settings already in place: Render has `GAME_PRESET=event`, `ADMIN_PIN` (ask Sukr
 repo, which is public), `DATABASE_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (both the Vercel address), `NODE_VERSION=24`.
 Vercel has `NEXT_PUBLIC_SOCKET_URL=https://hermes-quiz-game.onrender.com`.
 
+Quizzes made in Admin (and their pictures) are stored in Supabase too (tables `quizzes`,
+`quiz_images`), so they survive Render restarts and redeploys. Open rooms don't: a restart closes
+them (open the room again from the quiz). The projector (`/host`) asks for the Admin PIN.
+
 **Updating it: `npm run deploy`** (on `main`, committed and pushed). It starts a Render deploy of the
 game server, waits until it's live and `/health` says ok, then builds and deploys the website to Vercel.
 Neither service redeploys on its own from a push yet: that needs Render's and Vercel's GitHub apps

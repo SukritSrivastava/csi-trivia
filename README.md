@@ -12,9 +12,9 @@ from an admin panel.
 | Phones (Participant) | https://hermes-quiz-nine.vercel.app/play (or scan the QR on the Host) |
 | Game server | https://hermes-quiz-game.onrender.com ([`/health`](https://hermes-quiz-game.onrender.com/health) says `ok`) |
 
-**Status (12 Oct 2026):** the game engine, the Admin screen and the deployment are done. The phone
+**Status (12 Oct 2026):** the game engine, the Admin screen (with the quiz library) and the deployment are done. The phone
 and projector screens are still simple test pages in the final colours; they're next
-(build phases 3 and 4). The quiz still uses 3 demo questions.
+(build phases 3 and 4). The real Hermes questions go in through Admin → Quizzes.
 
 ---
 
@@ -44,12 +44,12 @@ npm install
 npm run dev
 ```
 
-That starts the website on port 3000 and the game server on port 3001 (short **demo** quiz).
+That starts the website on port 3000 and the game server on port 3001. Your `.env.local` may point at the real Supabase; to keep tests out of it, start with `$env:DATABASE_URL="off"; npm run dev`.
 
 | Open | For |
 |---|---|
-| http://localhost:3000/host | the projector: creates a room and shows its code |
-| http://localhost:3000/admin | the quizmaster: room code + PIN **1234** (local default) |
+| http://localhost:3000/admin | the quizmaster: PIN **1234** (local default), then a quiz → **Open room** |
+| http://localhost:3000/host | the projector: the same PIN; shows the newest open room |
 | http://localhost:3000/play | a phone; open a few tabs, each is a player |
 
 Fill the room with fake players from a second terminal: `npm run bots -- --room ABCD --count 20`.
@@ -104,11 +104,22 @@ Ground rules (details in [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md)):
 | `npm run admin-run` | a real browser runs a whole quiz from Admin, with screenshots (needs `npm run dev`) |
 | `npm run deploy` | puts `main` live on Render and Vercel (keys in `.env.local`) |
 
-## Questions
+## Quizzes and questions
 
-All in [`data/questions.json`](data/questions.json): exactly 4 options each, `correct` is the index
-(0–3) of the right one, `round` is `1`, `2` or `null` (either round). Images go in
-`public/questions/` and only show on the projector. The server checks the file when it starts.
+Quizzes are made in **Admin → Quizzes** (PIN first) and saved in Supabase:
+- two lists: **Round 1** (everyone) and **Buzzer round** (finalists), each played top to bottom;
+  extra questions at the end are spares;
+- every question has exactly 4 answers (shuffled on screen), an optional picture (projector only)
+  and optional own timers;
+- **Settings** per quiz: how many questions each round plays, finalists, and every timer;
+- add questions one by one, or **Import many**: paste text, a spreadsheet (CSV or Excel, template
+  inside), or JSON. Settings → Download gives the quiz back as CSV or JSON.
+
+Then **Open room** on a quiz. The room plays a frozen copy, so editing the quiz later never changes a
+game in progress. The projector (`/host`) asks for the same PIN and shows the newest open room.
+
+[`data/questions.json`](data/questions.json) only seeds a "Demo quiz" when the library is empty.
+Running locally without Supabase, quizzes are kept in `data/library/` (git-ignored).
 
 ## Docs
 

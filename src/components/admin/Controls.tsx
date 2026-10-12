@@ -23,13 +23,14 @@ export function Controls({
   send,
   pending,
   onDownload,
-  onSignOut,
+  onLeave,
 }: {
   view: AdminView;
   send: Send;
   pending: boolean;
   onDownload: () => void;
-  onSignOut: () => void;
+  /** Back to the home screen (rooms + quizzes); the room keeps running. */
+  onLeave: () => void;
 }) {
   const { armed, guard } = useConfirm();
   const can = (t: AdminActionType) => view.allowed.includes(t) && !pending;
@@ -91,8 +92,8 @@ export function Controls({
           Results CSV
         </ControlButton>
         {destructive("endQuiz")}
-        <ControlButton onClick={onSignOut} testId="ctl-signout">
-          Sign out
+        <ControlButton onClick={onLeave} testId="ctl-leave">
+          Leave room
         </ControlButton>
       </div>
     </Panel>

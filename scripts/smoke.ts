@@ -16,11 +16,16 @@ import type {
   CommandResult,
   HostView,
   JoinResult,
+  LibraryQuestion,
+  OpenRoomResult,
   ParticipantScreen,
   ParticipantView,
+  QuizSummary,
+  SaveQuizResult,
   ServerToClientEvents,
 } from "../src/shared/protocol";
-import { PRESETS, withTimingScale } from "../server/config";
+import { newId } from "../src/shared/quiz";
+import { PRESETS } from "../server/config";
 import { startGameServer } from "../server/server";
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -105,7 +110,8 @@ async function main() {
   const server = await startGameServer({
     port: 0,
     host: "127.0.0.1",
-    config: withTimingScale(PRESETS.demo, 0.1),
+    config: PRESETS.demo,
+    timingScale: 0.1,
     adminPin: PIN,
     joinUrl: "http://localhost:3000/play",
   });
@@ -119,19 +125,74 @@ async function main() {
   const step = (text: string) => console.log(`✓ ${text}`);
 
   try {
-    // ---- Host creates a room
-    const hostSocket = await open();
-    const host = new Latest<HostView>();
-    hostSocket.on("host:state", (v) => host.push(v));
-    const created = await within(new Promise<{ roomCode: string; hostToken: string }>((r) => hostSocket.emit("host:create", r)), "host:create");
-    assert.match(created.roomCode, /^[A-Z]{4}$/);
-    await host.until((v) => v.stage.phase === "lobby" && v.roomCode === created.roomCode, "host lobby");
-    step(`Host created room ${created.roomCode}`);
-
-    // ---- Admin signs in
+    // ---- Admin signs in with the PIN only
     const adminSocket = await open();
     const admin = new Latest<AdminView>();
     adminSocket.on("admin:state", (v) => admin.push(v));
+    /** Emits an Admin event with an ack (typed loosely: the test checks the replies itself). */
+    const ask = <T>(event: string, payload?: unknown) =>
+      within(
+        new Promise<T>((r) => (adminSocket.emit as (...a: unknown[]) => void)(event, ...(payload === undefined ? [] : [payload]), r)),
+        event,
+      );
+    assert.deepEqual(await ask("admin:login", { pin: "0000" }), { ok: false, error: "wrong-pin" });
+    assert.equal(await ask("library:list"), null, "no library before the PIN");
+    assert.deepEqual(await ask("admin:login", { pin: PIN }), { ok: true });
+    const earlyHost = await open();
+    assert.deepEqual(
+      await within(new Promise((r) => earlyHost.emit("host:auth", { pin: PIN }, r)), "host:auth (no room yet)"),
+      { ok: false, error: "no-room" },
+      "the projector waits until a room is open",
+    );
+    const library = await ask<QuizSummary[] | null>("library:list");
+    assert.ok(library?.some((q) => q.id === "demo" && q.title === "Demo quiz" && q.problems.length === 0), "the Demo quiz is in the library, ready");
+    step("Admin: wrong PIN refused, no library before the PIN; the Demo quiz is ready");
+
+    // ---- Quiz library round trip: a new quiz can't open until it's complete, then plays its own settings
+    const made = await ask<SaveQuizResult>("library:create", { title: "Smoke quiz" });
+    assert.ok(made.ok);
+    const notReady = await ask<OpenRoomResult>("admin:openRoom", { quizId: made.quiz.id });
+    assert.ok(!notReady.ok && notReady.error === "not-ready" && (notReady.problems?.length ?? 0) > 0, "an empty quiz can't open a room");
+    const mk = (text: string): LibraryQuestion => ({ id: newId(), text, options: [`${text} A`, `${text} B`, `${text} C`, `${text} D`], correct: 2, image: null, readSeconds: null, openSeconds: 7 });
+    const saved = await ask<SaveQuizResult>("library:save", {
+      ...made.quiz,
+      rules: { ...made.quiz.rules, round1Questions: 1, finalists: 2, buzzerQuestions: 1 },
+      round1: [mk("First"), mk("Spare")],
+      buzzer: [mk("Buzz")],
+    });
+    assert.ok(saved.ok && saved.quiz.round1.length === 2 && saved.quiz.round1[0].openSeconds === 7);
+    assert.ok((await ask<QuizSummary[]>("library:list")).find((q) => q.id === made.quiz.id)?.problems.length === 0, "now it's ready");
+    const smokeRoom = await ask<OpenRoomResult>("admin:openRoom", { quizId: made.quiz.id });
+    assert.ok(smokeRoom.ok);
+    await admin.until(
+      (v) => v.quizTitle === "Smoke quiz" && v.settings.finalistCount === 2 && v.settings.round1Questions === 1 && v.settings.round2Questions === 1,
+      "the room plays the quiz's own settings",
+    );
+    assert.deepEqual(await ask("library:delete", { id: made.quiz.id }), { ok: true });
+    assert.ok(!(await ask<QuizSummary[]>("library:list")).some((q) => q.id === made.quiz.id));
+    assert.deepEqual(await ask("admin:closeRoom", { roomCode: smokeRoom.roomCode }), { ok: true });
+    assert.ok(!(await ask<{ roomCode: string }[]>("admin:rooms")).some((r) => r.roomCode === smokeRoom.roomCode), "a closed room is gone");
+    step("Library: create, refuse to open while incomplete, save, open with its own settings, delete; close the room");
+
+    // ---- Admin opens a room with the Demo quiz
+    const opened = await ask<OpenRoomResult>("admin:openRoom", { quizId: "demo" });
+    if (!opened.ok) throw new Error(`admin:openRoom failed: ${opened.error}`);
+    const created = { roomCode: opened.roomCode };
+    assert.match(created.roomCode, /^[A-Z]{4}$/);
+    await admin.until((v) => v.phase === "lobby" && v.quizTitle === "Demo quiz", "admin lobby");
+    const rooms = await ask<{ roomCode: string }[]>("admin:rooms");
+    assert.equal(rooms[0].roomCode, created.roomCode, "the newest room is listed first");
+
+    // ---- Host: the PIN, then the newest open room
+    const hostSocket = await open();
+    const host = new Latest<HostView>();
+    hostSocket.on("host:state", (v) => host.push(v));
+    const hostAuth = (payload: { pin: string; roomCode?: string }) => within(new Promise((r) => hostSocket.emit("host:auth", payload, r)), "host:auth");
+    assert.deepEqual(await hostAuth({ pin: "0000" }), { ok: false, error: "wrong-pin" });
+    assert.deepEqual(await hostAuth({ pin: PIN }), { ok: true, roomCode: created.roomCode });
+    await host.until((v) => v.stage.phase === "lobby" && v.roomCode === created.roomCode, "host lobby");
+    step(`Admin opened room ${created.roomCode} with the Demo quiz; the Host (PIN) shows it`);
+
     const auth = (roomCode: string, pin: string) =>
       within(new Promise((r) => adminSocket.emit("admin:auth", { roomCode, pin }, r)), "admin:auth");
     assert.deepEqual(await auth(created.roomCode, "0000"), { ok: false, error: "wrong-pin" });
@@ -368,8 +429,8 @@ async function main() {
     const host2Socket = await open();
     const host2 = new Latest<HostView>();
     host2Socket.on("host:state", (v) => host2.push(v));
-    const resumed = await within(new Promise((r) => host2Socket.emit("host:resume", created, r)), "host:resume");
-    assert.deepEqual(resumed, { ok: true });
+    const resumed = await within(new Promise((r) => host2Socket.emit("host:auth", { pin: PIN, roomCode: created.roomCode }, r)), "host:auth");
+    assert.deepEqual(resumed, { ok: true, roomCode: created.roomCode });
     await host2.until((v) => v.stage.phase === "podium", "resumed Host shows the podium");
     await command({ type: "setRoomCodeVisible", visible: false });
     await command({ type: "setSound", on: false });

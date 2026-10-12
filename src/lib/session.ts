@@ -8,8 +8,9 @@
  */
 
 export interface HostSession {
-  roomCode: string;
-  hostToken: string;
+  pin: string;
+  /** The room on screen; without it, the projector shows the newest open room. */
+  roomCode?: string;
 }
 
 export interface ParticipantSession {
@@ -18,8 +19,9 @@ export interface ParticipantSession {
 }
 
 export interface AdminSession {
-  roomCode: string;
   pin: string;
+  /** The room this Admin is running; without it, Admin shows the home screen (rooms + quiz library). */
+  roomCode?: string;
 }
 
 function read<T>(storage: () => Storage, key: string): T | null {

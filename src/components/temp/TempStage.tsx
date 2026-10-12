@@ -16,6 +16,7 @@ import { Bot, botDelay } from "@/components/ui/Bot";
 import { Corridor } from "@/components/ui/Corridor";
 import { TimerRing } from "@/components/ui/TimerRing";
 import { displayUrl } from "@/lib/format";
+import { assetUrl } from "@/lib/socket";
 import type { CastMember, FinalistState, HostStage, HostView, ParticipantTag } from "@/shared/protocol";
 import { OPTION_LETTERS } from "@/shared/protocol";
 import { useHostStore } from "@/stores/hostStore";
@@ -216,7 +217,7 @@ function StageBody({ view, stage }: { view: HostView; stage: HostStage }) {
         <>
           <h2 className="host-q host-q-center absolute top-1/2 left-1/2 z-10 w-[70%] !-translate-x-1/2 !-translate-y-1/2">{stage.question.text}</h2>
           {stage.question.image && (
-            <img src={stage.question.image} alt="" className="absolute top-[22%] right-[6%] z-10 h-[20rem] w-[20rem] rounded-[1rem] border border-line bg-panel object-contain p-[1rem]" />
+            <img src={assetUrl(stage.question.image)} alt="" className="absolute top-[22%] right-[6%] z-10 h-[20rem] w-[20rem] rounded-[1rem] border border-line bg-panel object-contain p-[1rem]" />
           )}
           <p className="host-hint absolute inset-x-0 bottom-[31%] z-10 text-center">Read it. Options appear on your phone in a moment.</p>
           <Clock view={view} />
@@ -232,7 +233,7 @@ function StageBody({ view, stage }: { view: HostView; stage: HostStage }) {
         <>
           <h2 className="host-q absolute top-[34%] left-[5%] z-10 w-[42%]">{q.text}</h2>
           {q.image && (
-            <img src={q.image} alt="" className="absolute bottom-[6%] left-[30%] z-10 h-[16rem] w-[16rem] rounded-[1rem] border border-line bg-panel object-contain p-[0.8rem]" />
+            <img src={assetUrl(q.image)} alt="" className="absolute bottom-[6%] left-[30%] z-10 h-[16rem] w-[16rem] rounded-[1rem] border border-line bg-panel object-contain p-[0.8rem]" />
           )}
           {q.options && <Options options={q.options} correct={correct} dimOthers={stage.phase === "r1Reveal" && !stage.voided} />}
           {stage.phase !== "r1Reveal" && (

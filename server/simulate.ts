@@ -4,8 +4,10 @@
  * runs in about a second. Run: npm run simulate
  */
 import assert from "node:assert/strict";
-import { type AdminAction, BOT_HEADS, type CommandResult, PARTICIPANT_COLORS, type Phase } from "../src/shared/protocol";
+import { type AdminAction, BOT_HEADS, type CommandResult, type LibraryQuestion, PARTICIPANT_COLORS, type Phase, type Quiz } from "../src/shared/protocol";
+import { blankQuestion, cleanQuiz, importJson, importRows, importText, parseCsv, quizProblems, quizToCsv } from "../src/shared/quiz";
 import { type GameConfig, PRESETS } from "./config";
+import { quizToGame } from "./library";
 import { loadQuestions, type QuizQuestion } from "./questions";
 import { type Clock, QuizRoom } from "./quiz";
 
@@ -944,6 +946,133 @@ test("page-leave flag counts only while a question is open, and only for Admin",
   assert.equal(g.person(a).leftPageCount, 1);
   assert.equal(g.person(a).pageHidden, true);
   assert.ok(!JSON.stringify(g.phone(a)).includes("leftPage") && !JSON.stringify(g.host()).includes("leftPage"));
+});
+
+// ============================================================================
+// The quiz library: a quiz's own settings and timers, checks, imports
+// ============================================================================
+
+function libraryQuiz(): Quiz {
+  const q = (text: string, extra: Partial<LibraryQuestion> = {}): LibraryQuestion => ({
+    ...blankQuestion(),
+    text,
+    options: [`${text} one`, `${text} two`, `${text} three`, `${text} four`],
+    correct: 1,
+    ...extra,
+  });
+  return {
+    id: "lib",
+    title: "Library test",
+    rules: {
+      round1Questions: 2,
+      round1ReadSeconds: 5,
+      round1AnswerSeconds: 9,
+      finalists: 2,
+      buzzerQuestions: 1,
+      buzzerReadSeconds: 4,
+      buzzWindowSeconds: 11,
+      spokenAnswerSeconds: 7,
+      reopenSeconds: 8,
+    },
+    round1: [q("First"), q("Second", { readSeconds: 3, openSeconds: 20 }), q("Spare")],
+    buzzer: [q("Buzz", { openSeconds: 6 }), q("Buzz spare")],
+    updatedAt: 0,
+  };
+}
+
+test("quiz library: a quiz's own settings and per-question timers reach the game", () => {
+  const quiz = libraryQuiz();
+  assert.deepEqual(quizProblems(quiz), []);
+  const { config, questions } = quizToGame(quiz, PRESETS.event);
+  const g = new Game(config, questions);
+  const ids = ["Riya", "Aadi", "Kabir"].map((n) => g.join(n));
+  assert.equal(g.admin().settings.round1Questions, 2, "plays the first 2; the third is a spare");
+  assert.equal(g.admin().settings.finalistCount, 2);
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  assert.equal(g.admin().timer?.durationMs, 5000, "quiz read time");
+  g.tick();
+  assert.equal(g.admin().timer?.durationMs, 9000, "quiz answer time");
+  ids.forEach((id) => g.answer(id, "correct"));
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "nextQuestion" });
+  assert.equal(g.admin().question?.text, "Second");
+  assert.equal(g.admin().timer?.durationMs, 3000, "question 2's own read time");
+  g.tick();
+  assert.equal(g.admin().timer?.durationMs, 20000, "question 2's own answer time");
+  ids.forEach((id, i) => {
+    g.clock.advance(100 + i * 100);
+    g.answer(id, "correct");
+  });
+  g.do({ type: "revealAnswer" });
+  assert.equal(g.admin().primary?.label, "Show results");
+  assert.ok(g.admin().allowed.includes("endRound1") && !g.admin().allowed.includes("nextQuestion"), "that was the last question played");
+  g.do({ type: "endRound1" });
+  assert.equal(g.admin().finalists.length, 2, "the quiz's finalist count");
+  g.do({ type: "startBuzzerRound" });
+  g.do({ type: "showQuestion" });
+  assert.equal(g.admin().timer?.durationMs, 4000, "buzzer read time");
+  g.tick();
+  assert.equal(g.admin().timer?.durationMs, 6000, "the buzz question's own buzz window");
+  g.buzz(g.admin().finalists[0].id);
+  assert.equal(g.admin().timer?.durationMs, 7000, "spoken answer time");
+  g.do({ type: "markWrong" });
+  assert.equal(g.admin().timer?.durationMs, 8000, "reopen window");
+});
+
+test("quiz library: checks, the three import formats, export round trip, cleaning network input", () => {
+  // Checks
+  const quiz = libraryQuiz();
+  const empty: Quiz = { ...quiz, title: " ", round1: [], buzzer: [] };
+  assert.ok(quizProblems(empty).some((p) => p.includes("title")) && quizProblems(empty).some((p) => p.includes("Round 1 question")));
+  const broken: Quiz = { ...quiz, round1: [{ ...quiz.round1[0], options: ["a", "A", "b", "c"] }, ...quiz.round1.slice(1)] };
+  assert.ok(quizProblems(broken).some((p) => p.includes("must all be different")));
+  assert.ok(quizProblems({ ...quiz, rules: { ...quiz.rules, round1Questions: 9 } }).some((p) => p.includes("the list has 3")));
+
+  // Pasted text: * marks, "Answer: B", "A)" prefixes, # Buzzer section, a block with 3 answers
+  const text = importText(
+    "What does LLM stand for?\n* Large Language Model\nLinear Logic Machine\nLayered Learning Matrix\nLong-term Language Memory\n\n" +
+      "Q2) Pick B\nA) one\nB) two\nC) three\nD) four\nAnswer: B\n\n# Buzzer\nWho makes Claude?\nOpenAI\nAnthropic *\nGoogle\nMeta\n\nOnly three\na\nb\nc",
+    "round1",
+  );
+  assert.equal(text.round1.length, 2);
+  assert.equal(text.round1[0].correct, 0);
+  assert.deepEqual([text.round1[1].text, text.round1[1].options[0], text.round1[1].correct], ["Pick B", "one", 1]);
+  assert.equal(text.buzzer.length, 1);
+  assert.equal(text.buzzer[0].correct, 1);
+  assert.ok(text.problems.length === 1 && text.problems[0].includes("exactly 4 answers"));
+
+  // Spreadsheet (CSV with quotes, commas, a round column and seconds)
+  const csv = 'question,A,B,C,D,correct,round,read seconds,answer seconds\r\n"Comma, ""quoted"" question",w,x,y,z,C,,,12\r\nBuzz one,p,q,r,s,4,buzzer,,\r\nBad row,a,b,c,d,E,,,\r\n';
+  const sheet = importRows(parseCsv(csv), "round1");
+  assert.deepEqual([sheet.round1[0].text, sheet.round1[0].correct, sheet.round1[0].openSeconds], ['Comma, "quoted" question', 2, 12]);
+  assert.deepEqual([sheet.buzzer[0].text, sheet.buzzer[0].correct], ["Buzz one", 3]);
+  assert.ok(sheet.problems.length === 1 && sheet.problems[0].startsWith("Row 4"));
+  assert.ok(importRows([["foo", "bar"], ["1", "2"]], "round1").problems[0].includes("Couldn't find these columns"));
+
+  // JSON: data/questions.json style, and a quiz exported from the editor
+  const json = importJson(JSON.stringify({ questions: [{ text: "J1", options: ["a", "b", "c", "d"], correct: 3, round: 2 }, { text: "J2", options: ["a", "b", "c", "d"], correct: 0 }] }), "round1");
+  assert.deepEqual([json.buzzer[0].text, json.buzzer[0].correct, json.round1[0].text], ["J1", 3, "J2"]);
+  assert.equal(importJson(JSON.stringify(quiz), "round1").round1.length, 3);
+  assert.ok(importJson("{oops", "round1").problems[0].includes("valid JSON"));
+
+  // Export → import gives the same questions back
+  const back = importRows(parseCsv(quizToCsv(quiz)), "round1");
+  assert.deepEqual(back.round1.map((q) => [q.text, q.options, q.correct, q.readSeconds, q.openSeconds]), quiz.round1.map((q) => [q.text, q.options, q.correct, q.readSeconds, q.openSeconds]));
+  assert.deepEqual(back.buzzer.map((q) => q.text), quiz.buzzer.map((q) => q.text));
+
+  // Network input is cleaned: whitespace, lengths, bad image paths, missing rules
+  assert.equal(cleanQuiz("nope", quiz.rules), null);
+  assert.equal(cleanQuiz({ ...quiz, id: "../x" }, quiz.rules), null);
+  const cleaned = cleanQuiz(
+    { id: "c1", title: `  ${"T".repeat(200)}  `, rules: { finalists: 4 }, round1: [{ text: " hi \n there ", options: ["a"], correct: 9, image: "javascript:alert(1)" }] },
+    quiz.rules,
+  )!;
+  assert.equal(cleaned.title.length, 80);
+  assert.equal(cleaned.rules.finalists, 4);
+  assert.equal(cleaned.rules.round1AnswerSeconds, quiz.rules.round1AnswerSeconds, "missing rules fall back");
+  assert.deepEqual([cleaned.round1[0].text, cleaned.round1[0].options, cleaned.round1[0].correct, cleaned.round1[0].image], ["hi there", ["a", "", "", ""], 3, null]);
+  assert.deepEqual(cleaned.buzzer, []);
 });
 
 // ============================================================================
