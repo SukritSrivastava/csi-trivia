@@ -306,6 +306,39 @@ html:has(.host-root) {
   .phone-go:disabled {
     opacity: 0.4;
   }
+  /* The finalist's BUZZ: a huge round solid-mint button (Phase 3 extension, same language as LOCK IN and the clock). */
+  .phone-buzz {
+    display: grid;
+    place-items: center;
+    width: min(72vw, 19rem);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 5px solid var(--color-void);
+    background: var(--color-mint);
+    color: var(--color-void);
+    font-family: var(--font-term);
+    font-size: clamp(3.6rem, 18vw, 5rem);
+    line-height: 1;
+    box-shadow:
+      6px 6px 0 var(--color-mint-soft),
+      0 0 34px rgb(108 240 176 / 0.45);
+    transition:
+      transform 60ms ease-out,
+      box-shadow 60ms ease-out;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .phone-buzz:active:not(:disabled) {
+    transform: translate(4px, 4px) scale(0.97);
+    box-shadow:
+      2px 2px 0 var(--color-mint-soft),
+      0 0 20px rgb(108 240 176 / 0.35);
+  }
+  .phone-buzz:disabled {
+    background: var(--color-line);
+    color: var(--color-fog);
+    box-shadow: none;
+  }
   .phone-result {
     font-family: var(--font-term);
     font-size: 3.2rem;
@@ -696,6 +729,12 @@ html:has(.host-root) {
 @keyframes bot-pulse {
   50% {
     opacity: 0.35;
+  }
+}
+/* Phone "eyes up": the bot bobs upward, pointing the room at the projector. */
+@keyframes eyes-up {
+  50% {
+    transform: translateY(-10px);
   }
 }
 

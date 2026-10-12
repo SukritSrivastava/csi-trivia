@@ -29,9 +29,9 @@ on the **Hermes AI agent**. The **event is within a week of 11 Oct 2026**.
   **`src/shared/protocol.ts`**, and saves results to Supabase. It's what's deployed on Render.
   (Lelouch's first prototype is kept in `archive/ws-backend-v1/`.)
 
-**Where we are:** Phase 1 of 5 is done (engine, contract, game server, tests). The design system
-and bots are in. `/host`, `/play` and `/admin` are temporary pages already styled in the final
-look. Next: run Prompt 1 in `docs/BUILD-PHASES.md` (see §4).
+**Where we are:** Phases 1–4 are done: the design system and bots, Admin (`/admin`), the phones
+(`/play`) and the Host (`/host`), all in the final look. Next: Phase 5 (event-proofing and handover)
+in `docs/BUILD-PHASES.md` (see §4).
 
 ### Read these, in this order
 1. **This file.**
@@ -105,9 +105,9 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 ### 2.1 System picture
 ```
                  ┌──────────────────────────── Next.js app (this repo, port 3000) ───────────────────────────┐
- Projector  ───► │ /host   Host screen      (src/components/temp/TempHost + TempStage → real screens in Ph.4) │
- Phones     ───► │ /play   Participant      (src/components/temp/TempPlay  → real screens in Phase 3)         │
- Quizmaster ───► │ /admin  Admin panel      (src/components/temp/TempAdmin → real panel in Phase 2)           │
+ Projector  ───► │ /host   Host screen      (src/components/host/HostApp + stages/)                           │
+ Phones     ───► │ /play   Participant      (src/components/play/PlayApp + screens)                           │
+ Quizmaster ───► │ /admin  Admin panel      (src/components/admin/AdminApp + panels)                          │
                  │ /       home · /finaldesign.html  approved design reference (static)                       │
                  │   Zustand stores (src/stores/*) ── socket.io-client (src/lib/socket.ts)                    │
                  └───────────────────────────────────────────┬──────────────────────────────────────────────┘
@@ -181,8 +181,9 @@ public/questions/           question images (Host only)
 src/shared/protocol.ts      THE CONTRACT
 src/app/                    routes: / (home), /host, /play, /admin; globals.css; layout.tsx (fonts)
 src/components/ui/          Bot (+botDelay), BotBuilder, Corridor, TimerRing  ← the design system
-src/components/temp/        temporary pages, styled in the final look (replaced in Phases 2–4)
-src/components/host/useJoinUrl.ts   join link for phones (LAN address when the Host is on localhost)
+src/components/host/        the projector (HostApp, parts, stages/, sound)
+src/components/play/        the phones (PlayApp, JoinScreen, LobbyScreen, Round1Screens, BuzzerScreens, parts)
+src/components/admin/       the quizmaster's panel and the quiz library
 src/stores/                 Zustand: hostStore, participantStore, adminStore
 src/lib/                    socket, session, useCountdown, useWakeLock, usePageVisibility, confetti, format, adminLabels
 ```

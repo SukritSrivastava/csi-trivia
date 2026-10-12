@@ -11,6 +11,8 @@ interface BotBuilderProps {
   onPick: (look: BotLook) => void;
   /** Ignore taps while a choice is on its way. */
   busy?: boolean;
+  /** Size of the big preview bot. */
+  previewSize?: string;
 }
 
 /**
@@ -19,7 +21,7 @@ interface BotBuilderProps {
  * for any colour, and nothing is ever taken (100 people can share colours and
  * heads; names tell them apart). The preview hops for a moment after each change.
  */
-export function BotBuilder({ value, onPick, busy = false }: BotBuilderProps) {
+export function BotBuilder({ value, onPick, busy = false, previewSize = "72px" }: BotBuilderProps) {
   const [cheer, setCheer] = useState(false);
   /** The colour under the finger while dragging on the wheel (sent on release). */
   const [draft, setDraft] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export function BotBuilder({ value, onPick, busy = false }: BotBuilderProps) {
   return (
     <div className="flex flex-col gap-3">
       <div className="grid place-items-center py-2">
-        <Bot color={shown} head={value.head} mood={cheer ? "right" : "idle"} size="72px" label="Your bot" />
+        <Bot color={shown} head={value.head} mood={cheer ? "right" : "idle"} size={previewSize} label="Your bot" />
       </div>
 
       <p className="text-sm opacity-75">Colour</p>
@@ -70,9 +72,6 @@ export function BotBuilder({ value, onPick, busy = false }: BotBuilderProps) {
         ))}
       </div>
 
-      <p className="text-sm opacity-75">Or any colour</p>
-      <ColourWheel value={shown} onDrag={setDraft} onDone={finishWheel} disabled={busy} />
-
       <p className="text-sm opacity-75">Head</p>
       <div className="grid grid-cols-4 gap-2" role="group" aria-label="Bot head">
         {BOT_HEADS.map((h) => (
@@ -84,10 +83,13 @@ export function BotBuilder({ value, onPick, busy = false }: BotBuilderProps) {
             aria-label={`${h} head`}
             className="grid place-items-center rounded-lg border-[1.5px] border-transparent px-0.5 pt-2 pb-1 aria-pressed:border-mint aria-pressed:bg-mint/10"
           >
-            <Bot color={shown} head={h} size="30px" />
+            <Bot color={shown} head={h} size="34px" />
           </button>
         ))}
       </div>
+
+      <p className="text-sm opacity-75">Or any colour</p>
+      <ColourWheel value={shown} onDrag={setDraft} onDone={finishWheel} disabled={busy} />
     </div>
   );
 }

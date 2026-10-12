@@ -4,7 +4,7 @@
 skills, agents, plugins, API). This file is the short version.**
 
 Hermes Quiz: a live MCQ quiz for 60–100 people. Rules: `docs/SPEC.md` (v2.1). Build plan:
-`docs/BUILD-PHASES.md` (v4, 5 phases; phase 1, design foundation, phase 2 (Admin) and phase 4 (Host) done; phase 3 (phones) next).
+`docs/BUILD-PHASES.md` (v4, 5 phases; phases 1–4 done (design, Admin, phones, Host); phase 5, event-proofing, next).
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
@@ -35,7 +35,7 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   are in `src/app/globals.css` (`host-q`, `host-opts`, `opt-num`, `host-count`, `phone-opt`,
   `phone-go`, `clock`, `bot`, `corridor-*`). Components: `Bot` + `botDelay`, `BotBuilder`,
   `Corridor`, `TimerRing` in `src/components/ui/`. The old marigold tokens (`plate`, `press`,
-  `bg-paper`, `bg-marigold`…) are unused leftovers (the temporary pages are restyled); delete in Phase 5. `Avatar.tsx` is the old
+  `bg-paper`, `bg-marigold`…) are unused leftovers; delete in Phase 5. `Avatar.tsx` is the old
   initials circle: use `Bot` instead. The Host sizes everything in `rem` (scaled by
   `html:has(.host-root)`, so the Host root element needs the `host-root` class); at 1920 px,
   1% of the screen width is about 1.2rem.
@@ -81,8 +81,13 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   scores, sudden death), PodiumStage. `sound.ts`: Web Audio beeps, unlocked by a click; plays only if
   `view.soundOn` and the Host's own mute is off. Live counters are plain numbers (NumberFlow only for
   scores/percentages, which change once). `npm run host-shots` screenshots every Host state.
-- `src/components/temp/` now only holds the temporary `/play` page (TempPlay + TempKit); replace it
-  in phase 3, then delete the folder.
+- Phones (phase 3): `src/components/play/` (`PlayApp`: connect, wake lock, page visibility, header with
+  "Q1 of 3 · 5s" + mint timer bar, Reconnecting/Paused bands, screen transition keyed by `screenKey`,
+  confetti for the cut/winning/calling it; `JoinScreen`; `LobbyScreen` (BotBuilder + LOCK IN → "You're in",
+  remembered per tab); `Round1Screens` (answer buttons numbered 1–4 in the Host's order, podium, every
+  `Moment` screen); `BuzzerScreens` (backing, the finalist's `phone-buzz` button, the audience view);
+  `parts.tsx`). Phone bot moods follow the phone's own screen state (only the Host uses `HostView.cast`).
+  `/play` sets `viewportFit: "cover"` and pads with the safe-area insets. `src/components/temp/` is gone.
 - `src/css.d.ts` only lets TypeScript accept `import "./globals.css"`.
 
 ## Commands
@@ -104,4 +109,7 @@ read + 8s answer) → top 6 cut → predictions → buzzer round (6 finalists) �
   screenshots every Host state at 1920×1080 and 1366×768, enables sound, reports fps and page errors.
 - `npm run admin-run [-- --bots 80 --out screenshots/x]` (with `npm run dev` running): Playwright drives a
   whole game from Admin (3 devices), 41 checks, screenshots in `screenshots/` (git-ignored).
+- `npm run play-shots [-- --bots 20 --out screenshots/play]` (with `npm run dev`, database off): 4 phone tabs
+  (360/375/390/430 wide) play a whole game with checks (name clash, shared bot, refresh mid-question and
+  mid-buzzer-round, removal, undo) and screenshot every phone state; `compare.png` = design | app.
 - `next dev` appends a Next.js block to `AGENTS.md`; that's expected, keep it committed.
