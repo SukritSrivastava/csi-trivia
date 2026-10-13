@@ -24,7 +24,7 @@ export function HostGate() {
     <main className="host-root relative grid min-h-dvh w-full place-items-center overflow-hidden bg-void font-type text-ghost">
       <Corridor scrim="center" />
       <div className="relative z-10 flex w-[44rem] max-w-[92vw] flex-col items-center gap-[2rem] text-center">
-        <p className="font-term text-[7rem] leading-none text-mint [text-shadow:0_0_1.2rem_var(--color-mint)]">HERMES QUIZ</p>
+        <p className="font-term text-[7rem] leading-none text-mint">HERMES QUIZ</p>
 
         {status !== "online" ? (
           <p className="host-hint">{status === "connecting" ? "Connecting to the game server…" : "Can't reach the game server. Retrying…"}</p>

@@ -26,7 +26,7 @@ export function QuestionCard({ view }: { view: AdminView }) {
           <p className="text-[14px] text-mint-soft">
             {q.suddenDeath ? "Wild card sudden death, question " : `${ROUND_NAME[q.round]}, question `}
             <span className="font-term text-xl leading-none text-amber">{q.number}</span>
-            {!q.suddenDeath && q.count > 0 && (
+            {!q.suddenDeath && !!q.count && (
               <>
                 {" of "}
                 <span className="font-term text-xl leading-none text-amber">{q.count}</span>
@@ -44,7 +44,7 @@ export function QuestionCard({ view }: { view: AdminView }) {
                 }`}
                 data-correct={o.correct || undefined}
               >
-                <span className={`w-6 shrink-0 text-center font-term text-[2rem] leading-none ${o.correct ? "text-mint [text-shadow:0_0_8px_var(--color-mint)]" : "text-amber"}`}>
+                <span className={`w-6 shrink-0 text-center font-term text-[2rem] leading-none ${o.correct ? "text-mint" : "text-amber"}`}>
                   {o.number}
                 </span>
                 <span className="min-w-0 flex-1 text-[16px] leading-snug">{o.text}</span>

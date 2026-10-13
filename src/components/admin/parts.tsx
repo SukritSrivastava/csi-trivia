@@ -99,7 +99,7 @@ export function useConfirm() {
 export function Dot({ on, label }: { on: boolean; label?: string }) {
   return (
     <span
-      className={`inline-block size-2.5 shrink-0 rounded-full ${on ? "bg-mint shadow-[0_0_6px_var(--color-mint)]" : "border-2 border-wrong"}`}
+      className={`inline-block size-2.5 shrink-0 rounded-full ${on ? "bg-mint" : "border-2 border-wrong"}`}
       role={label ? "img" : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}

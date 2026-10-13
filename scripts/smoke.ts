@@ -4,8 +4,10 @@
  * Starts its own game server on a spare port (demo preset, timers sped
  * up), then plays a whole demo quiz the way the browsers would: a Host, an
  * Admin and 5 Participants, driven only through Admin commands: Round 1, the
- * cut, the wild card round, predictions, Blackout and the podium. Checks the
- * key views along the way, including a phone that reconnects mid-question.
+ * cut, the wild card round, predictions, Blackout (one click, then the
+ * autopilot runs it to the podium, with a pause and a double-tapped Skip on the
+ * way) and the podium. Checks the key views along the way, including a phone
+ * that reconnects mid-question.
  * Runs on its own; `npm run dev` doesn't need to be running.
  */
 import assert from "node:assert/strict";
@@ -156,17 +158,18 @@ async function main() {
     const mk = (text: string): LibraryQuestion => ({ id: newId(), text, options: [`${text} A`, `${text} B`, `${text} C`, `${text} D`], correct: 2, image: null, readSeconds: null, openSeconds: 7 });
     const saved = await ask<SaveQuizResult>("library:save", {
       ...made.quiz,
-      rules: { ...made.quiz.rules, round1Questions: 1, safe: 2, wildCardQuestions: 1, blackoutQuestions: 1 },
+      rules: { ...made.quiz.rules, round1Questions: 1, safe: 2, wildCardQuestions: 1 },
       round1: [mk("First"), mk("Spare")],
       wildcard: [mk("Wild")],
-      blackout: [mk("Dark")],
+      // Blackout plays until one runner is left: the demo preset asks for 8 questions.
+      blackout: Array.from({ length: PRESETS.demo.blackout.minQuestions }, (_, i) => mk(`Dark ${i + 1}`)),
     });
     assert.ok(saved.ok && saved.quiz.round1.length === 2 && saved.quiz.round1[0].openSeconds === 7);
     assert.ok((await ask<QuizSummary[]>("library:list")).find((q) => q.id === made.quiz.id)?.problems.length === 0, "now it's ready");
     const smokeRoom = await ask<OpenRoomResult>("admin:openRoom", { quizId: made.quiz.id });
     assert.ok(smokeRoom.ok);
     await admin.until(
-      (v) => v.quizTitle === "Smoke quiz" && v.settings.safeCount === 2 && v.settings.round1Questions === 1 && v.settings.wildCardQuestions === 1 && v.settings.blackoutQuestions === 1,
+      (v) => v.quizTitle === "Smoke quiz" && v.settings.safeCount === 2 && v.settings.round1Questions === 1 && v.settings.wildCardQuestions === 1,
       "the room plays the quiz's own settings",
     );
     assert.deepEqual(await ask("library:delete", { id: made.quiz.id }), { ok: true });
@@ -341,7 +344,7 @@ async function main() {
       }
     }
     const zoyaScore = admin.value!.participants.find((p) => p.id === zoya.id)!.score;
-    assert.ok(zoyaScore > 1000, "Zoya kept her points through the reconnect");
+    assert.ok(zoyaScore > 200 && zoyaScore <= 600, "Zoya kept her points through the reconnect (100–200 a question)");
     step("Round 1: 3 questions, early time's up, reveal, results, leaderboard");
 
     await command({ type: "endRound1" });
@@ -414,48 +417,63 @@ async function main() {
       "head starts: the top 3 +2, the wild card 0",
     );
     await kabir.until((s) => s.kind === "runnerStatus" && s.alive && s.headStart === 0, "Kabir ready, no head start");
+    // The only Blackout click was Start Blackout: the flow buttons are refused from here on.
+    const rawCommand = (action: AdminAction, stepId = admin.value!.stepId) =>
+      within(new Promise<CommandResult>((r) => adminSocket.emit("admin:command", { stepId, action }, r)), `admin:command ${action.type}`);
+    for (const type of ["showQuestion", "revealAnswer", "advanceDarkness", "nextQuestion", "showWinner"] as const) {
+      assert.deepEqual(await rawCommand({ type }), { ok: false, reason: "not-allowed" }, `${type} is refused during the autopilot`);
+    }
+    assert.equal(admin.value!.primary?.label, "Pause");
     let sawBack = false;
     let sawCatch = false;
+    let pausedOnce = false;
+    let skippedOnce = false;
+    let lastQuestion = "";
     let q = 0;
-    while (admin.value!.phase !== "podium") {
+    for (;;) {
+      const v = await admin.until((x) => x.phase === "podium" || x.phase === "boWinner" || (x.phase === "boAnswer" && x.question?.id !== lastQuestion), "the next Blackout question (autopilot)");
+      if (v.phase !== "boAnswer") break;
       q += 1;
-      assert.ok(q <= 6, "Blackout ends within its 6 questions");
-      await command({ type: q === 1 ? "showQuestion" : "nextQuestion" });
-      await phase("boRead");
-      await phase("boAnswer");
-      const alive = new Set(admin.value!.blackout!.runners.filter((r) => r.alive).map((r) => r.id));
+      assert.ok(q <= 8, "Blackout ends within its 8 questions");
+      lastQuestion = v.question!.id;
+      assert.ok(v.autopilot?.running && v.autopilot.step === "answer" && v.darkPreview !== null, "Admin sees the autopilot and the catch preview");
+      const alive = new Set(v.blackout!.runners.filter((r) => r.alive).map((r) => r.id));
       if (alive.has(riya.id)) await answer(riya, true);
       if (alive.has(aadi.id)) await answer(aadi, q <= 2);
       if (alive.has(zoya.id)) await answer(zoya, false);
       if (alive.has(kabir.id) && q > 1) await answer(kabir, false);
-      await phase("boTimesUp");
-      await command({ type: "revealAnswer" });
-      const reveal = await phase("boReveal");
+      const reveal = await phase("boReveal", (x) => x.question?.id === lastQuestion);
       const zr = reveal.blackout!.runners.find((r) => r.id === zoya.id)!;
       if (zr.alive && zr.delta === -1) {
         sawBack = true;
         const zs = (await zoya.until("runnerResult")).screen;
         assert.ok(zs.kind === "runnerResult" && zs.outcome === "wrong" && zs.delta === -1 && !!zs.correctText);
       }
-      const darkStep = admin.value!.stepId;
-      await command({ type: "advanceDarkness" });
-      const dark = await phase("boDark");
-      const twice = await within(
-        new Promise((r) => adminSocket.emit("admin:command", { stepId: darkStep, action: { type: "advanceDarkness" } }, r)),
-        "double advance",
-      );
-      assert.deepEqual(twice, { ok: false, reason: "stale-step" }, "the dark never moves twice");
+      if (!skippedOnce && admin.value!.phase === "boReveal") {
+        // A double-tapped Skip ends the reveal's hold once, never two steps.
+        const at = admin.value!.stepId;
+        const taps = await Promise.all([rawCommand({ type: "skipTimer" }, at), rawCommand({ type: "skipTimer" }, at)]);
+        assert.equal(taps.filter((r) => r.ok).length, 1, "a double-tapped Skip counts once");
+        skippedOnce = true;
+      }
+      const dark = await phase("boDark", (x) => x.question?.id === lastQuestion);
+      if (!pausedOnce) {
+        // Pause in the dark's hold: every screen freezes; Resume carries on from the same moment.
+        await command({ type: "pause" });
+        await host.until((x) => x.paused && x.stage.phase === "boDark", "the Host shows paused");
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.equal(admin.value!.phase, "boDark", "nothing moves while paused");
+        await command({ type: "resume" });
+        pausedOnce = true;
+      }
       if (dark.blackout!.caughtThisQuestion.length) sawCatch = true;
       if (dark.blackout!.caughtThisQuestion.includes(zoya.id)) {
-        const zs = (await zoya.until((s) => s.kind === "runnerStatus" && !s.alive, "Zoya caught")).screen;
+        const zs = (await zoya.until((x) => x.kind === "runnerStatus" && !x.alive, "Zoya caught")).screen;
         assert.ok(zs.kind === "runnerStatus" && zs.caughtNow && zs.place !== null);
       }
-      if (dark.blackout!.over) {
-        assert.equal(dark.primary?.label, "Show winner");
-        await command({ type: "showWinner" });
-        await phase("podium");
-      }
     }
+    await phase("podium");
+    assert.ok(pausedOnce && skippedOnce, "paused, resumed and skipped once on the way");
     assert.ok(sawBack, "a wrong answer moved a runner back");
     assert.ok(sawCatch, "the dark caught someone");
     const podium = await host.until((v) => v.stage.phase === "podium", "podium");
@@ -465,7 +483,7 @@ async function main() {
     assert.ok(riyaP.kind === "podium" && riyaP.place === 1);
     const devP = lines[4].screen;
     assert.ok(devP.kind === "podium" && devP.calledIt === true && devP.place === null, "Dev called it");
-    step(`Blackout: ${q} questions, a wrong answer moved Zoya back, the dark caught runners, Riya won; Dev called it`);
+    step(`Blackout: one click, then the autopilot ran ${q} questions to the podium (paused and resumed once, a double Skip counted once); Zoya moved back, the dark caught runners, Riya won; Dev called it`);
 
     // ---- Results, Host refresh, toggles
     const results = await within(new Promise<{ csv: string; filename: string } | null>((r) => adminSocket.emit("admin:results", r)), "CSV");

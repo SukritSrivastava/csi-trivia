@@ -1,13 +1,16 @@
 /**
- * Tunes Blackout (docs/SPEC.md v3): simulates thousands of chases for every
+ * Tunes Blackout (docs/SPEC.md v3.1): simulates thousands of chases for every
  * candidate BASE_GAP and DARKNESS_STEPS pattern and prints the best five.
+ * Blackout runs on autopilot until one runner is left, so a chase plays until
+ * it's decided or the available questions run out (15 at the event).
  *
  *   npm run tune-blackout [-- --chases 20000]
  *
  * Model: each runner has an accuracy (40–85%, the better Round 1 ranks skewed
- * higher, the wild card mid-table), a speed profile (how its correct answers
- * split across the first / middle / last third of the answer time) and a small
- * chance of not answering. The moves, catches and end rules are the ones in
+ * higher, the wild card mid-table) and a typical answer time in seconds (2–6 s,
+ * spread around it per question). An answer later than the 10 s window is a
+ * miss; a few questions get no answer at all. The +3/+2/+1 thirds are of the
+ * 10 s window. The moves, catches and end rules are the ones in
  * server/quiz.ts. The chosen values go into server/config.ts by hand.
  */
 
@@ -16,6 +19,8 @@ function arg(name: string, fallback: string) {
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 const CHASES = Number(arg("chases", "20000"));
+/** The answer window (docs/SPEC.md v3.1: 10 s in Blackout). */
+const WINDOW_MS = 10_000;
 
 /** Small, fast, seeded random numbers (mulberry32), so runs are repeatable. */
 function rng(seed: number) {
@@ -31,9 +36,9 @@ function rng(seed: number) {
 
 interface RunnerModel {
   accuracy: number;
-  /** Cumulative chance a correct answer lands in the first / first-or-middle third. */
-  fast: number;
-  fastOrMid: number;
+  /** Typical answer time, ms. */
+  medianMs: number;
+  /** Chance of not answering at all (looked away, phone locked). */
   miss: number;
   headStart: number;
   /** "top3" | "safe" | "wildCard" */
@@ -51,14 +56,11 @@ function makeField(random: () => number, safe: number): RunnerModel[] {
     // Better Round 1 ranks answer better; the wild card is mid-table (it beat the rest).
     const centre = wildCard ? wildCardAccuracy : 0.82 - ((rank - 1) / Math.max(1, safe - 1)) * 0.22;
     const accuracy = Math.min(0.85, Math.max(0.4, centre + (random() - 0.5) * 0.24));
-    // Speed: some answer fast, some slow. Shares of correct answers in each third.
-    const fastShare = 0.2 + random() * 0.5;
-    const midShare = (1 - fastShare) * (0.4 + random() * 0.4);
     field.push({
       accuracy,
-      fast: fastShare,
-      fastOrMid: fastShare + midShare,
-      miss: 0.03 + random() * 0.05,
+      // Some answer fast, some slow: 2–6 s typical.
+      medianMs: 2_000 + random() * 4_000,
+      miss: 0.02 + random() * 0.03,
       headStart: wildCard ? 0 : rank <= 3 ? 2 : 1,
       group: wildCard ? "wildCard" : rank <= 3 ? "top3" : "safe",
     });
@@ -74,6 +76,11 @@ interface ChaseResult {
   reachedEndWith3Plus: boolean;
   everyoneAtOnce: boolean;
   winnerGroup: string;
+}
+
+/** A standard normal number (Box–Muller). */
+function gauss(random: () => number) {
+  return Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
 }
 
 function runChase(field: RunnerModel[], baseGap: number, darkness: number[], questions: number, random: () => number): ChaseResult {
@@ -92,19 +99,17 @@ function runChase(field: RunnerModel[], baseGap: number, darkness: number[], que
     for (let i = 0; i < field.length; i++) {
       if (!alive[i]) continue;
       const r = field[i];
-      const roll = random();
-      if (roll < r.miss) {
-        time[i] += 8000;
+      const t = r.medianMs * Math.exp(0.45 * gauss(random));
+      if (random() < r.miss || t >= WINDOW_MS) {
+        time[i] += WINDOW_MS;
         continue;
       }
       if (random() < r.accuracy) {
-        const s = random();
-        const third = s < r.fast ? 0 : s < r.fastOrMid ? 1 : 2;
-        pos[i] += 3 - third;
-        time[i] += third * 2667 + random() * 2666;
+        pos[i] += t < WINDOW_MS / 3 ? 3 : t < (2 * WINDOW_MS) / 3 ? 2 : 1;
+        time[i] += t;
       } else {
         pos[i] = Math.max(0, pos[i] - 1);
-        time[i] += 8000;
+        time[i] += WINDOW_MS;
       }
     }
     for (let i = 0; i < field.length; i++) beforeDark[i] = pos[i];
@@ -158,7 +163,12 @@ interface Candidate {
 
 function candidates(questions: number): Candidate[] {
   const out: Candidate[] = [];
-  const seq = (f: (q: number) => number) => Array.from({ length: questions }, (_, i) => f(i + 1));
+  // The last value repeats past the end, so the list stops at its last change.
+  const seq = (f: (q: number) => number) => {
+    const steps = Array.from({ length: questions }, (_, i) => f(i + 1));
+    while (steps.length > 1 && steps[steps.length - 1] === steps[steps.length - 2]) steps.pop();
+    return steps;
+  };
   const patterns: { label: string; steps: number[] }[] = [];
   for (const c of [1, 2]) patterns.push({ label: `constant ${c}`, steps: seq(() => c) });
   for (let k = 2; k <= Math.min(8, questions); k++) patterns.push({ label: `1, then 2 from Q${k}`, steps: seq((q) => (q < k ? 1 : 2)) });
@@ -186,6 +196,8 @@ interface Stats {
   endMedian: number;
   end9to11: number;
   reachEnd3Plus: number;
+  /** 3+ still running after question 12 (or the last question). */
+  alive3After12: number;
   everyoneAtOnce: number;
   wins: Record<string, number>;
   score: number;
@@ -205,10 +217,12 @@ function evaluate(c: Candidate, safe: number, questions: number, chases: number,
   let end9to11 = 0;
   let reach3 = 0;
   let atOnce = 0;
+  let after12_3 = 0;
   const wins: Record<string, number> = { top3: 0, safe: 0, wildCard: 0 };
   for (let i = 0; i < chases; i++) {
     const field = makeField(random, safe);
     const r = runChase(field, c.baseGap, c.darkness, questions, random);
+    if (r.aliveAfter[Math.min(12, questions)] >= 3) after12_3++;
     firsts.push(r.firstCatch ?? questions + 1);
     if (r.firstCatch !== null && targets.firstCatch.includes(r.firstCatch)) firstCatch34++;
     after6.push(r.aliveAfter[Math.min(6, questions)] ?? 0);
@@ -229,6 +243,7 @@ function evaluate(c: Candidate, safe: number, questions: number, chases: number,
     endMedian: median(ends),
     end9to11: pct(end9to11),
     reachEnd3Plus: pct(reach3),
+    alive3After12: pct(after12_3),
     everyoneAtOnce: pct(atOnce),
     wins: { top3: pct(wins.top3), safe: pct(wins.safe), wildCard: pct(wins.wildCard) },
     score: 0,
@@ -239,7 +254,8 @@ function evaluate(c: Candidate, safe: number, questions: number, chases: number,
     (100 - s.firstCatch34) * 0.5 +
     miss(s.aliveAfter6Median, targets.alive6[0], targets.alive6[1]) * 20 +
     (100 - s.end9to11) * 0.5 +
-    Math.max(0, s.reachEnd3Plus - 10) * 3 +
+    Math.max(0, s.reachEnd3Plus - 5) * 3 +
+    Math.max(0, s.alive3After12 - 5) * 3 +
     Math.max(0, s.everyoneAtOnce - 5) * 4 +
     Math.max(0, 5 - s.wins.wildCard) * 6;
   return s;
@@ -259,7 +275,7 @@ function tune(name: string, safe: number, questions: number, chases: number, tar
     .slice(0, 25)
     .map((s) => evaluate(s.c, safe, questions, chases, targets))
     .sort((a, b) => a.score - b.score);
-  console.log(`\n${name}: ${safe + 1} runners, ${questions} questions, ${chases.toLocaleString()} chases per candidate (${all.length} candidates)\n`);
+  console.log(`\n${name}: ${safe + 1} runners, up to ${questions} questions (10 s answers), ${chases.toLocaleString()} chases per candidate (${all.length} candidates)\n`);
   console.log(
     [
       "  #".padEnd(4),
@@ -269,6 +285,7 @@ function tune(name: string, safe: number, questions: number, chases: number, tar
       "alive@Q6".padEnd(9),
       "ends Q".padEnd(7),
       `1–2 left Q${targets.endWindow.join("–")}`.padEnd(15),
+      "3+ @Q12".padEnd(8),
       "end 3+".padEnd(7),
       "all-at-once".padEnd(12),
       "wins top3/4–9/wild",
@@ -284,6 +301,7 @@ function tune(name: string, safe: number, questions: number, chases: number, tar
         String(s.aliveAfter6Median).padEnd(9),
         String(s.endMedian).padEnd(7),
         `${s.end9to11.toFixed(0)}%`.padEnd(15),
+        `${s.alive3After12.toFixed(1)}%`.padEnd(8),
         `${s.reachEnd3Plus.toFixed(1)}%`.padEnd(7),
         `${s.everyoneAtOnce.toFixed(1)}%`.padEnd(12),
         `${s.wins.top3.toFixed(0)}% / ${s.wins.safe.toFixed(0)}% / ${s.wins.wildCard.toFixed(1)}%`,
@@ -306,5 +324,5 @@ function tune(name: string, safe: number, questions: number, chases: number, tar
   console.log(`\n  Chosen for ${name}: baseGap ${best.c.baseGap}, darkness [${best.c.darkness.join(", ")}]`);
 }
 
-tune("Event", 9, 12, CHASES, { firstCatch: [3, 4], alive6: [4, 6], endWindow: [9, 11] });
-tune("Demo", 3, 6, Math.max(2000, Math.round(CHASES / 4)), { firstCatch: [2, 3], alive6: [0, 1], endWindow: [4, 6] });
+tune("Event", 9, 15, CHASES, { firstCatch: [3, 4], alive6: [4, 6], endWindow: [9, 11] });
+tune("Demo", 3, 8, Math.max(2000, Math.round(CHASES / 4)), { firstCatch: [2, 3], alive6: [0, 1], endWindow: [4, 6] });

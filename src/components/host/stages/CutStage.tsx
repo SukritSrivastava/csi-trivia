@@ -2,7 +2,7 @@
 
 /**
  * End of Round 1: the ranked list with each bot; an alarm-red cut line under
- * the last safe seat. Above it the safe finalists glow (mood right, from the
+ * the last safe seat. Above it the safe finalists light up (mood right, from the
  * server); below it the wild card players wait (mood idle: nobody is out yet).
  * Big rooms: everyone past the shown rows sits in a small strip. Fewer players
  * than safe seats + 1: everyone is through, no line.
@@ -41,10 +41,9 @@ export function CutStage({ view, stage }: { view: HostView; stage: CutStageData 
       transition={{ delay: (isBelow ? safe.length + i : i) * 0.05 }}
     >
       <span className="w-[4.4rem] text-right font-term text-[3.4rem] leading-none text-amber">{s.rank}</span>
-      <span className={!isBelow && lineDrawn ? "drop-shadow-[0_0_1rem_var(--color-mint)]" : ""}>
-        <Bot color={s.color} head={s.head} mood={mood(s.id)} size="3.8rem" delay={botDelay(s.id)} />
-      </span>
-      <span className="host-name min-w-0 flex-1 truncate !text-[2.3rem]">{s.name}</span>
+      <Bot color={s.color} head={s.head} mood={mood(s.id)} size="3.8rem" delay={botDelay(s.id)} />
+      {/* Above the cut: mint names (flat, no glow). */}
+      <span className={`host-name min-w-0 flex-1 truncate !text-[2.3rem] ${!isBelow && lineDrawn ? "!text-mint" : ""}`}>{s.name}</span>
       <span className="font-term text-[3.2rem] leading-none text-bright">{s.score}</span>
     </motion.li>
   );
@@ -59,7 +58,7 @@ export function CutStage({ view, stage }: { view: HostView; stage: CutStageData 
           {/* The cut line: draws itself left to right, then pulses gently. */}
           <div aria-hidden className="flex w-[92%] shrink-0 justify-start">
             <div
-              className="h-[0.6rem] rounded-full bg-alarm shadow-[0_0_1.8rem_var(--color-alarm)]"
+              className="h-[0.6rem] rounded-full bg-alarm"
               style={{
                 width: lineDrawn ? "100%" : "0%",
                 transition: "width 0.6s cubic-bezier(0.65, 0, 0.35, 1)",

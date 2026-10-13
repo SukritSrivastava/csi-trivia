@@ -15,7 +15,7 @@ export function TopBar({ view, clockOffset, status }: { view: AdminView; clockOf
   const low = countdown !== null && countdown.seconds <= 3 && !view.paused;
 
   return (
-    <header className="sticky top-0 z-20 border-b border-line bg-void/95 backdrop-blur-sm">
+    <header className="sticky top-0 z-20 border-b border-line bg-void ">
       <div className="flex items-center gap-3 px-4 pt-3 pb-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[14px] text-fog">
@@ -54,7 +54,7 @@ export function TopBar({ view, clockOffset, status }: { view: AdminView; clockOf
       {view.paused && (
         <div className="relative overflow-hidden bg-alarm py-1.5 text-center" role="status" data-testid="paused">
           <span
-            className="absolute inset-0 animate-[corridor-alarm_3.2s_infinite] bg-[radial-gradient(ellipse_at_50%_0%,rgb(255_77_94/0.9),transparent_70%)]"
+            className="absolute inset-0 animate-[corridor-alarm_3.2s_infinite] bg-wrong/70"
             aria-hidden
           />
           <span className="relative font-term text-[2rem] leading-none tracking-[0.2em] text-ghost">PAUSED</span>

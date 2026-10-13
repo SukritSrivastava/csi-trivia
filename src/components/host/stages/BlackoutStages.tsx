@@ -31,7 +31,7 @@ function Track({ bo, showMoves }: { bo: BlackoutState; showMoves: boolean }) {
           <div className="relative h-full flex-1 overflow-visible rounded-[0.6rem] border border-line bg-rack/70">
             {/* the dark */}
             <motion.div
-              className="absolute inset-y-0 left-0 rounded-l-[0.6rem] bg-alarm/45 shadow-[0_0_1.6rem_var(--color-alarm)]"
+              className="absolute inset-y-0 left-0 rounded-l-[0.6rem] bg-alarm/45"
               initial={{ width: pct(bo.darkFrom) }}
               animate={{ width: pct(bo.dark) }}
               transition={{ duration: 1.1, ease: [0.65, 0, 0.35, 1], delay: 0.2 }}
@@ -81,6 +81,24 @@ export function BlackoutRevealStage({ view, stage }: { view: HostView; stage: St
       />
       <Track bo={stage.blackout} showMoves={!stage.voided} />
       <p className="host-hint !text-[2.2rem]">The dark moves {stage.voided ? "not at all" : "next"}.</p>
+    </Panel>
+  );
+}
+
+/** The winner moment (the autopilot holds it 7 s, then the podium). */
+export function BlackoutWinnerStage({ view, stage }: { view: HostView; stage: Stage<"boWinner"> }) {
+  const bo = stage.blackout;
+  const w = bo.runners.find((r) => r.id === bo.winner?.id);
+  return (
+    <Panel top={contentTop(view.cast.length)} className="!gap-[1.6rem]">
+      <TypeOut className="host-banner text-center" text={w ? `> ${w.name.toLowerCase()} escapes the dark` : "> the chase is over"} />
+      {w && (
+        <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}>
+          <Bot color={w.color} head={w.head} mood={w.mood} size="16rem" delay={botDelay(w.id)} label={w.name} />
+        </motion.div>
+      )}
+      {w && <Heading size="6rem">{w.name}</Heading>}
+      <p className="host-hint !text-[2.2rem]">Last bot running. The podium is next.</p>
     </Panel>
   );
 }

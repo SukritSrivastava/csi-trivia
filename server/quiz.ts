@@ -1,12 +1,14 @@
 /**
- * One quiz room: every rule from docs/SPEC.md (v3), with no socket code, so it
+ * One quiz room: every rule from docs/SPEC.md (v3.1), with no socket code, so it
  * can be tested on its own (npm run simulate).
  *
  * Three rounds: Round 1 (everyone, points), the wild card round (everyone
  * outside the top 9, most correct answers wins the 10th seat) and Blackout (the
  * 10 finalists race a darkness down the corridor). Every answer is a phone tap,
  * marked here; the quizmaster only moves the steps along (`command()`).
- * Timers only run where SPEC says so, and when one ends the room holds.
+ * Round 1 and the wild card: timers only run where SPEC says so, and when one
+ * ends the room holds. Blackout runs on autopilot: after Start Blackout every
+ * step is a timer (a step or a hold) that starts the next one, until the podium.
  *
  * Views are built on demand (hostView, participantView, adminView). Derived
  * data (rankings, standings) is cached until the next change, so building 100
@@ -21,6 +23,7 @@ import {
   type AdminQuestion,
   type AdminView,
   type AnswerOption,
+  type AutopilotState,
   type Backing,
   type BlackoutState,
   BOT_HEADS,
@@ -29,6 +32,7 @@ import {
   type BotResult,
   type CommandResult,
   type Counts,
+  type DarkPreview,
   type FinalistInfo,
   type HostStage,
   type HostView,
@@ -59,7 +63,7 @@ import {
   type WildCardStanding,
   type WildCardState,
 } from "../src/shared/protocol";
-import { darknessStep, type GameConfig } from "./config";
+import { darknessStep, type GameConfig, round1Points } from "./config";
 import { pickRound, type QuizQuestion } from "./questions";
 
 // ============================================================================
@@ -244,7 +248,7 @@ const R1_PHASES: Phase[] = ["r1Intro", ...R1_QUESTION_PHASES];
 const WC_QUESTION_PHASES: Phase[] = ["wcRead", "wcAnswer", "wcTimesUp", "wcReveal", "wcStandings"];
 const WC_PHASES: Phase[] = ["wcIntro", ...WC_QUESTION_PHASES];
 const BO_QUESTION_PHASES: Phase[] = ["boRead", "boAnswer", "boTimesUp", "boReveal", "boDark"];
-const BO_PHASES: Phase[] = ["boIntro", ...BO_QUESTION_PHASES];
+const BO_PHASES: Phase[] = ["boIntro", ...BO_QUESTION_PHASES, "boWinner"];
 const READ_PHASES: Phase[] = ["r1Read", "wcRead", "boRead"];
 const ANSWER_PHASES: Phase[] = ["r1Answer", "wcAnswer", "boAnswer"];
 const TIMES_UP_PHASES: Phase[] = ["r1TimesUp", "wcTimesUp", "boTimesUp"];
@@ -298,13 +302,13 @@ export class QuizRoom {
   /** The first Blackout question has been shown: seats are final. */
   private boLocked = false;
   private boNext = 0;
-  /** Planned Blackout questions started (voids give their number back). */
+  /** Blackout questions started (voids give their number back). */
   private boNumber = 0;
   private dark = 0;
   private darkFrom = 0;
   private caughtThisQuestion: string[] = [];
   private boOver = false;
-  /** Ran out of questions (voids ate the spares). */
+  /** Ran out of questions with 2+ still running (furthest ahead wins). */
   private boOutOfQuestions = false;
 
   // Podium (frozen when shown)
@@ -335,7 +339,9 @@ export class QuizRoom {
     const reuse = config.name === "demo";
     this.round1Questions = pickRound(questions, 1, config.round1.questions, used, reuse);
     this.wildQuestions = pickRound(questions, 2, config.wildCard.questions + config.wildCard.suddenDeathMax, used, reuse);
-    this.blackoutQuestions = pickRound(questions, 3, config.blackout.questions + config.blackout.spares, used, reuse);
+    // Blackout plays every question it can get, until one runner is left (the demo cycles its few).
+    const boCount = reuse ? Math.max(config.blackout.minQuestions, questions.filter((q) => q.round === 3).length) : Number.MAX_SAFE_INTEGER;
+    this.blackoutQuestions = pickRound(questions, 3, boCount, used, reuse);
   }
 
   get stepId() {
@@ -648,9 +654,6 @@ export class QuizRoom {
       this.beginQuestion(2, this.wcNext++, number, suddenDeath);
       return;
     }
-    this.boLocked = true;
-    this.boNumber += 1;
-    this.beginQuestion(3, this.boNext++, this.boNumber, false);
   }
 
   private beginQuestion(round: RoundNumber, index: number, number: number, suddenDeath: boolean) {
@@ -695,10 +698,11 @@ export class QuizRoom {
   private timesUp() {
     const run = this.run!;
     if (run.round === 1) this.scoreRound1(run);
-    this.go(run.round === 1 ? "r1TimesUp" : run.round === 2 ? "wcTimesUp" : "boTimesUp");
+    if (run.round === 3) return this.go("boTimesUp", this.config.blackout.holds.timesUpMs, () => this.reveal());
+    this.go(run.round === 1 ? "r1TimesUp" : "wcTimesUp");
   }
 
-  /** Reveal answer: Round 1 was scored at time's up; the wild card and Blackout apply here. */
+  /** Reveal answer: Round 1 was scored at time's up; the wild card and Blackout apply here (Blackout: by the autopilot). */
   private reveal() {
     const run = this.run!;
     if (run.round === 1) return this.go("r1Reveal");
@@ -707,7 +711,8 @@ export class QuizRoom {
       return this.go("wcReveal");
     }
     this.moveRunners(run);
-    this.go("boReveal");
+    const h = this.config.blackout.holds;
+    this.go("boReveal", h.revealMs + h.revealPerRunnerMs * this.aliveRunners().length, () => this.advanceDarkness());
   }
 
   private questionsFor(round: RoundNumber) {
@@ -732,9 +737,8 @@ export class QuizRoom {
   // Round 1
   // ==========================================================================
 
-  /** correct = round(min + (max − min) × (1 − elapsed / limit)); wrong or none = 0. */
+  /** correct = round(200 − 100 × elapsed / limit) (round1Points in config.ts); wrong or none = 0. */
   private scoreRound1(run: Run) {
-    const { maxPoints, minCorrectPoints } = this.config.scoring;
     const rankBefore = new Map(this.round1Ranking().map((p, i) => [p.id, i + 1]));
     const records: AnswerRecord[] = [];
     for (const p of this.participants) {
@@ -744,10 +748,7 @@ export class QuizRoom {
       let timeMs = run.limitMs;
       if (a) {
         timeMs = a.elapsedMs;
-        if (a.optionIndex === run.question.correct) {
-          const speed = 1 - Math.min(1, a.elapsedMs / run.limitMs);
-          points = Math.round(minCorrectPoints + (maxPoints - minCorrectPoints) * speed);
-        }
+        if (a.optionIndex === run.question.correct) points = round1Points(a.elapsedMs, run.limitMs);
       }
       p.prevRank = p.hasRank ? rankBefore.get(p.id) ?? null : null;
       p.hasRank = true;
@@ -925,11 +926,42 @@ export class QuizRoom {
   // Blackout
   // ==========================================================================
 
-  /** Start Blackout: every finalist on the track at BASE_GAP + their head start. */
+  /** Start Blackout: every finalist on the track at BASE_GAP + their head start. From here the autopilot runs. */
   private startBlackout() {
     this.boStarted = true;
     this.placeRunners();
-    this.go("boIntro");
+    this.go("boIntro", this.config.blackout.holds.introMs, () => this.nextBlackoutQuestion());
+  }
+
+  /** Autopilot: the next Blackout question, or the end if one (or no) runner is left or the questions ran out. */
+  private nextBlackoutQuestion() {
+    if (this.boLocked && this.aliveRunners().length <= 1) return this.winnerMoment();
+    if (this.runners().length === 0) return this.finish("blackout");
+    if (this.boNext >= this.blackoutQuestions.length) {
+      // Out of questions with 2+ running: the one furthest ahead wins.
+      this.boOutOfQuestions = true;
+      return this.winnerMoment();
+    }
+    this.boLocked = true;
+    this.boNumber += 1;
+    this.beginQuestion(3, this.boNext++, this.boNumber, false);
+  }
+
+  /** Autopilot: after the dark's hold (or a voided question), the winner or the next question. */
+  private afterDark() {
+    if (this.boOver || this.aliveRunners().length <= 1) return this.winnerMoment();
+    this.nextBlackoutQuestion();
+  }
+
+  /** The chase is decided: the winner on screen for a moment, then the podium by itself. */
+  private winnerMoment() {
+    this.boOver = true;
+    this.cache.clear();
+    this.go("boWinner", this.config.blackout.holds.winnerMs, () => this.finish("blackout"));
+  }
+
+  private aliveRunners(): Participant[] {
+    return this.runners().filter((p) => p.runner!.alive);
   }
 
   private placeRunners() {
@@ -979,7 +1011,7 @@ export class QuizRoom {
     this.changed();
   }
 
-  /** Advance the darkness: the dark moves; everyone at or behind it is caught. Then: is it over? */
+  /** Autopilot, after the reveal's hold: the dark moves; everyone at or behind it is caught. Then: is it over? */
   private advanceDarkness() {
     const run = this.run!;
     this.darkFrom = this.dark;
@@ -997,15 +1029,15 @@ export class QuizRoom {
     }
     this.caughtThisQuestion = caught;
     this.checkBlackoutOver();
-    this.go("boDark");
+    const h = this.config.blackout.holds;
+    const steps = this.dark - this.darkFrom;
+    this.go("boDark", h.darkMs + h.darkPerStepMs * steps + (caught.length ? h.darkCaughtMs : 0), () => this.afterDark());
   }
 
-  /** Over when one (or no) runner is left, or after the last planned question, or out of questions. */
+  /** Over when one (or no) runner is left, or the questions ran out. */
   private checkBlackoutOver() {
-    const alive = this.runners().filter((p) => p.runner!.alive).length;
-    const lastPlanned = this.boNumber >= this.config.blackout.questions;
     this.boOutOfQuestions = this.boNext >= this.blackoutQuestions.length;
-    this.boOver = alive <= 1 || lastPlanned || this.boOutOfQuestions;
+    this.boOver = this.aliveRunners().length <= 1 || this.boOutOfQuestions;
   }
 
   /**
@@ -1104,7 +1136,7 @@ export class QuizRoom {
   /**
    * Void: the question doesn't count. Round 1: dropped. Wild card: the next
    * unused question takes its number. Blackout: no moves, the dark doesn't
-   * move; the next spare takes its number.
+   * move; "cancelled" for a moment, then the next question takes its number.
    */
   private voidQuestion() {
     const run = this.run!;
@@ -1130,11 +1162,7 @@ export class QuizRoom {
       p.runner!.delta = 0;
       p.runner!.from = p.runner!.position;
     }
-    if (this.boNext >= this.blackoutQuestions.length) {
-      this.boOutOfQuestions = true;
-      this.boOver = true;
-    }
-    this.go("boReveal");
+    this.go("boReveal", this.config.blackout.holds.voidMs, () => this.afterDark());
   }
 
   /** Restart question: undo everything it did and play it again from its read step, with fresh ids. */
@@ -1186,12 +1214,13 @@ export class QuizRoom {
       this.go("wcIntro");
       return;
     }
-    // Blackout: back to the start positions.
+    // Blackout: back to the start positions; the autopilot starts again from the intro.
     this.run = null;
     this.boNext = 0;
     this.boNumber = 0;
+    this.boLocked = false;
     this.placeRunners();
-    this.go("boIntro");
+    this.go("boIntro", this.config.blackout.holds.introMs, () => this.nextBlackoutQuestion());
   }
 
   private remove(id: string) {
@@ -1211,7 +1240,11 @@ export class QuizRoom {
       this.sudden.alive = this.sudden.alive.filter((x) => x !== id);
       if (this.sudden.alive.length <= 1 && (this.phase === "wcReveal" || this.phase === "wcStandings")) this.decideWildCard();
     }
-    if (was === "finalist" && this.boLocked && (this.phase === "boReveal" || this.phase === "boDark")) this.checkBlackoutOver();
+    // A removed runner leaves the chase; if that leaves one (or none), the winner moment comes now.
+    if (was === "finalist" && this.boLocked && BO_PHASES.includes(this.phase) && this.phase !== "boWinner") {
+      if (this.aliveRunners().length <= 1) return this.winnerMoment();
+      if (this.phase === "boDark") this.checkBlackoutOver();
+    }
 
     this.changed();
     this.endAnswerIfEveryoneAnswered();
@@ -1424,6 +1457,7 @@ export class QuizRoom {
     if (phase === "cut") return p.status === "finalist" ? "right" : p.status === "wildcard" ? "idle" : "out";
     if (WC_PHASES.includes(phase)) return p.status === "wildcard" ? "idle" : p.status === "finalist" ? "idle" : "out";
     if (phase === "wcWinner") return p.isWildCard && p.status === "finalist" ? "right" : p.status === "finalist" ? "idle" : "out";
+    if (phase === "boWinner") return this.blackoutWinner()?.id === p.id ? "right" : p.runner && !p.runner.alive ? "out" : p.status === "finalist" ? "idle" : "out";
     if (p.runner && !p.runner.alive) return "out";
     return p.status === "finalist" ? "idle" : "out";
   }
@@ -1490,11 +1524,6 @@ export class QuizRoom {
     return { action: { type: "nextQuestion" }, label: this.sudden ? "Next question (sudden death)" : "Next question" };
   }
 
-  /** What comes after a Blackout question's dark (or a voided question). */
-  private afterBlackoutQuestion(): PrimaryAction {
-    return this.boOver ? { action: { type: "showWinner" }, label: "Show winner" } : { action: { type: "nextQuestion" }, label: "Next question" };
-  }
-
   private allowedActions(): Set<AdminActionType> {
     return this.cached("allowed", () => {
       const a = new Set<AdminActionType>(["setRoomCodeVisible", "setSound"]);
@@ -1503,7 +1532,8 @@ export class QuizRoom {
       if (phase !== "podium" && phase !== "lobby") a.add("endQuiz");
       if (this.timer) {
         a.add(this.paused ? "resume" : "pause");
-        a.add("addTime");
+        // Blackout: +5 s only while answering (the holds just Skip).
+        if (!BO_PHASES.includes(phase) || phase === "boAnswer") a.add("addTime");
         a.add("skipTimer");
       }
       const add = (...types: AdminActionType[]) => types.forEach((t) => a.add(t));
@@ -1524,11 +1554,11 @@ export class QuizRoom {
         case "wcAnswer":
         case "boRead":
         case "boAnswer":
+        case "boTimesUp":
           add("voidQuestion", "restartQuestion", "restartRound");
           break;
         case "r1TimesUp":
         case "wcTimesUp":
-        case "boTimesUp":
           add("revealAnswer", "voidQuestion", "restartQuestion", "restartRound");
           break;
         case "r1Reveal":
@@ -1563,21 +1593,18 @@ export class QuizRoom {
         case "predictions":
           if (hasFinalists) add("startBlackout");
           break;
+        // Blackout runs on autopilot: no flow buttons, only the fixes.
         case "boIntro":
-          if (this.runners().length > 0 && this.blackoutQuestions.length > 0) add("showQuestion");
           add("restartRound");
           break;
         case "boReveal":
-          if (voided) add(this.afterBlackoutQuestion().action.type);
-          else {
-            add("advanceDarkness", "voidQuestion");
-            // A removal left one runner (or none): the winner can be shown straight away.
-            if (this.runners().filter((p) => p.runner!.alive).length <= 1) add("showWinner");
-          }
-          add("restartQuestion", "restartRound");
+          if (!voided) add("restartQuestion");
+          add("restartRound");
           break;
         case "boDark":
-          add(this.afterBlackoutQuestion().action.type, "restartQuestion", "restartRound");
+          add("restartRound");
+          break;
+        case "boWinner":
           break;
         case "podium":
           break;
@@ -1606,15 +1633,12 @@ export class QuizRoom {
         };
       case "r1Read":
       case "wcRead":
-      case "boRead":
         return { primary: null, hint: "Reading time. Answers open by themselves." };
       case "r1Answer":
       case "wcAnswer":
-      case "boAnswer":
         return { primary: null, hint: ["Answering.", answeredLine(), "Time's up comes by itself, or when everyone has answered."].filter(Boolean).join(" ") };
       case "r1TimesUp":
       case "wcTimesUp":
-      case "boTimesUp":
         return { primary: { action: { type: "revealAnswer" }, label: "Reveal answer" }, hint: ["Time's up.", answeredLine()].filter(Boolean).join(" ") };
       case "r1Reveal":
       case "r1Results":
@@ -1665,31 +1689,48 @@ export class QuizRoom {
         };
       }
       case "boIntro":
-        return {
-          primary: { action: { type: "showQuestion" }, label: "Show question" },
-          hint: `${this.runners().length} runners on the track. Each question: Show question, Reveal answer, Advance the darkness.`,
-        };
-      case "boReveal": {
-        if (run!.voided) {
-          const after = this.afterBlackoutQuestion();
-          return { primary: after, hint: this.boOutOfQuestions ? "Question cancelled. No spare questions left, so Blackout ends here." : "Question cancelled: no moves and the dark stays. The next one takes its place." };
-        }
-        return {
-          primary: { action: { type: "advanceDarkness" }, label: "Advance the darkness" },
-          hint: `Runners moved. The dark moves ${darknessStep(this.config, run!.number)} next.`,
-        };
-      }
-      case "boDark": {
-        const after = this.afterBlackoutQuestion();
-        const caught = this.caughtThisQuestion.map((id) => this.find(id)?.name).filter(Boolean);
-        const alive = this.runners().filter((p) => p.runner!.alive).length;
-        return {
-          primary: after,
-          hint: `${caught.length ? `Caught: ${caught.join(", ")}. ` : "Nobody caught. "}${alive} still running.${this.boOutOfQuestions && !this.boOver ? " No spare questions left." : ""}`,
-        };
-      }
+      case "boRead":
+      case "boAnswer":
+      case "boTimesUp":
+      case "boReveal":
+      case "boDark":
+      case "boWinner":
+        return this.autopilotPrimary();
       case "podium":
         return { primary: null, hint: "The quiz is finished. Download the results for prizes." };
+    }
+  }
+
+  /** Blackout: the big button is Pause / Resume; the hint says what the autopilot does next. */
+  private autopilotPrimary(): { primary: PrimaryAction | null; hint: string } {
+    const primary: PrimaryAction | null = !this.timer
+      ? null
+      : this.paused
+        ? { action: { type: "resume" }, label: "Resume" }
+        : { action: { type: "pause" }, label: "Pause" };
+    if (this.paused) return { primary, hint: "Paused on every screen. Resume carries on from the same moment." };
+    const run = this.run;
+    const c = this.answerCounts();
+    const alive = this.aliveRunners().length;
+    switch (this.phase) {
+      case "boIntro":
+        return { primary, hint: `Autopilot: ${this.runners().length} runners on the track. Question 1 starts by itself.` };
+      case "boRead":
+        return { primary, hint: "Autopilot: answers open by themselves." };
+      case "boAnswer":
+        return { primary, hint: `Autopilot: ${c ? `${c.answered} of ${c.expected} answered. ` : ""}The answer shows by itself.` };
+      case "boTimesUp":
+        return { primary, hint: "Autopilot: time's up. The runners move next." };
+      case "boReveal":
+        if (run?.voided) return { primary, hint: "Question cancelled: nobody moves and the dark stays. The next question comes by itself." };
+        return { primary, hint: `Autopilot: runners moved. The dark moves ${darknessStep(this.config, run!.number)} next.` };
+      case "boDark": {
+        const caught = this.caughtThisQuestion.map((id) => this.find(id)?.name).filter(Boolean);
+        const next = this.boOver ? "The winner comes next." : "The next question comes by itself.";
+        return { primary, hint: `${caught.length ? `Caught: ${caught.join(", ")}. ` : "Nobody caught. "}${alive} still running. ${next}` };
+      }
+      default:
+        return { primary, hint: "Autopilot: the podium shows by itself." };
     }
   }
 
@@ -1702,7 +1743,7 @@ export class QuizRoom {
           ? `Wild card, sudden death ${this.sudden?.number ?? 1} of ${this.config.wildCard.suddenDeathMax}`
           : `Wild card, question ${run.number} of ${this.config.wildCard.questions}`
         : "Wild card";
-    const bo = run && run.round === 3 ? `Blackout, question ${run.number} of ${this.config.blackout.questions}` : "Blackout";
+    const bo = run && run.round === 3 ? `Blackout, question ${run.number}` : "Blackout";
     switch (this.phase) {
       case "lobby":
         return "Lobby";
@@ -1739,17 +1780,19 @@ export class QuizRoom {
       case "predictions":
         return "Predictions: audience backing a finalist";
       case "boIntro":
-        return "Blackout: intro";
+        return "Blackout: intro (autopilot)";
       case "boRead":
-        return `${bo}: reading`;
+        return `${bo}: reading (autopilot)`;
       case "boAnswer":
-        return `${bo}: answering`;
+        return `${bo}: answering (autopilot)`;
       case "boTimesUp":
-        return `${bo}: time's up`;
+        return `${bo}: time's up (autopilot)`;
       case "boReveal":
-        return `${bo}: ${run?.voided ? "cancelled" : "runners move"}`;
+        return `${bo}: ${run?.voided ? "cancelled" : "runners move"} (autopilot)`;
       case "boDark":
-        return `${bo}: the dark moves`;
+        return `${bo}: the dark moves (autopilot)`;
+      case "boWinner":
+        return "Blackout: the winner (autopilot)";
       case "podium":
         return "Podium: quiz finished";
     }
@@ -1776,7 +1819,6 @@ export class QuizRoom {
       safeCount: this.config.safe,
       wildCardQuestions: this.config.wildCard.questions,
       wildCardSuddenDeathMax: this.config.wildCard.suddenDeathMax,
-      blackoutQuestions: this.config.blackout.questions,
       blackoutReadSeconds: this.config.blackout.readMs / 1000,
       blackoutAnswerSeconds: this.config.blackout.answerMs / 1000,
     }));
@@ -1819,7 +1861,7 @@ export class QuizRoom {
   }
 
   private mcqQuestion(run: Run): McqQuestion {
-    const count = run.round === 1 ? this.round1Questions.length : run.round === 2 ? this.config.wildCard.questions : this.config.blackout.questions;
+    const count = run.round === 1 ? this.round1Questions.length : run.round === 2 ? this.config.wildCard.questions : null;
     return {
       id: run.id,
       round: run.round,
@@ -1916,6 +1958,7 @@ export class QuizRoom {
       const run = this.run && this.run.round === 3 ? this.run : null;
       const places = this.blackoutPlaces();
       const revealed = this.phase === "boReveal" || this.phase === "boDark";
+      const winnerShown = ["boReveal", "boDark", "boWinner", "podium"].includes(this.phase);
       const runners: Runner[] = this.runners()
         .sort((a, b) => Number(a.isWildCard) - Number(b.isWildCard) || (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6))
         .map((p) => {
@@ -1938,14 +1981,14 @@ export class QuizRoom {
       const winner = this.blackoutWinner();
       return {
         questionNumber: run ? run.number : this.boNumber,
-        questionCount: this.config.blackout.questions,
+        questionsLeft: this.blackoutQuestions.length - this.boNext,
         dark: this.dark,
         darkFrom: this.phase === "boDark" ? this.darkFrom : this.dark,
         runners,
         caughtThisQuestion: this.phase === "boDark" ? [...this.caughtThisQuestion] : [],
         alive: runners.filter((r) => r.alive).length,
         over: this.boOver,
-        winner: winner && (this.phase === "boDark" || this.phase === "podium" || this.phase === "boReveal") ? this.tag(winner) : null,
+        winner: winner && winnerShown ? this.tag(winner) : null,
       };
     });
   }
@@ -1997,8 +2040,8 @@ export class QuizRoom {
     const make = (round: RoundNumber, index: number, number: number, suddenDeath: boolean): QuestionPreview | null => {
       const q = this.questionsFor(round)[index];
       if (!q) return null;
-      const count = round === 1 ? this.round1Questions.length : round === 2 ? this.config.wildCard.questions : this.config.blackout.questions;
-      return { round, number, count, suddenDeath, text: q.text, image: q.image };
+      const count = round === 1 ? this.round1Questions.length : round === 2 ? this.config.wildCard.questions : null;
+      return { round, number, count, suddenDeath, text: q.text, image: q.image, correctText: q.options[q.correct] };
     };
     const run = this.run;
     const phase = this.phase;
@@ -2071,6 +2114,8 @@ export class QuizRoom {
         return { phase: "boReveal", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing(), ...this.revealOf(run!) };
       case "boDark":
         return { phase: "boDark", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing() };
+      case "boWinner":
+        return { phase: "boWinner", blackout: this.blackoutState()!, backing: backing() };
       case "podium":
         return { phase: "podium", ...this.podiumSummary()!, backing: backing() };
     }
@@ -2137,14 +2182,19 @@ export class QuizRoom {
   /** A question step on a phone (read, answer, time's up), for whoever can answer it. */
   private questionScreen(p: Participant, run: Run): ParticipantScreen {
     const answer = run.answers.get(p.id);
-    const base = { round: run.round, questionNumber: run.number, questionCount: this.mcqQuestion(run).count, suddenDeath: run.suddenDeath };
+    const gap = run.round === 3 && p.runner ? p.runner.position - this.dark : null;
+    const base = { round: run.round, questionNumber: run.number, questionCount: this.mcqQuestion(run).count, suddenDeath: run.suddenDeath, gap };
+    const locked = (timeUp: boolean): ParticipantScreen => ({
+      kind: "lockedIn",
+      round: run.round,
+      choiceNumber: run.hostOrder.indexOf(answer!.optionIndex) + 1,
+      choiceText: run.question.options[answer!.optionIndex],
+      timeUp,
+      gap,
+    });
     if (READ_PHASES.includes(this.phase)) return { kind: "eyesUp", ...base };
-    if (ANSWER_PHASES.includes(this.phase)) {
-      return answer
-        ? { kind: "lockedIn", round: run.round, choiceText: run.question.options[answer.optionIndex], timeUp: false }
-        : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run) };
-    }
-    return answer ? { kind: "lockedIn", round: run.round, choiceText: run.question.options[answer.optionIndex], timeUp: true } : { kind: "timesUp", round: run.round };
+    if (ANSWER_PHASES.includes(this.phase)) return answer ? locked(false) : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run) };
+    return answer ? locked(true) : { kind: "timesUp", round: run.round };
   }
 
   private participantScreen(p: Participant): ParticipantScreen {
@@ -2211,7 +2261,9 @@ export class QuizRoom {
     // Blackout
     if (BO_PHASES.includes(phase)) {
       if (p.status !== "finalist" || !p.runner) return this.blackoutWatch(p);
-      if (!p.runner.alive || !run || run.round !== 3 || phase === "boIntro" || phase === "boDark" || !run.players.has(p.id)) return this.runnerStatus(p);
+      if (!p.runner.alive || !run || run.round !== 3 || phase === "boIntro" || phase === "boDark" || phase === "boWinner" || !run.players.has(p.id)) {
+        return this.runnerStatus(p);
+      }
       if (phase !== "boReveal") return this.questionScreen(p, run);
       const a = run.answers.get(p.id);
       const outcome = run.voided ? "voided" : !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong";
@@ -2242,8 +2294,18 @@ export class QuizRoom {
       place: this.blackoutPlaces().get(p.id) ?? null,
       aliveCount: this.boStarted ? alive : this.finalistIds().length,
       questionNumber: this.run?.round === 3 ? this.run.number : this.boNumber,
-      questionCount: this.config.blackout.questions,
+      questionsLeft: this.boStarted ? this.blackoutQuestions.length - this.boNext : null,
+      nextUp: this.autopilotNext(),
     };
+  }
+
+  /** What the running Blackout hold leads to, for the phones' "Next question in 3". */
+  private autopilotNext(): "question" | "winner" | "podium" | null {
+    if (!this.timer) return null;
+    if (this.phase === "boIntro" || (this.phase === "boReveal" && this.run?.voided)) return "question";
+    if (this.phase === "boDark") return this.boOver || this.aliveRunners().length <= 1 ? "winner" : "question";
+    if (this.phase === "boWinner") return "podium";
+    return null;
   }
 
   private blackoutWatch(p: Participant): ParticipantScreen {
@@ -2256,7 +2318,8 @@ export class QuizRoom {
       runners,
       alive: runners.filter((r) => r.alive).length,
       questionNumber: state?.questionNumber ?? 0,
-      questionCount: this.config.blackout.questions,
+      questionsLeft: state?.questionsLeft ?? null,
+      winner: state?.winner ?? null,
     };
   }
 
@@ -2348,6 +2411,50 @@ export class QuizRoom {
     });
   }
 
+  /** Blackout's autopilot for Admin (boIntro to boWinner). */
+  private autopilotState(): AutopilotState | null {
+    if (!this.boStarted || !BO_PHASES.includes(this.phase)) return null;
+    const step = (
+      { boIntro: "intro", boRead: "read", boAnswer: "answer", boTimesUp: "timesUp", boReveal: "reveal", boDark: "dark", boWinner: "winner" } as const
+    )[this.phase as "boIntro"];
+    const voided = !!this.run?.voided;
+    const next: Record<AutopilotState["step"], string> = {
+      intro: "Question 1",
+      read: "Answers open",
+      answer: "Time's up",
+      timesUp: "Runners move",
+      reveal: voided ? "Next question" : "The dark moves",
+      dark: this.boOver || this.aliveRunners().length <= 1 ? "Winner" : "Next question",
+      winner: "Podium",
+    };
+    const t = this.timer;
+    return {
+      running: true,
+      paused: this.paused,
+      step,
+      nextInMs: t ? (this.paused ? t.remainingMs ?? 0 : Math.max(0, t.endsAt - this.clock.now())) : null,
+      nextLabel: next[step],
+      questionNumber: this.run?.round === 3 ? this.run.number : this.boNumber,
+      questionsLeft: this.blackoutQuestions.length - this.boNext,
+    };
+  }
+
+  /** Admin only: where the dark goes next and who it would catch (exact once the runners have moved). */
+  private darkPreview(): DarkPreview | null {
+    const run = this.run;
+    if (!run || run.round !== 3 || run.voided || !["boRead", "boAnswer", "boTimesUp", "boReveal"].includes(this.phase)) return null;
+    const steps = darknessStep(this.config, run.number);
+    const to = this.dark + steps;
+    return {
+      steps,
+      to,
+      catches: this.aliveRunners()
+        .filter((p) => p.runner!.position <= to)
+        .map((p) => this.tag(p)),
+      exact: this.phase === "boReveal",
+    };
+  }
+
   adminView(): AdminView {
     const { primary, hint } = this.cached("primary", () => this.primaryAndHint());
     const answerCounts = this.answerCounts();
@@ -2373,6 +2480,8 @@ export class QuizRoom {
       finalists: this.cutOrder ? this.finalistInfos() : [],
       wildCard: this.wildCardState(true),
       blackout: this.blackoutState(),
+      autopilot: this.autopilotState(),
+      darkPreview: this.cached("darkPreview", () => this.darkPreview()),
       backing: this.cutOrder ? this.backing() : null,
       podium: this.podiumSummary(),
       quizTitle: this.quizTitle,

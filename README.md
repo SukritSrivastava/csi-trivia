@@ -124,7 +124,8 @@ For the tests against a running server, start it with the results database off:
 Quizzes are made in **Admin → Quizzes** (PIN first) and saved in Supabase:
 - three lists: **Round 1** (everyone), **Wild card** (everyone outside the top 9) and **Blackout**
   (the 10 finalists), each played top to bottom;
-  extra questions at the end are spares;
+  extra Round 1 and wild card questions at the end are spares; Blackout plays its whole list until
+  one runner is left;
 - every question has exactly 4 answers (shuffled on screen), an optional picture (projector only)
   and optional own timers;
 - **Settings** per quiz: how many questions each round plays, finalists, and every timer;
@@ -167,15 +168,15 @@ rather write them in a file first, use this shape and import it as JSON, or put 
 ```
 
 - `id`: unique, any text. `round`: `1` (Round 1), `2` (wild card round), `3` (Blackout) or `null`
-  (any round that needs one). Blackout is played fast (5 s to read, 8 s to answer), so keep its
-  questions short.
+  (any round that needs one). Blackout is played fast (5 s to read, 10 s to answer) and runs on
+  autopilot, so keep its questions short.
 - `options`: exactly 4, all different, short enough for a phone button (under ~40 characters).
   They're shuffled on screen, so put the right one anywhere; `correct` is its index (0–3).
 - `image` (optional, projector only): upload it in Admin's question form, or (for this file) put it in
   `public/questions/` and redeploy. It sits on a **dark card**, so
   use pictures with a light or solid background: dark lines on a transparent background vanish.
-- How many: the event plays **20 Round 1**, **5 wild card** (+3 for sudden death) and **12 Blackout**
-  questions (+3 spares for voids): **48** in all.
+- How many: the event plays **20 Round 1**, **5 wild card** (+3 for sudden death) and Blackout until
+  one runner is left: **at least 12 Blackout questions, 15+ to be safe**. About **50** in all.
 
 Then run **`npm run check-questions -- --preset event`**: it checks 4 options, valid `correct`,
 duplicate ids, missing images, images that won't read on the dark card, and whether there are

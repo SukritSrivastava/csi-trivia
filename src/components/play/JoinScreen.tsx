@@ -39,7 +39,7 @@ export function JoinScreen() {
       <div className="flex items-center gap-4 pt-2">
         <Bot color="#6cf0b0" head="antenna" size="64px" />
         <div>
-          <p className="font-term text-[1.4rem] leading-none text-mint [text-shadow:0_0_6px_var(--color-mint)]">hermes://quiz</p>
+          <p className="font-term text-[1.4rem] leading-none text-mint">hermes://quiz</p>
           <PhoneTitle>Join the quiz</PhoneTitle>
         </div>
       </div>

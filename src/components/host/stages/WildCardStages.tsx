@@ -4,7 +4,7 @@
  * After the cut: the wild card round (intro, standings, the winner) and
  * predictions. The wild card questions themselves use QuestionStage. Every
  * bot's mood comes from the server (HostView.cast). Design extension in the
- * same language: headings in the question style, amber counts, mint glow for
+ * same language: headings in the question style, amber counts, mint text for
  * the winner.
  */
 import NumberFlow from "@number-flow/react";
@@ -83,10 +83,8 @@ export function WildCardWinnerStage({ view, stage }: { view: HostView; stage: St
       <Heading size="5rem">The wild card</Heading>
       {winner ? (
         <motion.div className="flex flex-col items-center gap-[1.6rem]" initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 240, damping: 16, delay: 0.4 }}>
-          <span className="drop-shadow-[0_0_2rem_var(--color-mint)]">
-            <Bot color={winner.color} head={winner.head} mood={mood(winner.id, "right")} size="16rem" delay={0} label={winner.name} />
-          </span>
-          <p className="font-term text-[8rem] leading-none tracking-[0.06em]" style={{ color: winner.color, textShadow: `0 0 2rem ${winner.color}` }}>
+          <Bot color={winner.color} head={winner.head} mood={mood(winner.id, "right")} size="16rem" delay={0} label={winner.name} />
+          <p className="font-term text-[8rem] leading-none tracking-[0.06em]" style={{ color: winner.color }}>
             {winner.name.toUpperCase()}
           </p>
           <p className="host-hint">{w.fallback ? "Nobody got one right, so the next best from Round 1 takes the last seat." : "takes the last seat in Blackout."}</p>

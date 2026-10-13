@@ -139,7 +139,7 @@ export function QuizEditor({ id, onClose }: { id: string; onClose: () => void })
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="sticky top-0 z-20 border-b border-line bg-void/95 px-4 pt-3 pb-3 backdrop-blur-sm">
+      <header className="sticky top-0 z-20 border-b border-line bg-void px-4 pt-3 pb-3">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <button type="button" onClick={back} className="min-h-11 shrink-0 text-[15px] text-mint-soft underline underline-offset-4" data-testid="editor-back">
             ← Quizzes
@@ -264,7 +264,7 @@ function QuestionList({
   onDelete: (index: number) => void;
 }) {
   const items = quiz[list];
-  const played = list === "round1" ? quiz.rules.round1Questions : list === "wildcard" ? quiz.rules.wildCardQuestions : quiz.rules.blackoutQuestions;
+  const played = list === "round1" ? quiz.rules.round1Questions : list === "wildcard" ? quiz.rules.wildCardQuestions : items.length;
   const { armed, guard } = useConfirm();
 
   return (
@@ -280,7 +280,9 @@ function QuestionList({
       <p className="text-[14px] text-fog">
         {list === "round1"
           ? `Everyone answers these, top to bottom. The first ${played} are played (change it in Settings).`
-          : `The finalists buzz on these, top to bottom. The first ${played} count; the rest are spares for voided questions and sudden death.`}
+          : list === "wildcard"
+            ? `Everyone outside the safe seats answers these, top to bottom. The first ${played} count; the rest are spares for voided questions and sudden death.`
+            : `The finalists race the dark on these, top to bottom, until one runner is left. The event needs at least 12; 15 or more is safer.`}
       </p>
 
       {items.length === 0 ? (

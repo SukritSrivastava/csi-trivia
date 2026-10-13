@@ -79,17 +79,22 @@ accept now, and `hint` is the line under the button. The Admin UI only renders t
    (Round 1 and wild card 8 s + 8 s, Blackout 5 s + 8 s). When one ends the room holds and waits
    for a click. An answer step ends early when everyone connected who can answer has answered.
    Nothing is judged by hand: Round 1 points, wild card tallies and Blackout moves are all computed
-   from the taps (docs/SPEC.md v3).
+   from the taps (docs/SPEC.md v3.1). Round 1: correct = round(200 − 100 × elapsed / limit).
 5. **The wild card.** Only `wildcard` players answer. Most right after the planned questions wins;
    tie → lower total time (wrong / miss = the full time); exact tie → sudden death among only the
    tied (all wrong → all stay), at most 3, then total time, then Round 1 rank; nobody right → the
    best Round 1 rank outside the safe seats. Tallies apply at Reveal answer.
-6. **Blackout.** Runners start at `baseGap` + head start (ranks 1–3 +2, 4–9 +1, wild card 0). At
-   Reveal answer: right +3/+2/+1 by third of the answer time, wrong −1 (not below 0), none 0;
-   nobody is caught. At Advance the darkness: the dark moves `darkness[q]`; position ≤ dark → caught.
-   Catch order: later catch ranks higher; same question → further ahead before the dark, lower
-   total time, better Round 1 rank. Over when one (or none) is left, after the last planned question
-   (furthest ahead wins), or when the questions run out. Show winner is always a click.
+6. **Blackout (autopilot, v3.1).** One click (`startBlackout`); then every step is a timer that
+   starts the next: intro 6 s → read 5 s → answer 10 s → time's up 1.5 s → reveal (3 s + 0.15 s per
+   runner) → the dark (2.5 s + 0.25 s per step + 1.5 s if caught) → next question … → `boWinner`
+   7 s → podium (holds in `config.blackout.holds`). Runners start at `baseGap` + head start (ranks
+   1–3 +2, 4–9 +1, wild card 0). At the reveal: right +3/+2/+1 by third of the answer time, wrong −1
+   (not below 0), none 0; nobody is caught. When the dark moves: `darkness[q]` (last value repeats);
+   position ≤ dark → caught. Catch order: later catch ranks higher; same question → further ahead
+   before the dark, lower total time, better Round 1 rank. Over when one (or none) is left or the
+   questions run out (furthest ahead wins). No fixed count: it plays every Blackout question.
+   `advanceDarkness` / `showWinner` and Show/Reveal/Next are `not-allowed` in Blackout; `pause` and
+   `skipTimer` are step-bound (send the stepId on screen).
 7. **Fixing mistakes.** `voidQuestion`: the question doesn't count (Round 1 dropped; wild card and
    Blackout: the next question takes its number, no moves, the dark stays). `restartQuestion`:
    undoes everything the question did (points, tallies, moves, the dark, catches) and replays it with

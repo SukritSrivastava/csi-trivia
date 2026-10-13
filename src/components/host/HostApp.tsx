@@ -19,7 +19,7 @@ import { HostGate } from "./HostGate";
 import { Cast } from "./parts";
 import { SOUNDS, type SoundName, soundUnlocked, unlockSound } from "./sound";
 import { CutStage } from "./stages/CutStage";
-import { BlackoutDarkStage, BlackoutIntroStage, BlackoutRevealStage } from "./stages/BlackoutStages";
+import { BlackoutDarkStage, BlackoutIntroStage, BlackoutRevealStage, BlackoutWinnerStage } from "./stages/BlackoutStages";
 import { LobbyStage } from "./stages/LobbyStage";
 import { PodiumStage } from "./stages/PodiumStage";
 import { LeaderboardStage, QuestionStage, ResultsStage, Round1Intro } from "./stages/Round1Stages";
@@ -152,6 +152,8 @@ function StageView({ view }: { view: HostView }) {
       return <BlackoutRevealStage view={view} stage={s} />;
     case "boDark":
       return <BlackoutDarkStage view={view} stage={s} />;
+    case "boWinner":
+      return <BlackoutWinnerStage view={view} stage={s} />;
     case "podium":
       return <PodiumStage view={view} stage={s} />;
   }
@@ -258,7 +260,7 @@ function HostScreen({ view }: { view: HostView }) {
 
       {view.paused && (
         <div className="absolute inset-x-0 top-[44%] z-40 overflow-hidden bg-alarm/90 py-[1.4rem] text-center" role="status">
-          <span className="absolute inset-0 animate-[corridor-alarm_3.2s_infinite] bg-[radial-gradient(ellipse_at_50%_0%,rgb(255_77_94/0.9),transparent_70%)]" aria-hidden />
+          <span className="absolute inset-0 animate-[corridor-alarm_3.2s_infinite] bg-wrong/70" aria-hidden />
           <span className="relative font-term text-[6rem] leading-none tracking-[0.2em] text-ghost">PAUSED</span>
         </div>
       )}

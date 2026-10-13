@@ -153,7 +153,7 @@ export function hslToHex(h: number, s: number, l: number): string {
 
 
 // ============================================================================
-// The flow (docs/SPEC.md v3)
+// The flow (docs/SPEC.md v3.1)
 // ============================================================================
 
 /**
@@ -177,14 +177,21 @@ export function hslToHex(h: number, s: number, l: number): string {
  *       wcStandings   top 10 by correct answers (optional)            (click: Show standings)
  *   → wcWinner      the 10th finalist                                 (click: Reveal wild card)
  *   → predictions   audience backs a finalist (optional)              (click: Open predictions)
- *   → boIntro       the 10 runners at their start positions           (click: Start Blackout)
- *   → for each Blackout question:
- *       boRead        5s, no options                                  (click: Show question / Next question)
- *       boAnswer      8s, options on the runners' phones              (timer)
- *       boTimesUp     holds                                           (timer)
- *       boReveal      correct answer, runners move +3/+2/+1/0/−1     (click: Reveal answer)
- *       boDark        the dark moves; anyone it reaches is caught     (click: Advance the darkness)
- *   → podium                                                          (click: Show winner, or End quiz now)
+ *   → boIntro       the 10 runners at their start positions, 6s       (click: Start Blackout)
+ *   Blackout then runs on AUTOPILOT: every step below starts by itself.
+ *   → for each Blackout question, until one runner is left:
+ *       boRead        5s, no options                                  (autopilot)
+ *       boAnswer      10s, options on the runners' phones; ends early
+ *                     when every runner still running has answered     (autopilot)
+ *       boTimesUp     1.5s                                             (autopilot)
+ *       boReveal      correct answer, runners move +3/+2/+1/0/−1;
+ *                     3s + 0.15s per runner                            (autopilot)
+ *       boDark        the dark moves; anyone it reaches is caught;
+ *                     2.5s + 0.25s per step + 1.5s if anyone caught    (autopilot)
+ *   → boWinner      the last runner, 7s                               (autopilot)
+ *   → podium                                                          (autopilot, or End quiz now)
+ * The quizmaster can still Pause / Resume, Skip, +5s, Void, Restart question,
+ * Restart round, End quiz now and Remove participant during Blackout.
  */
 export type Phase =
   | "lobby"
@@ -210,6 +217,7 @@ export type Phase =
   | "boTimesUp"
   | "boReveal"
   | "boDark"
+  | "boWinner"
   | "podium";
 
 /** 1 = Round 1, 2 = wild card, 3 = Blackout. */
@@ -275,7 +283,6 @@ export interface QuizSettings {
   safeCount: number;
   wildCardQuestions: number;
   wildCardSuddenDeathMax: number;
-  blackoutQuestions: number;
   blackoutReadSeconds: number;
   blackoutAnswerSeconds: number;
 }
@@ -291,8 +298,8 @@ export interface McqQuestion {
   round: RoundNumber;
   /** 1-based within its round (sudden-death questions count on: 6, 7, 8). */
   number: number;
-  /** Planned questions in the round. */
-  count: number;
+  /** Planned questions in the round. null in Blackout (it plays until one runner is left). */
+  count: number | null;
   /** A wild card sudden-death question. */
   suddenDeath: boolean;
   text: string;
@@ -411,7 +418,8 @@ export interface Runner extends ParticipantTag {
 export interface BlackoutState {
   /** The current question's number (0 before the first). */
   questionNumber: number;
-  questionCount: number;
+  /** Blackout questions still available after the current one (it plays until one runner is left). */
+  questionsLeft: number | null;
   /** The dark's position. */
   dark: number;
   /** The dark's position before the last advance (for animation). */
@@ -422,7 +430,7 @@ export interface BlackoutState {
   caughtThisQuestion: string[];
   /** Runners still running. */
   alive: number;
-  /** Decided (the primary button is Show winner). */
+  /** Decided: the winner moment and the podium come next by themselves. */
   over: boolean;
   /** Set once decided. */
   winner: ParticipantTag | null;
@@ -508,6 +516,8 @@ export type HostStage =
   | { phase: "boRead" | "boAnswer" | "boTimesUp"; question: McqQuestion; blackout: BlackoutState; answered: number; expected: number; backing: Backing }
   | ({ phase: "boReveal"; question: McqQuestion; blackout: BlackoutState; backing: Backing } & Reveal)
   | { phase: "boDark"; question: McqQuestion; blackout: BlackoutState; backing: Backing }
+  /** The winner moment (7 s), then the podium by itself. */
+  | { phase: "boWinner"; blackout: BlackoutState; backing: Backing }
   | ({ phase: "podium"; backing: Backing } & PodiumSummary);
 
 export interface HostView {
@@ -558,19 +568,39 @@ export type ParticipantScreen =
   /** Joined while a question was open: plays from the next question. */
   | { kind: "nextQuestion" }
   /** Read time: the question is on the projector, options come next. */
-  | { kind: "eyesUp"; round: RoundNumber; questionNumber: number; questionCount: number; suddenDeath: boolean }
+  | {
+      kind: "eyesUp";
+      round: RoundNumber;
+      questionNumber: number;
+      /** null in Blackout (no fixed count). */
+      questionCount: number | null;
+      suddenDeath: boolean;
+      /** Blackout runners: steps ahead of the dark. null in other rounds. */
+      gap: number | null;
+    }
   /** The 4 options in the Host's order (number = position + 1). Never a correct flag. First tap locks. */
   | {
       kind: "answer";
       round: RoundNumber;
       questionId: string;
       questionNumber: number;
-      questionCount: number;
+      questionCount: number | null;
       suddenDeath: boolean;
       options: AnswerOption[];
+      /** Blackout runners: steps ahead of the dark. null in other rounds. */
+      gap: number | null;
     }
   /** Tapped; waiting. `timeUp` once the answer time has ended. */
-  | { kind: "lockedIn"; round: RoundNumber; choiceText: string; timeUp: boolean }
+  | {
+      kind: "lockedIn";
+      round: RoundNumber;
+      /** 1–4: the number of the option they tapped. */
+      choiceNumber: number;
+      choiceText: string;
+      timeUp: boolean;
+      /** Blackout runners: steps ahead of the dark. null in other rounds. */
+      gap: number | null;
+    }
   /** Time ran out without an answer. */
   | { kind: "timesUp"; round: RoundNumber }
   /** After a Round 1 or wild card reveal: right or wrong (no points, no rank). */
@@ -628,15 +658,30 @@ export type ParticipantScreen =
       gap: number;
       position: number;
       headStart: number;
-      /** Caught just now (this Advance the darkness). */
+      /** Caught just now (the dark's last move). */
       caughtNow: boolean;
       place: number | null;
       aliveCount: number;
       questionNumber: number;
-      questionCount: number;
+      /** Blackout questions still available, or null. */
+      questionsLeft: number | null;
+      /**
+       * What the running hold leads to (view.timer counts it down): the next
+       * question, the winner moment, or the podium. null when nothing is queued.
+       */
+      nextUp: "question" | "winner" | "podium" | null;
     }
   /** Audience during Blackout. */
-  | { kind: "blackoutWatch"; backed: ParticipantTag | null; runners: RunnerLite[]; alive: number; questionNumber: number; questionCount: number }
+  | {
+      kind: "blackoutWatch";
+      backed: ParticipantTag | null;
+      runners: RunnerLite[];
+      alive: number;
+      questionNumber: number;
+      questionsLeft: number | null;
+      /** The winner, once the chase is decided. */
+      winner: ParticipantTag | null;
+    }
   /** The quiz is over. */
   | {
       kind: "podium";
@@ -685,7 +730,9 @@ export type AdminAction =
   | { type: "revealWildCard" }
   | { type: "openPredictions" }
   | { type: "startBlackout" }
+  /** Never accepted since v3.1: the Blackout autopilot moves the dark by itself. Kept so old clients get "not-allowed". */
   | { type: "advanceDarkness" }
+  /** Never accepted since v3.1: the autopilot shows the winner and the podium by itself. */
   | { type: "showWinner" }
   // ---- timers
   | { type: "pause" }
@@ -740,12 +787,12 @@ export const ADMIN_ACTION_TYPES: readonly AdminActionType[] = [
 
 /**
  * Commands that apply whatever step the quiz is on, because sending them twice
- * changes nothing (pausing twice is still paused). Every OTHER command is
- * ignored unless its stepId matches the current step, so a double tap or two
- * Admin devices can never skip two steps or move the dark twice.
+ * changes nothing (resuming twice is still running). Every OTHER command,
+ * Pause and Skip included, is ignored unless its stepId matches the current
+ * step, so a double tap or two Admin devices can never skip two steps, and a
+ * Pause aimed at a Blackout step that has already passed does nothing.
  */
 export const STEP_INDEPENDENT_ACTIONS: readonly AdminActionType[] = [
-  "pause",
   "resume",
   "removeParticipant",
   "setRoomCodeVisible",
@@ -764,8 +811,8 @@ export interface AdminQuestion {
   id: string;
   round: RoundNumber;
   number: number;
-  /** Planned questions in the round. */
-  count: number;
+  /** Planned questions in the round (null in Blackout). */
+  count: number | null;
   suddenDeath: boolean;
   text: string;
   image: string | null;
@@ -780,10 +827,42 @@ export interface AdminQuestion {
 export interface QuestionPreview {
   round: RoundNumber;
   number: number;
-  count: number;
+  count: number | null;
   suddenDeath: boolean;
   text: string;
   image: string | null;
+  /** Its right answer (Admin only: the "Next up" card). */
+  correctText: string;
+}
+
+/** Blackout's autopilot as Admin sees it. */
+export interface AutopilotState {
+  /** From Start Blackout until the podium. */
+  running: boolean;
+  paused: boolean;
+  step: "intro" | "read" | "answer" | "timesUp" | "reveal" | "dark" | "winner";
+  /** Time until the next step starts by itself (frozen while paused). */
+  nextInMs: number | null;
+  /** What starts next, for the autopilot strip: "Answers open", "Runners move", "The dark moves", "Next question", "Winner", "Podium". */
+  nextLabel: string;
+  questionNumber: number;
+  /** Blackout questions still available after the current one. */
+  questionsLeft: number;
+}
+
+/**
+ * Admin only: where the dark goes next and who it would catch. During read /
+ * answer / time's up it's "if nobody moves"; after the reveal it's exact.
+ */
+export interface DarkPreview {
+  /** How far the dark moves next. */
+  steps: number;
+  /** The dark's position after it moves. */
+  to: number;
+  /** Runners it would catch. */
+  catches: ParticipantTag[];
+  /** true once the runners have moved (reveal): the preview is final. */
+  exact: boolean;
 }
 
 export interface AdminParticipant extends ParticipantTag {
@@ -847,6 +926,10 @@ export interface AdminView {
   wildCard: WildCardState | null;
   /** From Start Blackout onward. */
   blackout: BlackoutState | null;
+  /** Blackout's autopilot (boIntro to boWinner), else null. */
+  autopilot: AutopilotState | null;
+  /** During Blackout's read, answer, time's up and reveal steps; else null. */
+  darkPreview: DarkPreview | null;
   backing: Backing | null;
   /** The final order, on the podium only (same as the Host's podium stage). */
   podium: PodiumSummary | null;
@@ -869,8 +952,7 @@ export interface QuizRules {
   safe: number;
   /** Wild card questions (the first N of the Wild card list; the rest are spares for voids and sudden death). */
   wildCardQuestions: number;
-  /** Blackout questions (the first N of the Blackout list; the rest are spares for voids). */
-  blackoutQuestions: number;
+  /* Blackout has no count: it plays its whole list, in order, until one runner is left. */
   blackoutReadSeconds: number;
   blackoutAnswerSeconds: number;
 }
@@ -899,7 +981,7 @@ export interface Quiz {
   round1: LibraryQuestion[];
   /** Wild card round, top to bottom; the first rules.wildCardQuestions count, the rest are spares. */
   wildcard: LibraryQuestion[];
-  /** Blackout, top to bottom; the first rules.blackoutQuestions count, the rest are spares. */
+  /** Blackout, top to bottom, until one runner is left (the event needs at least 12; 15+ is safer). */
   blackout: LibraryQuestion[];
   /** ms since epoch. */
   updatedAt: number;

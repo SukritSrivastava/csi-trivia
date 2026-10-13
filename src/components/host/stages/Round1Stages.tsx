@@ -69,7 +69,7 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
         ? `Wild card · sudden death`
         : `Wild card · question ${q.number} of ${q.count}`
       : q.round === 3
-        ? `Blackout · question ${q.number} of ${q.count}`
+        ? `Blackout · question ${q.number}`
         : null;
 
   return (
@@ -157,14 +157,14 @@ export function ResultsStage({ view, stage }: { view: HostView; stage: Stage<"r1
       <ol className="flex w-full flex-col gap-[2rem]">
         {stage.options.map((o: OptionResult, i) => (
           <li key={o.number} className="flex items-center gap-[1.8rem] font-type text-[2.8rem] text-bright">
-            <span className="opt-num !text-[5.4rem]" style={o.correct ? { color: "var(--color-mint)", textShadow: "0 0 1.2rem var(--color-mint)" } : undefined}>
+            <span className="opt-num !text-[5.4rem]" style={o.correct ? { color: "var(--color-mint)" } : undefined}>
               {i + 1}
             </span>
             <span className={`line-clamp-2 w-[40%] leading-tight ${o.correct ? "" : "opacity-70"}`}>{o.text}</span>
             <span className="relative h-[2.6rem] flex-1">
               <motion.span
                 className="absolute inset-y-0 left-0 rounded-[0.4rem] border-2 border-mint"
-                style={{ background: o.correct ? "var(--color-mint)" : "rgb(108 240 176 / 0.12)", boxShadow: o.correct ? "0 0 1.2rem var(--color-mint)" : undefined }}
+                style={{ background: o.correct ? "var(--color-mint)" : "rgb(108 240 176 / 0.12)" }}
                 initial={{ width: "0%" }}
                 animate={{ width: `${Math.max(1.5, (o.count / max) * 100)}%` }}
                 transition={{ delay: 0.3 + i * 0.15, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}

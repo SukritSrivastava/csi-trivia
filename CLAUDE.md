@@ -3,17 +3,19 @@
 **Read `docs/PROJECT-RULES.md` first: it is the full handoff (constraints, architecture, stack, to-do,
 skills, agents, plugins, API). This file is the short version.**
 
-Hermes Quiz: a live MCQ quiz for 60–100 people (event: Thu 16 Oct 2026). Rules: **`docs/SPEC.md` v3
-(14 Oct: three rounds, no buzzer round)**. Build plan: v5, three phases (pasted in chat 14 Oct; Phase 1,
-the engine, is done; Phases 2–3 polish the screens). `docs/BUILD-PHASES.md` holds the earlier v4 plan (done).
+Hermes Quiz: a live MCQ quiz for 60–100 people (event: Thu 16 Oct 2026). Rules: **`docs/SPEC.md` v3.1
+(14 Oct night: three rounds; Round 1 scores 200→100; Blackout on autopilot; no glow)**. Build plan: v5,
+three phases (pasted in chat 14 Oct; Phase 1 the engine and Phase 2 rules update + Admin + phones are
+done; Phase 3 is the Host). `docs/BUILD-PHASES.md` holds the earlier v4 plan (done).
 Quizmaster: `docs/RUN-SHEET.md`. Backend teammate: `docs/BACKEND-NOTES.md`.
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
-read + 8s answer) → the cut (top 9 safe) → wild card round (everyone else, 5 questions, most right
-wins the 10th seat) → predictions → **Blackout** (10 runners: right +3/+2/+1 by speed, wrong −1; the
-quizmaster clicks Reveal answer, then Advance the darkness; whoever the dark reaches is caught; last
-one running wins) → podium. Every answer is a tap marked by the server: nothing is judged by hand.
+read + 8s answer, correct = 200 down to 100 by speed) → the cut (top 9 safe) → wild card round
+(everyone else, 5 questions, most right wins the 10th seat) → predictions → **Blackout** (10 runners,
+**autopilot**: one Start Blackout click, then 5s read + 10s answer, runners move +3/+2/+1 by speed,
+wrong −1, the dark moves and catches, question after question until one is left, then the winner
+moment and the podium by themselves) → podium. Every answer is a tap marked by the server.
 
 ## Rules of this codebase
 
@@ -27,9 +29,11 @@ one running wins) → podium. Every answer is a tap marked by the server: nothin
   TypeScript errors. `archive/ws-backend-v1/` is the first prototype backend, kept for reference only.
 - `server/quiz.ts` has all the rules and no socket code. After changing rules run
   `npm run simulate` and `npm run smoke`.
-- The quizmaster drives the flow. Timers only for the read and answer steps (Round 1 and wild card
-  8s + 8s, Blackout 5s + 8s); when one ends, the room holds (an answer step also ends early when
-  everyone who can answer has).
+- The quizmaster drives Round 1 and the wild card. Timers only for the read and answer steps (8s +
+  8s); when one ends, the room holds (an answer step also ends early when everyone who can answer
+  has). **Blackout runs on autopilot** (`server/quiz.ts` `nextBlackoutQuestion` → … → `afterDark` →
+  `winnerMoment`): every step and hold is a timer (`config.blackout.holds`), so Pause/Skip/+5s work on
+  it; Admin's big button is Pause/Resume. `pause` and `skipTimer` carry the stepId like everything else.
 - Admin commands carry `stepId`; the server ignores a command from a stale step (except the
   step-independent ones listed in `STEP_INDEPENDENT_ACTIONS`).
 - Phones and the Host never receive the correct answer before the reveal (simulate and smoke
@@ -38,7 +42,9 @@ one running wins) → podium. Every answer is a tap marked by the server: nothin
 - Questions: quizzes in the Admin library have three lists (Round 1, Wild card, Blackout).
   `data/questions.json` (MCQ, 4 options, `correct` = index, `round` 1/2/3/null) only seeds the Demo quiz.
   `server/questions.ts` `pickRound`: tagged for the round, then untagged unused; only the demo preset reuses.
-- Look: **"Server Corridor, Lights Low"**, approved and final. Match `public/finaldesign.html`
+- Look: **"Server Corridor, Lights Low"**, approved and final, **with no glow** (14 Oct: no text-shadow
+  halos, blurred box-shadows, drop-shadow/blur, radial blooms; flat fills, 1–2 px borders, colour and
+  opacity; zero-blur offsets, scrims and the vignette are fine). `npm run check-glow` enforces it. Match `public/finaldesign.html`
   exactly (open it at http://localhost:3000/finaldesign.html); don't redesign it. Tokens and classes
   are in `src/app/globals.css` (`host-q`, `host-opts`, `opt-num`, `host-count`, `phone-opt`,
   `phone-go`, `clock`, `bot`, `corridor-*`). Components: `Bot` + `botDelay`, `BotBuilder`,
@@ -116,8 +122,10 @@ one running wins) → podium. Every answer is a tap marked by the server: nothin
   so nothing is written to the live database (the server's env wins over `.env.local`).
 - `npm run bots -- --room ABCD --count 80 [--accuracy 0.4-0.85] [--slow] [--pin 1234]`: fake participants
   for scale tests; they answer in every round (the PIN lets them know the right answer, for --accuracy).
-- `npm run tune-blackout`: simulates 20,000 chases per candidate and prints the best BASE_GAP / DARKNESS_STEPS.
-- `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`: all must pass.
+- `npm run tune-blackout`: simulates 20,000 chases per candidate (10 s answers, answer times in seconds,
+  up to 15 questions) and prints the best BASE_GAP / DARKNESS_STEPS.
+- `npm run check-glow`: fails on any glow in `src/` or `public/finaldesign.html` (`scripts/no-glow.ts`).
+- `npm run simulate`, `npm run smoke`, `npm run typecheck`, `npm run build`, `npm run check-glow`: all must pass.
 - Deploy: website on Vercel, game server on Render (`render.yaml`, `npm run start:game`, uses `PORT`),
   results in Supabase. Step by step: `docs/DEPLOY.md`. `tsx` and `pg` are runtime dependencies.
 - Live: https://hermes-quiz-nine.vercel.app (Vercel) + https://hermes-quiz-game.onrender.com (Render) + Supabase.

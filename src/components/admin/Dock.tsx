@@ -15,7 +15,7 @@ export function Dock({ view, pending, onPrimary, onDownload }: { view: AdminView
   const finished = view.phase === "podium";
 
   return (
-    <div className="border-t border-line bg-void/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-sm" data-testid="dock">
+    <div className="border-t border-line bg-void px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-testid="dock">
       {error && (
         <p className="mb-2 text-[15px] leading-snug text-wrong" role="alert" data-testid="command-error">
           {error}

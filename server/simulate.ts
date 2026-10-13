@@ -1,9 +1,8 @@
 /**
  * Plays whole quizzes and every edge case with fake participants and a fake
- * clock, and checks every rule in docs/SPEC.md (v3) held: Round 1, the cut, the
- * wild card round, predictions, Blackout and the podium. No sockets, no
+ * clock, and checks every rule in docs/SPEC.md (v3.1) held: Round 1, the cut, the
+ * wild card round, predictions, Blackout on autopilot and the podium. No sockets, no
  * browser, runs in a few seconds. Run: npm run simulate
- * (GAME_PRESET=event adds more full event-size games.)
  */
 import assert from "node:assert/strict";
 import {
@@ -20,7 +19,7 @@ import {
   type QuizRules,
 } from "../src/shared/protocol";
 import { blankQuestion, cleanQuiz, importJson, importRows, importText, parseCsv, quizProblems, quizToCsv } from "../src/shared/quiz";
-import { type GameConfig, PRESETS } from "./config";
+import { darknessStep, type GameConfig, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
 import { quizToGame } from "./library";
 import { loadQuestions, type QuizQuestion } from "./questions";
 import { type Clock, QuizRoom } from "./quiz";
@@ -99,10 +98,10 @@ function questionSet(r1: number, wc: number, bo: number): QuizQuestion[] {
 }
 const EVENT_QUESTIONS = questionSet(20, 8, 15);
 
-/** A small, predictable config: safe 3, 3 wild card questions, a 6-question Blackout with a slow dark. */
+/** A small, predictable config: safe 3, 3 wild card questions, a Blackout with a slow dark. */
 function testConfig(overrides: Partial<GameConfig> = {}, blackout: Partial<GameConfig["blackout"]> = {}): GameConfig {
   const base = PRESETS.demo;
-  return { ...base, ...overrides, blackout: { ...base.blackout, baseGap: 3, darkness: [1], questions: 6, spares: 2, ...blackout } };
+  return { ...base, ...overrides, blackout: { ...base.blackout, baseGap: 3, darkness: [1], ...blackout } };
 }
 
 const BEFORE_REVEAL: Phase[] = ["r1Read", "r1Answer", "r1TimesUp", "wcRead", "wcAnswer", "wcTimesUp", "boRead", "boAnswer", "boTimesUp"];
@@ -182,6 +181,24 @@ class Game {
   /** Lets the running timer run out. */
   tick() {
     assert.ok(this.clock.runNext(), `a timer should be running in ${this.phase}`);
+  }
+  /** Blackout's autopilot: lets the current step or hold run out, and checks where it went. */
+  next(phase: Phase) {
+    this.tick();
+    this.expect(phase);
+  }
+  /** Blackout (autopilot): one question from its read step to the reveal. No Admin clicks. */
+  runnerQuestion(plan: [string, Pick, number][]) {
+    this.expect("boRead");
+    this.tick();
+    this.expect("boAnswer");
+    for (const [id, pick, at] of [...plan].sort((a, b) => a[2] - b[2])) {
+      if (this.phase !== "boAnswer") break;
+      this.answerAt(id, pick, at);
+    }
+    if (this.phase === "boAnswer") this.tick();
+    this.expect("boTimesUp");
+    this.next("boReveal");
   }
   expect(phase: Phase, why = "") {
     assert.equal(this.phase, phase, why);
@@ -269,16 +286,16 @@ function playRound1InOrder(g: Game, ids: string[]) {
 }
 
 /** A room at the cut: safe 3 (the first three names), the rest in the wild card round. */
-function atTheCut(names: string[], config = testConfig()) {
-  const g = new Game(config);
+function atTheCut(names: string[], config = testConfig(), questions: QuizQuestion[] = FILE_QUESTIONS) {
+  const g = new Game(config, questions);
   const ids = names.map((n) => g.join(n));
   playRound1InOrder(g, ids);
   return { g, ids, safe: ids.slice(0, config.safe), wild: ids.slice(config.safe) };
 }
 
 /** Through the wild card round: `winner` gets every question right, everyone else wrong. */
-function toBlackout(names: string[], winnerIndex: number, config = testConfig()) {
-  const { g, ids, safe, wild } = atTheCut(names, config);
+function toBlackout(names: string[], winnerIndex: number, config = testConfig(), questions: QuizQuestion[] = FILE_QUESTIONS) {
+  const { g, ids, safe, wild } = atTheCut(names, config, questions);
   g.do({ type: "startWildCard" });
   const winner = ids[winnerIndex];
   for (let q = 0; q < config.wildCard.questions; q++) {
@@ -346,7 +363,30 @@ test("bots: any colour (wheel), shared bots allowed, names unique; lobby only", 
 // Round 1
 // ============================================================================
 
-test("round 1 scoring: instant = 1000, last moment ≈ 500, wrong 0; early time's up; moods; one 1–4 order", () => {
+test("round 1 scoring: 200 down to 100 by speed (0s 200, 4s 150, 8s 100), wrong or none 0", () => {
+  assert.deepEqual([R1_MAX_POINTS, R1_MIN_POINTS], [200, 100]);
+  assert.deepEqual([0, 4000, 8000, 7999, 2000, 9000, -50].map((ms) => round1Points(ms, 8000)), [200, 150, 100, 100, 175, 100, 200], "linear, clamped to the answer time");
+  const g = new Game(PRESETS.demo);
+  const [now, half, last, wrong, none] = ["Now", "Half", "Last", "Wrong", "None"].map((n) => g.join(n));
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  g.answer(now, "correct");
+  g.answerAt(half, "correct", 4000);
+  g.answerAt(wrong, "wrong", 5000);
+  g.answerAt(last, "correct", 8000 - 1);
+  g.tick();
+  g.expect("r1TimesUp");
+  assert.deepEqual([now, half, last, wrong, none].map((id) => g.person(id).score), [200, 150, 100, 0, 0]);
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "showLeaderboard" });
+  const board = g.host().stage;
+  assert.ok(board.phase === "r1Leaderboard" && board.rows.map((r) => r.score).join() === "200,150,100,0,0", "the leaderboard shows 100–200 a question");
+  // Ties on points: the lower total answer time ranks higher (a miss counts as the full 8s).
+  assert.deepEqual(board.phase === "r1Leaderboard" ? board.rows.slice(3).map((r) => r.id) : [], [wrong, none], "0 points each: the faster one first");
+});
+
+test("round 1: instant 200, last moment 100, wrong 0; early time's up; moods; one 1–4 order", () => {
   const g = new Game(PRESETS.demo);
   const fast = g.join("Fast");
   const slow = g.join("Slow");
@@ -376,8 +416,8 @@ test("round 1 scoring: instant = 1000, last moment ≈ 500, wrong 0; early time'
   g.answer(slow, "correct");
   g.answer(wrong, "wrong");
   g.expect("r1TimesUp", "everyone answered: time's up straight away");
-  assert.equal(g.person(fast).score, 1000);
-  assert.equal(g.person(slow).score, 500);
+  assert.equal(g.person(fast).score, 200);
+  assert.equal(g.person(slow).score, 100);
   assert.equal(g.person(wrong).score, 0);
   g.checkNoLeaks([fast, slow, wrong]);
 
@@ -711,16 +751,28 @@ test("predictions: 10 finalists; audience backs one and can change until Start B
 });
 
 // ============================================================================
-// Blackout
+// Blackout (autopilot)
 // ============================================================================
 
-test("blackout: head starts by rank; +3/+2/+1 by thirds; −1 wrong; 0 none; nobody caught at the reveal", () => {
+/** Flow buttons the quizmaster never gets in Blackout: the autopilot does all of it. */
+const FLOW_ACTIONS: AdminAction[] = [{ type: "showQuestion" }, { type: "nextQuestion" }, { type: "revealAnswer" }, { type: "advanceDarkness" }, { type: "showWinner" }];
+
+function assertNoFlowButtons(g: Game) {
+  for (const action of FLOW_ACTIONS) assert.deepEqual(g.try(action), { ok: false, reason: "not-allowed" }, `${action.type} is not allowed in ${g.phase}`);
+}
+
+test("blackout autopilot: one click; 6s intro, 5s read, 10s answer, holds; +3/+2/+1 by thirds of 10s, −1 wrong, 0 none; nobody caught at the reveal", () => {
   const config = testConfig({ safe: 5 }, { baseGap: 2, darkness: [1] });
+  const h = config.blackout.holds;
   const names = ["A", "B", "C", "D", "E", "F", "G"];
   const { g, ids } = toBlackout(names, 5, config);
   g.do({ type: "startBlackout" });
   g.expect("boIntro");
-  const [a, , , d, e, f] = ids;
+  assert.equal(g.admin().timer?.durationMs, h.introMs, "the intro holds 6s");
+  assert.deepEqual(g.admin().primary, { action: { type: "pause" }, label: "Pause" }, "the big button is Pause during the autopilot");
+  assert.equal(g.admin().autopilot?.step, "intro");
+  assertNoFlowButtons(g);
+  const [a, b, c, d, e, f] = ids;
   // Ranks 1–3 → +2, ranks 4–5 → +1, the wild card (F) → +0.
   assert.deepEqual(g.admin().blackout!.runners.map((r) => [r.name, r.position, r.headStart]), [
     ["A", 4, 2],
@@ -730,32 +782,38 @@ test("blackout: head starts by rank; +3/+2/+1 by thirds; −1 wrong; 0 none; nob
     ["E", 3, 1],
     ["F", 2, 0],
   ]);
-  assert.equal(g.admin().blackout!.dark, 0);
   const ready = g.screen(f);
-  assert.ok(ready.kind === "runnerStatus" && ready.alive && ready.gap === 2 && ready.headStart === 0);
+  assert.ok(ready.kind === "runnerStatus" && ready.alive && ready.gap === 2 && ready.headStart === 0 && ready.nextUp === "question");
   assert.equal(g.screen(ids[6]).kind, "blackoutWatch", "the audience watches");
 
-  // 8s answer time: thirds end at 2.667s and 5.333s.
-  assert.equal(g.primary(), "Show question");
+  g.next("boRead");
   assert.equal(g.host().timer?.durationMs, 5000, "5s read");
-  g.tick();
-  assert.equal(g.host().timer?.durationMs, 8000, "8s answer");
+  assert.match(g.admin().stepLabel, /^Blackout, question 1: reading \(autopilot\)$/);
+  assertNoFlowButtons(g);
+  const eyes = g.screen(a);
+  assert.ok(eyes.kind === "eyesUp" && eyes.round === 3 && eyes.gap === 4 && eyes.questionCount === null);
+  g.next("boAnswer");
+  assert.equal(g.host().timer?.durationMs, 10_000, "10s to answer");
   g.checkNoLeaks(ids);
   g.checkOneOrder(ids);
+  assertNoFlowButtons(g);
+  const preview = g.admin().darkPreview!;
+  assert.deepEqual([preview.steps, preview.to, preview.catches.length, preview.exact], [1, 1, 0, false], "Admin sees where the dark goes next");
   assert.equal(g.mood(a), "thinking");
-  g.answerAt(a, "correct", 500);
-  g.answerAt(ids[1], "correct", 3000);
-  g.answerAt(ids[2], "correct", 6000);
-  g.answerAt(d, "correct", 7900);
-  g.answerAt(e, "wrong", 7950);
+  g.answerAt(a, "correct", 1000);
+  g.answerAt(b, "correct", 5000);
+  g.answerAt(c, "correct", 9000);
+  g.answerAt(d, "correct", 9900);
+  g.answerAt(e, "wrong", 9950);
   // F doesn't answer.
-  assert.equal(g.mood(a), "locked");
-  g.tick();
-  g.expect("boTimesUp");
+  const locked = g.screen(a);
+  assert.ok(locked.kind === "lockedIn" && locked.gap === 4 && locked.choiceNumber >= 1 && locked.choiceNumber <= 4);
+  g.next("boTimesUp");
+  assert.equal(g.host().timer?.durationMs, h.timesUpMs, "time's up holds 1.5s");
   g.checkNoLeaks(ids);
   assert.deepEqual([g.mood(a), g.mood(f)], ["locked", "idle"]);
-  g.do({ type: "revealAnswer" });
-  g.expect("boReveal");
+  g.next("boReveal");
+  assert.equal(g.host().timer?.durationMs, h.revealMs + h.revealPerRunnerMs * 6, "the reveal holds 3s + 0.15s per runner");
   assert.deepEqual(g.admin().blackout!.runners.map((r) => [r.name, r.delta, r.position]), [
     ["A", 3, 7],
     ["B", 2, 6],
@@ -768,97 +826,240 @@ test("blackout: head starts by rank; +3/+2/+1 by thirds; −1 wrong; 0 none; nob
   const res = g.screen(e);
   assert.ok(res.kind === "runnerResult" && res.outcome === "wrong" && res.delta === -1 && res.gap === 2 && res.correctText);
   const miss = g.screen(f);
-  assert.ok(miss.kind === "runnerResult" && miss.outcome === "missed" && miss.delta === 0);
+  assert.ok(miss.kind === "runnerResult" && miss.outcome === "missed" && miss.delta === 0 && miss.position === 2, "no answer: stays put");
   assert.ok(g.admin().blackout!.runners.every((r) => r.alive), "nobody is caught at the reveal");
-  assert.equal(g.admin().primary?.label, "Advance the darkness");
+  assert.equal(g.admin().darkPreview?.exact, true, "after the moves the preview is final");
+  assertNoFlowButtons(g);
+  g.next("boDark");
+  assert.equal(g.host().timer?.durationMs, h.darkMs + h.darkPerStepMs * 1, "the dark's hold: 2.5s + 0.25s per step, nobody caught");
+  g.next("boRead");
+  assert.equal(g.admin().question?.number, 2, "the next question started by itself");
 });
 
-test("blackout: catches at Advance the darkness (position ≤ dark); catch order; one left → Show winner; no double advance", () => {
-  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2], questions: 6 });
+test("blackout autopilot: catches when the dark moves (position ≤ dark); catch order; one left → winner moment → podium, no clicks", () => {
+  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
+  const h = config.blackout.holds;
   const { g, ids, winner } = toBlackout(["A", "B", "C", "D", "E"], 3, config);
   const [a, b, c] = ids;
   g.do({ type: "startBlackout" });
+  g.next("boRead");
   // Start: A, B, C at 3 (rank +2), the wild card D at 1. The dark moves 2 per question.
   // Q1: A +3 (6), B wrong (2), C none (3), D none (1). Dark → 2: B (2) and D (1) caught.
-  g.playQuestion([[a, "correct", 500], [b, "wrong", 500]]);
-  const step = g.room.stepId;
-  assert.deepEqual(g.room.command(step, { type: "advanceDarkness" }), { ok: true });
-  assert.deepEqual(g.room.command(step, { type: "advanceDarkness" }), { ok: false, reason: "stale-step" }, "a double tap never moves the dark twice");
-  g.expect("boDark");
+  g.runnerQuestion([[a, "correct", 500], [b, "wrong", 500]]);
+  assert.deepEqual(g.admin().darkPreview!.catches.map((x) => x.id).sort(), [b, winner].sort(), "Admin's preview names who the dark will catch");
+  g.next("boDark");
+  assert.equal(g.host().timer?.durationMs, h.darkMs + h.darkPerStepMs * 2 + h.darkCaughtMs, "a catch holds 1.5s longer");
   const bo = g.admin().blackout!;
   assert.deepEqual([bo.dark, bo.darkFrom], [2, 0]);
-  assert.deepEqual(bo.caughtThisQuestion.sort(), [b, winner].sort());
+  assert.deepEqual([...bo.caughtThisQuestion].sort(), [b, winner].sort());
   assert.deepEqual([g.mood(b), g.mood(winner), g.mood(a)], ["out", "out", "idle"]);
   // Same question: B was further ahead (2) than D (1) before the dark moved → B places higher.
   assert.deepEqual([g.runner(b).place, g.runner(winner).place], [3, 4]);
   const gone = g.screen(b);
   assert.ok(gone.kind === "runnerStatus" && !gone.alive && gone.caughtNow && gone.place === 3);
   const still = g.screen(a);
-  assert.ok(still.kind === "runnerStatus" && still.alive && still.gap === 4);
-  assert.equal(g.admin().primary?.label, "Next question");
+  assert.ok(still.kind === "runnerStatus" && still.alive && still.gap === 4 && still.nextUp === "question");
 
   // Q2: caught runners can't answer. A right fast (9), C wrong (2). Dark → 4: C caught → A wins.
-  g.primary();
-  g.tick();
+  g.next("boRead");
+  g.next("boAnswer");
   assert.equal(g.screen(b).kind, "runnerStatus", "caught runners get no options");
   g.answer(a, "correct");
   g.answer(c, "wrong");
   g.expect("boTimesUp", "ends early when every runner still running has answered");
-  g.do({ type: "revealAnswer" });
-  g.do({ type: "advanceDarkness" });
+  g.next("boReveal");
+  g.next("boDark");
   assert.equal(g.admin().blackout!.over, true);
-  assert.equal(g.admin().primary?.label, "Show winner");
-  g.do({ type: "showWinner" });
-  g.expect("podium");
+  const last = g.screen(a);
+  assert.ok(last.kind === "runnerStatus" && last.nextUp === "winner");
+  g.next("boWinner");
+  assert.equal(g.host().timer?.durationMs, h.winnerMs, "the winner moment holds 7s");
+  const moment = g.host().stage;
+  assert.ok(moment.phase === "boWinner" && moment.blackout.winner?.id === a);
+  assert.equal(g.mood(a), "right");
+  assertNoFlowButtons(g);
+  g.next("podium");
   const podium = g.host().stage;
   assert.ok(podium.phase === "podium" && podium.basis === "blackout");
   if (podium.phase === "podium") assert.deepEqual(podium.entries.map((e) => e.id), [a, c, b, winner], "caught later ranks higher");
-  assert.equal(g.mood(a), "right");
   const won = g.screen(a);
   assert.ok(won.kind === "podium" && won.place === 1);
   const fourth = g.screen(winner);
   assert.ok(fourth.kind === "podium" && fourth.place === 4);
+  assert.equal(g.admin().autopilot, null, "the autopilot is done");
 });
 
-test("blackout: everyone caught at once → the best by catch order wins", () => {
+test("blackout autopilot: everyone caught at once → the best by catch order wins", () => {
   const config = testConfig({ safe: 2 }, { baseGap: 1, darkness: [9] });
   const { g, ids } = toBlackout(["A", "B", "C", "D"], 2, config);
   g.do({ type: "startBlackout" });
+  g.next("boRead");
   const [a, b, c] = ids;
   // A 3 → 4 (slow right), B 3 → 6 (fast right), C 1 → 1 (none). Dark → 9: all caught. B was furthest ahead.
-  g.playQuestion([[a, "correct", 7000], [b, "correct", 100]]);
-  g.do({ type: "advanceDarkness" });
+  g.runnerQuestion([[a, "correct", 9000], [b, "correct", 100]]);
+  g.next("boDark");
   assert.equal(g.admin().blackout!.alive, 0);
   assert.equal(g.admin().blackout!.winner?.id, b);
-  g.do({ type: "showWinner" });
+  g.next("boWinner");
+  g.next("podium");
   const p = g.host().stage;
   assert.ok(p.phase === "podium" && p.entries.map((e) => e.id).join() === [b, a, c].join());
 });
 
-test("blackout: survivors after the last question → furthest ahead, then lower time, then Round 1 rank", () => {
-  const config = testConfig({ safe: 3 }, { baseGap: 6, darkness: [1], questions: 2 });
-  const { g, ids } = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+test("blackout autopilot: questions run out with 2+ running → furthest ahead, then lower time, then Round 1 rank", () => {
+  // The event preset doesn't reuse questions: 2 Blackout questions only.
+  const config = testConfig({ name: "event", safe: 3 }, { baseGap: 6, darkness: [1] });
+  const { g, ids } = toBlackout(["A", "B", "C", "D", "E"], 3, config, questionSet(3, 6, 2));
   g.do({ type: "startBlackout" });
+  g.next("boRead");
   const [a, b, c, d] = ids;
   // Everyone far ahead of the dark. A and B tie on position; B's answers were faster.
-  g.playQuestion([[a, "correct", 3000], [b, "correct", 2900], [c, "wrong", 500], [d, "correct", 7000]]);
-  g.do({ type: "advanceDarkness" });
-  g.playQuestion([[a, "correct", 500], [b, "correct", 400], [c, "correct", 7000], [d, "correct", 7000]]);
-  g.do({ type: "advanceDarkness" });
-  assert.equal(g.admin().blackout!.over, true, "the last planned question ends it");
+  g.runnerQuestion([[a, "correct", 3000], [b, "correct", 2900], [c, "wrong", 500], [d, "correct", 9000]]);
+  assert.equal(g.admin().autopilot?.questionsLeft, 1);
+  g.next("boDark");
+  g.next("boRead");
+  g.runnerQuestion([[a, "correct", 500], [b, "correct", 400], [c, "correct", 9000], [d, "correct", 9000]]);
+  assert.equal(g.admin().blackout!.questionsLeft, 0);
+  g.next("boDark");
+  assert.equal(g.admin().blackout!.over, true, "out of questions ends it");
   assert.equal(g.admin().blackout!.alive, 4, "nobody was caught");
   assert.equal(g.runner(a).position, g.runner(b).position, "A and B are level");
   assert.equal(g.admin().blackout!.winner?.id, b, "level on position: lower total time wins");
-  g.do({ type: "showWinner" });
+  g.next("boWinner");
+  g.next("podium");
   const p = g.host().stage;
   assert.ok(p.phase === "podium" && p.entries[0].id === b && p.entries[1].id === a);
+});
+
+test("blackout: DARKNESS_STEPS past the end of the list repeat its last value", () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 12, 40].map((n) => darknessStep(PRESETS.event, n)), [1, 2, 2, 3, 3, 3, 3]);
+  const config = testConfig({ safe: 2 }, { baseGap: 20, darkness: [1, 3] });
+  const h = config.blackout.holds;
+  const { g, ids } = toBlackout(["A", "B", "C", "D"], 2, config);
+  g.do({ type: "startBlackout" });
+  const darks: number[] = [];
+  for (let q = 0; q < 4; q++) {
+    g.next("boRead");
+    g.runnerQuestion(ids.slice(0, 3).map((id) => [id, "correct", 500] as [string, Pick, number]));
+    g.next("boDark");
+    darks.push(g.admin().blackout!.dark);
+  }
+  assert.deepEqual(darks, [1, 4, 7, 10], "1, then 3 for every question after");
+  assert.equal(g.host().timer?.durationMs, h.darkMs + h.darkPerStepMs * 3);
+});
+
+test("blackout autopilot: Pause in every step freezes the clock; Resume carries on from the same moment", () => {
+  const config = testConfig({ safe: 2 }, { baseGap: 1, darkness: [2] });
+  const { g, ids } = toBlackout(["A", "B", "C", "D"], 2, config);
+  const [a] = ids;
+  g.do({ type: "startBlackout" });
+  const visited = new Set<Phase>();
+  while (g.phase !== "podium") {
+    const phase = g.phase;
+    g.clock.advance(300);
+    const before = g.admin().timer!;
+    const left = before.endsAt - g.clock.now();
+    g.do({ type: "pause" });
+    assert.ok(g.host().paused && g.admin().autopilot?.paused, `paused in ${phase}`);
+    assert.equal(g.admin().timer?.remainingMs, left, `frozen in ${phase}`);
+    assert.deepEqual(g.admin().primary, { action: { type: "resume" }, label: "Resume" });
+    g.clock.advance(60_000);
+    g.expect(phase, `nothing moves while paused (${phase})`);
+    assert.equal(g.admin().autopilot?.nextInMs, left);
+    g.do({ type: "resume" });
+    assert.equal(g.admin().timer!.endsAt - g.clock.now(), left, `resume continues from the same moment (${phase})`);
+    visited.add(phase);
+    if (phase === "boAnswer") g.answer(a, "correct");
+    g.tick();
+  }
+  for (const phase of ["boIntro", "boRead", "boAnswer", "boTimesUp", "boReveal", "boDark", "boWinner"] as Phase[]) assert.ok(visited.has(phase), `paused in ${phase}`);
+});
+
+test("blackout autopilot: Skip, +5s, Restart question, Void, Remove participant and End quiz now; it carries on by itself", () => {
+  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
+  const h = config.blackout.holds;
+  const { g, ids, winner } = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  const [a, b, c] = ids;
+  g.do({ type: "startBlackout" });
+  g.do({ type: "skipTimer" });
+  g.expect("boRead", "Skip ends the intro now");
+  assert.ok(!g.admin().allowed.includes("addTime"), "+5s only while answering");
+  g.do({ type: "skipTimer" });
+  g.expect("boAnswer");
+  g.do({ type: "addTime" });
+  assert.equal(g.admin().timer?.durationMs, 15_000);
+  g.answerAt(a, "correct", 4500); // the first third of 15s ends at 5s
+  g.answerAt(b, "wrong", 4600);
+  g.do({ type: "skipTimer" });
+  g.expect("boTimesUp");
+  g.do({ type: "skipTimer" });
+  g.expect("boReveal");
+  assert.equal(g.runner(a).delta, 3, "+5s widens the thirds");
+  const oldId = g.admin().question!.id;
+  g.do({ type: "restartQuestion" });
+  g.expect("boRead", "restart question replays it");
+  assert.deepEqual([g.runner(a).position, g.runner(b).position], [3, 3], "its moves are undone");
+  assert.ok(g.admin().question!.id !== oldId && g.admin().question!.number === 1, "same number, fresh ids");
+
+  g.runnerQuestion([[a, "correct", 500], [b, "wrong", 500]]);
+  g.next("boDark");
+  assert.deepEqual([g.runner(b).alive, g.runner(winner).alive], [false, false]);
+  assert.ok(!g.admin().allowed.includes("restartQuestion"), "no restart once the dark has moved");
+  assert.equal(g.try({ type: "restartQuestion" }).ok, false);
+
+  g.next("boRead");
+  g.do({ type: "voidQuestion" });
+  g.expect("boReveal");
+  assert.equal(g.host().timer?.durationMs, h.voidMs);
+  const vs = g.screen(a);
+  assert.ok(vs.kind === "runnerResult" && vs.outcome === "voided" && vs.delta === 0);
+  assert.equal(g.admin().blackout!.dark, 2, "void: the dark doesn't move");
+  assert.equal(g.admin().darkPreview, null);
+  g.next("boRead");
+  assert.equal(g.admin().question?.number, 2, "the next question takes the voided one's number");
+
+  // Removing a runner that leaves one running: the winner moment comes straight away.
+  g.do({ type: "removeParticipant", participantId: c });
+  g.expect("boWinner");
+  assert.equal(g.admin().blackout!.winner?.id, a);
+  g.next("podium");
+  const p = g.host().stage;
+  assert.ok(p.phase === "podium" && !p.entries.some((x) => x.id === c), "removed runners aren't placed");
+
+  const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  t.g.do({ type: "startBlackout" });
+  t.g.next("boRead");
+  t.g.next("boAnswer");
+  t.g.do({ type: "endQuiz" });
+  t.g.expect("podium", "End quiz now goes straight to the podium");
+  assert.equal(t.g.clock.runNext(), false, "no autopilot timer left running");
+});
+
+test("blackout autopilot: a stale Pause or Skip is ignored; a double tap never skips two steps", () => {
+  const config = testConfig({ safe: 2 }, { baseGap: 4, darkness: [1] });
+  const { g } = toBlackout(["A", "B", "C", "D"], 2, config);
+  g.do({ type: "startBlackout" });
+  g.next("boRead");
+  const reading = g.room.stepId;
+  g.next("boAnswer");
+  assert.deepEqual(g.room.command(reading, { type: "pause" }), { ok: false, reason: "stale-step" }, "a Pause aimed at a step that has passed does nothing");
+  assert.deepEqual(g.room.command(reading, { type: "skipTimer" }), { ok: false, reason: "stale-step" });
+  assert.equal(g.admin().paused, false);
+  const answering = g.room.stepId;
+  assert.deepEqual(g.room.command(answering, { type: "skipTimer" }), { ok: true });
+  assert.deepEqual(g.room.command(answering, { type: "skipTimer" }), { ok: false, reason: "stale-step" }, "the second tap of a double tap is ignored");
+  g.expect("boTimesUp");
+  const at = g.room.stepId;
+  assert.deepEqual(g.room.command(at, { type: "pause" }), { ok: true });
+  assert.deepEqual(g.room.command(at, { type: "pause" }), { ok: false, reason: "not-allowed" }, "already paused");
+  assert.deepEqual(g.room.command(at - 5, { type: "resume" }), { ok: true }, "Resume works from any step");
 });
 
 // ============================================================================
 // Fixing mistakes, in every round
 // ============================================================================
 
-test("void and restart question: round 1, wild card and Blackout (positions, the dark and catches undone)", () => {
+test("void and restart question: round 1 and the wild card", () => {
   // Round 1
   const g = new Game(PRESETS.demo);
   const a = g.join("A");
@@ -908,48 +1109,9 @@ test("void and restart question: round 1, wild card and Blackout (positions, the
   w.g.do({ type: "restartQuestion" });
   assert.deepEqual([w.g.person(d).wildCorrect, w.g.person(e).wildCorrect], [0, 0], "restart undoes the tallies");
   w.g.expect("wcRead");
-
-  // Blackout: a catch, then restart → the dark, the moves and the catch are undone. Void → no moves.
-  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
-  const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
-  t.g.do({ type: "startBlackout" });
-  const [ra, rb] = t.ids;
-  t.g.playQuestion([[ra, "correct", 500], [rb, "wrong", 500]]);
-  t.g.do({ type: "advanceDarkness" });
-  assert.equal(t.g.runner(rb).alive, false);
-  t.g.do({ type: "restartQuestion" });
-  t.g.expect("boRead");
-  assert.equal(t.g.admin().blackout!.dark, 0, "the dark goes back");
-  assert.deepEqual([t.g.runner(ra).position, t.g.runner(rb).alive, t.g.runner(rb).position], [3, true, 3], "moves and catches undone");
-  assert.equal(t.g.admin().question?.number, 1);
-  t.g.tick();
-  t.g.answer(ra, "correct");
-  t.g.tick();
-  t.g.do({ type: "revealAnswer" });
-  assert.equal(t.g.runner(ra).position, 6);
-  t.g.do({ type: "voidQuestion" });
-  assert.equal(t.g.runner(ra).position, 3, "void: no moves");
-  assert.equal(t.g.admin().blackout!.dark, 0, "void: the dark doesn't move");
-  const vs = t.g.screen(ra);
-  assert.ok(vs.kind === "runnerResult" && vs.outcome === "voided" && vs.delta === 0);
-  assert.ok(!t.g.admin().allowed.includes("advanceDarkness"), "no dark after a void");
-  t.g.primary();
-  assert.equal(t.g.admin().question?.number, 1, "the next spare takes its number");
 });
 
-test("void with no spare left: the round ends one question early", () => {
-  const config = testConfig({ safe: 2 }, { baseGap: 9, darkness: [1], questions: 1, spares: 0 });
-  const { g, ids } = toBlackout(["A", "B", "C"], 2, { ...config, blackout: { ...config.blackout } });
-  g.do({ type: "startBlackout" });
-  g.playQuestion([[ids[0], "correct", 500]]);
-  g.do({ type: "voidQuestion" });
-  assert.match(g.admin().hint ?? "", /No spare questions left/);
-  assert.equal(g.admin().primary?.label, "Show winner");
-  g.do({ type: "showWinner" });
-  g.expect("podium");
-});
-
-test("restart round: Round 1 to 0, wild card tallies to 0, Blackout back to the start", () => {
+test("restart round: Round 1 to 0, wild card tallies to 0, Blackout back to the start (the autopilot starts again)", () => {
   const w = atTheCut(["A", "B", "C", "D", "E"]);
   w.g.do({ type: "restartRound" });
   w.g.expect("r1Intro", "restart Round 1 from the cut");
@@ -965,12 +1127,16 @@ test("restart round: Round 1 to 0, wild card tallies to 0, Blackout back to the 
   const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
   const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
   t.g.do({ type: "startBlackout" });
-  t.g.playQuestion([[t.ids[0], "correct", 500]]);
-  t.g.do({ type: "advanceDarkness" });
+  t.g.next("boRead");
+  t.g.runnerQuestion([[t.ids[0], "correct", 500]]);
+  t.g.next("boDark");
   t.g.do({ type: "restartRound" });
   t.g.expect("boIntro");
+  assert.equal(t.g.admin().timer?.durationMs, config.blackout.holds.introMs);
   const bo = t.g.admin().blackout!;
   assert.ok(bo.dark === 0 && bo.runners.every((r) => r.alive && r.position === r.headStart + 1), "positions back to the start");
+  t.g.next("boRead");
+  assert.equal(t.g.admin().question?.number, 1);
 });
 
 test("remove: a wild card player mid-round; seat hand-over before the first Blackout question; a runner mid-chase", () => {
@@ -1003,11 +1169,12 @@ test("remove: a wild card player mid-round; seat hand-over before the first Blac
   const config = testConfig({ safe: 3 }, { baseGap: 4, darkness: [1] });
   const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
   t.g.do({ type: "startBlackout" });
-  t.g.playQuestion([[t.ids[0], "correct", 500]]);
+  t.g.next("boRead");
+  t.g.runnerQuestion([[t.ids[0], "correct", 500]]);
   t.g.do({ type: "removeParticipant", participantId: t.ids[1] });
   assert.equal(t.g.admin().blackout!.runners.length, 3, "out of the chase");
   assert.equal(t.g.admin().finalists.length, 3, "no promotion once Blackout has started");
-  t.g.do({ type: "advanceDarkness" });
+  t.g.next("boDark");
   t.g.do({ type: "endQuiz" });
   const p = t.g.host().stage;
   assert.ok(p.phase === "podium" && !p.entries.some((x) => x.id === t.ids[1]), "removed runners aren't placed");
@@ -1035,15 +1202,16 @@ test("end quiz now: before the cut, during the wild card round, during Blackout"
   const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
   const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
   t.g.do({ type: "startBlackout" });
-  t.g.playQuestion([[t.ids[2], "correct", 500], [t.ids[0], "wrong", 500]]);
-  t.g.do({ type: "advanceDarkness" });
+  t.g.next("boRead");
+  t.g.runnerQuestion([[t.ids[2], "correct", 500], [t.ids[0], "wrong", 500]]);
+  t.g.next("boDark");
   t.g.do({ type: "endQuiz" });
   const r = t.g.host().stage;
   assert.ok(r.phase === "podium" && r.basis === "blackout");
   if (r.phase === "podium") assert.deepEqual(r.entries.map((e) => e.id).slice(0, 2), [t.ids[2], t.ids[1]], "still running by position, then caught ones");
 });
 
-test("timers: pause freezes, resume continues, +5 seconds, skip; thirds use the extended time", () => {
+test("timers: pause freezes, resume continues, +5 seconds, skip; points use the extended time", () => {
   const g = new Game(PRESETS.demo);
   const a = g.join("A");
   g.join("B");
@@ -1064,21 +1232,10 @@ test("timers: pause freezes, resume continues, +5 seconds, skip; thirds use the 
   g.answer(a, "correct");
   g.do({ type: "skipTimer" });
   g.expect("r1TimesUp");
-  assert.equal(g.person(a).score, 917, "speed points use the extended time: 500 + 500 × (1 − 3/18)");
-
-  const config = testConfig({ safe: 2 }, { baseGap: 4, darkness: [1] });
-  const t = toBlackout(["A", "B", "C"], 2, config);
-  t.g.do({ type: "startBlackout" });
-  t.g.primary();
-  t.g.tick();
-  t.g.do({ type: "addTime" }); // 13s answer time: the first third ends at 4.33s
-  t.g.answerAt(t.ids[0], "correct", 4000);
-  t.g.do({ type: "skipTimer" });
-  t.g.do({ type: "revealAnswer" });
-  assert.equal(t.g.runner(t.ids[0]).delta, 3, "4s into a 13s window is still the first third");
+  assert.equal(g.person(a).score, 183, "speed points use the extended time: 200 − 100 × 3/18");
 });
 
-test("stepId: stale or repeated commands are ignored (Reveal wild card and Advance the darkness too)", () => {
+test("stepId: stale or repeated commands are ignored (Pause and Skip too; Reveal wild card)", () => {
   const g = new Game(PRESETS.demo);
   g.join("A");
   g.join("B");
@@ -1090,7 +1247,8 @@ test("stepId: stale or repeated commands are ignored (Reveal wild card and Advan
   const reading = g.room.stepId;
   g.tick();
   assert.deepEqual(g.room.command(reading, { type: "skipTimer" }), { ok: false, reason: "stale-step" }, "a late Skip doesn't skip the answer step");
-  assert.deepEqual(g.room.command(reading, { type: "pause" }), { ok: true }, "pause works whatever the step");
+  assert.deepEqual(g.room.command(reading, { type: "pause" }), { ok: false, reason: "stale-step" }, "a late Pause is ignored");
+  assert.deepEqual(g.room.command(g.room.stepId, { type: "pause" }), { ok: true });
   assert.deepEqual(g.try({ type: "revealAnswer" }), { ok: false, reason: "not-allowed" });
 
   const w = atTheCut(["A", "B", "C", "D", "E"]);
@@ -1109,9 +1267,9 @@ test("room code and sound toggles; results CSV with the v3 columns", () => {
   g.do({ type: "setSound", on: false });
   assert.equal(g.host().soundOn, false);
   g.do({ type: "startBlackout" });
-  g.playQuestion([[ids[0], "correct", 500]]);
-  g.do({ type: "advanceDarkness" });
-  g.do({ type: "showWinner" });
+  g.next("boRead");
+  g.runnerQuestion([[ids[0], "correct", 500]]);
+  while (g.phase !== "podium") g.tick();
   const { csv, filename } = g.room.resultsCsv();
   assert.equal(filename, "hermes-quiz-TEST-results.csv");
   const lines = csv.split("\r\n");
@@ -1155,7 +1313,6 @@ function libraryQuiz(): Quiz {
     round1AnswerSeconds: 9,
     safe: 2,
     wildCardQuestions: 1,
-    blackoutQuestions: 2,
     blackoutReadSeconds: 4,
     blackoutAnswerSeconds: 7,
   };
@@ -1210,11 +1367,12 @@ test("quiz library: a quiz's settings and per-question timers reach the game; ea
   g.do({ type: "revealAnswer" });
   g.do({ type: "revealWildCard" });
   g.do({ type: "startBlackout" });
-  g.do({ type: "showQuestion" });
+  g.next("boRead");
   assert.equal(g.admin().question?.text, "Dark one", "the Blackout list");
   assert.equal(g.admin().timer?.durationMs, 4000, "Blackout read time");
   g.tick();
   assert.equal(g.admin().timer?.durationMs, 7000, "Blackout answer time");
+  assert.equal(g.admin().blackout?.questionsLeft, 2, "Blackout plays its whole list, spares too");
 });
 
 test("quiz library: checks, imports, export round trip, cleaning network input, quizzes saved before v3", () => {
@@ -1222,7 +1380,8 @@ test("quiz library: checks, imports, export round trip, cleaning network input, 
   const empty: Quiz = { ...quiz, title: " ", round1: [], wildcard: [], blackout: [] };
   const problems = quizProblems(empty);
   assert.ok(problems.some((p) => p.includes("title")) && problems.some((p) => p.includes("Round 1 question")) && problems.some((p) => p.includes("Blackout question")));
-  assert.ok(quizProblems({ ...quiz, rules: { ...quiz.rules, blackoutQuestions: 9 } }).some((p) => p.includes("Blackout is set to 9 questions but the list has 3")));
+  assert.ok(quizProblems(quiz, 12).some((p) => p.includes("Blackout needs at least 12 questions")), "the event asks for 12+ Blackout questions");
+  assert.deepEqual(quizProblems(quiz, 3), []);
 
   const text = importText(
     "What does LLM stand for?\n* Large Language Model\nLinear Logic Machine\nLayered Learning Matrix\nLong-term Language Memory\n\n" +
@@ -1275,6 +1434,7 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
   let views = 0;
   const start = performance.now();
   let slowestRefresh = 0;
+  let blackoutClicks = 0;
 
   while (g.phase !== "podium") {
     assert.ok(guard++ < 20_000, `${label}: the quiz should finish`);
@@ -1289,10 +1449,19 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
     if (admin.primary) assert.ok(admin.allowed.includes(admin.primary.action.type), `${label}: primary allowed in ${g.phase}`);
     g.checkNoLeaks(ids);
 
+    // Blackout: after Start Blackout nothing is clicked; the big button is Pause.
+    if (["boIntro", "boRead", "boTimesUp", "boReveal", "boDark", "boWinner"].includes(g.phase)) {
+      assert.equal(admin.primary?.action.type, "pause", `${label}: Pause is the big button in ${g.phase}`);
+      if (g.phase === "boDark") {
+        const bo = admin.blackout!;
+        assert.ok(bo.runners.filter((r) => !r.alive).every((r) => r.place !== null), `${label}: caught runners have a place`);
+      }
+      g.tick();
+      continue;
+    }
     switch (g.phase) {
       case "r1Read":
       case "wcRead":
-      case "boRead":
         g.tick();
         continue;
       case "r1Answer":
@@ -1339,16 +1508,15 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
         break;
       case "wcWinner":
         assert.equal(g.admin().finalists.length, Math.min(config.safe + 1, count), `${label}: ${config.safe + 1} finalists`);
-        break;
+        g.do({ type: "openPredictions" });
+        continue;
       case "predictions": {
         const finalists = g.admin().finalists.map((f) => f.id);
         for (const id of ids) if (g.screen(id).kind === "backFinalist") g.room.back(id, finalists[Math.floor(rng() * finalists.length)]);
-        break;
-      }
-      case "boDark": {
-        const bo = g.admin().blackout!;
-        assert.ok(bo.runners.filter((r) => !r.alive).every((r) => r.place !== null), `${label}: caught runners have a place`);
-        break;
+        // One click: the autopilot takes it from here to the podium.
+        g.do({ type: "startBlackout" });
+        blackoutClicks += 1;
+        continue;
       }
     }
     g.primary();
@@ -1356,6 +1524,7 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
 
   const podium = g.host().stage;
   assert.ok(podium.phase === "podium" && podium.basis === "blackout", `${label}: the podium after Blackout`);
+  assert.equal(blackoutClicks, 1, `${label}: one Start Blackout click, then the podium came by itself`);
   if (podium.phase === "podium") {
     assert.equal(podium.entries.length, Math.min(config.safe + 1, count), `${label}: every finalist placed`);
     assert.deepEqual(podium.entries.map((e) => e.place), podium.entries.map((_, i) => i + 1), `${label}: places 1…n`);
@@ -1364,7 +1533,7 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
     assert.equal(g.host().cast.filter((c) => c.mood === "right").length, 1, `${label}: one winning bot`);
   }
   if (checkCoverage) {
-    for (const phase of ["r1Intro", "r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "cut", "wcIntro", "wcRead", "wcAnswer", "wcTimesUp", "wcReveal", "wcWinner", "predictions", "boIntro", "boRead", "boAnswer", "boTimesUp", "boReveal", "boDark"] as Phase[]) {
+    for (const phase of ["r1Intro", "r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "cut", "wcIntro", "wcRead", "wcAnswer", "wcTimesUp", "wcReveal", "wcWinner", "predictions", "boIntro", "boRead", "boAnswer", "boTimesUp", "boReveal", "boDark", "boWinner"] as Phase[]) {
       assert.ok(seen.has(phase), `${label}: phase ${phase} happened`);
     }
   }
@@ -1385,16 +1554,21 @@ const summaries = [
 ];
 for (const s of summaries) console.log(`✓ full game, ${s.summary}`);
 
-// Many seeds at event size: no exceptions, always exactly one winner.
-const seeds = process.env.GAME_PRESET === "event" ? 50 : 20;
+// 50 full 100-player event games: no exceptions, exactly one winner, the podium on its own.
+const seeds = 50;
 let suddenDeaths = 0;
 const lengths: number[] = [];
 for (let seed = 100; seed < 100 + seeds; seed++) {
-  const r = playFull("event seed", PRESETS.event, EVENT_QUESTIONS, 60 + (seed % 41), seed, false);
+  const r = playFull("event seed", PRESETS.event, EVENT_QUESTIONS, 100, seed, false);
   if (r.suddenDeath) suddenDeaths += 1;
   lengths.push(r.blackoutLength);
 }
-for (let seed = 300; seed < 340; seed++) playFull("demo seed", PRESETS.demo, FILE_QUESTIONS, 4 + (seed % 6), seed, false);
+const demoLengths: number[] = [];
+for (let seed = 300; seed < 340; seed++) demoLengths.push(playFull("demo seed", PRESETS.demo, FILE_QUESTIONS, 4 + (seed % 6), seed, false).blackoutLength);
 lengths.sort((a, b) => a - b);
-console.log(`✓ ${seeds} more event games of 60–100 players (Blackout lasted ${lengths[0]}–${lengths[lengths.length - 1]} questions, median ${lengths[Math.floor(lengths.length / 2)]}; ${suddenDeaths} wild card sudden deaths) and 40 demo games`);
+demoLengths.sort((a, b) => a - b);
+console.log(
+  `✓ ${seeds} more 100-player event games (Blackout lasted ${lengths[0]}–${lengths[lengths.length - 1]} questions, median ${lengths[Math.floor(lengths.length / 2)]}; ` +
+    `${suddenDeaths} wild card sudden deaths) and 40 demo games (Blackout median ${demoLengths[20]}, ${demoLengths.filter((n) => n <= 6).length} of 40 within 6 questions)`,
+);
 console.log(`\nAll ${results.length + summaries.length + 1} checks passed.`);

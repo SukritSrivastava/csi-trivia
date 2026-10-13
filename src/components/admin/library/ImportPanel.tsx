@@ -216,7 +216,7 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
         </Panel>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-line bg-void/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-sm">
+      <div className="fixed inset-x-0 bottom-0 border-t border-line bg-void px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto grid max-w-2xl grid-cols-[2fr_1fr] gap-2">
           <button type="button" className="phone-go min-h-14 text-[1.8rem]" disabled={count === 0} onClick={() => result && onAdd(result)} data-testid="import-add">
             {count ? `ADD ${count} QUESTION${count === 1 ? "" : "S"}` : "NOTHING TO ADD"}

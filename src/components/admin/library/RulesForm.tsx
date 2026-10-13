@@ -115,15 +115,14 @@ export function RulesForm({ quiz, onChange }: { quiz: Quiz; onChange: (rules: Qu
 
       <Panel title="Blackout (the finalists)">
         <div className="divide-y divide-line">
-          <Stepper
-            label="Questions"
-            hint={`Of the ${quiz.blackout.length} in the Blackout list; the rest are spares for voids.`}
-            value={r.blackoutQuestions}
-            min={1}
-            max={Math.max(1, quiz.blackout.length)}
-            onChange={set("blackoutQuestions")}
-            testId="rule-blackoutQuestions"
-          />
+          <div className="py-3" data-testid="rule-blackoutQuestions">
+            <p className="font-type text-[16px] text-ghost">
+              Questions: <span className="font-term text-2xl leading-none text-amber">{quiz.blackout.length}</span> in the list
+            </p>
+            <p className="mt-1 text-[14px] text-fog">
+              Blackout runs on autopilot and plays the list top to bottom until one runner is left. The event needs at least 12; 15 or more is safer (voids use them up).
+            </p>
+          </div>
           <Stepper label="Time to read" hint="Question on the projector, answers not yet on phones." value={r.blackoutReadSeconds} min={read.min} max={read.max} unit="seconds" onChange={set("blackoutReadSeconds")} />
           <Stepper label="Time to answer" hint="Right in the first third: +3, middle: +2, last: +1. Wrong: −1." value={r.blackoutAnswerSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("blackoutAnswerSeconds")} />
         </div>

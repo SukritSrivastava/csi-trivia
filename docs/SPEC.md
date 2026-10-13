@@ -1,4 +1,14 @@
-# Hermes Quiz: spec (v3)
+# Hermes Quiz: spec (v3.1)
+
+**v3.1 (14 Oct 2026, night): what changed.**
+- **Round 1 scoring is 200 → 100:** correct = `round(200 − 100 × elapsed / limit)` (an instant
+  answer scores 200, one at the last moment 100); wrong or none = 0.
+- **Blackout runs on autopilot.** The quizmaster clicks **Start Blackout** once; the server runs
+  every question (5 s read, **10 s to answer**), the reveal, the dark and the winner moment by
+  itself, then shows the podium. No fixed question count: it plays every Blackout question until
+  one runner is left. The quizmaster keeps Pause / Resume, Skip, +5 s, Void, Restart question,
+  Restart round, End quiz now and Remove.
+- **No glow:** light is flat and crisp (see Look).
 
 **v3 (14 Oct 2026): three rounds, no buzzer round.** After Round 1 the top 9 are safe; everyone
 else plays a **wild card** round for the 10th seat; then the 10 finalists play **Blackout**, a chase
@@ -30,14 +40,16 @@ shared (any colour, unique names). Anything marked **Default** below is a settin
 
 ## Who controls what
 
-The quizmaster drives everything from Admin. Nothing moves to the next step on its own, except the
-timers that run once the quizmaster starts a question:
+The quizmaster drives Round 1 and the wild card round from Admin. Nothing moves to the next step on
+its own there, except the timers that run once the quizmaster starts a question: after **Show
+question**, the **8s read** then the **8s answer**. When a timer ends, the room holds and waits for
+the quizmaster's next click.
 
-- Round 1 and wild card: after **Show question**, the **8s read** then the **8s answer**.
-- Blackout: after **Show question**, the **5s read** then the **8s answer**.
+**Blackout runs on autopilot** (v3.1): after **Start Blackout** every step starts by itself, each
+held long enough for the Host animation, until the podium. The quizmaster can still pause it or fix
+a mistake (see Admin controls).
 
-When a timer ends, the room holds and waits for the quizmaster's next click. An answer step also
-ends early when everyone who can answer it has answered.
+An answer step ends early when everyone who can answer it has answered.
 
 ## Flow
 
@@ -70,7 +82,10 @@ For each question the quizmaster clicks through:
 | Leaderboard | **Show leaderboard** (click, optional) | top 10 so far | unchanged |
 | Next | **Next question** (click) | the next question's read step | "Eyes up" |
 
-- **Scoring:** correct = `round(500 + 500 × (1 − elapsed / limit))`; wrong or no answer = 0.
+- **Scoring (v3.1):** correct = `round(200 − 100 × elapsed / limit)`, elapsed clamped to
+  [0, limit]: an instant answer scores **200**, one at the last moment **100**, linear in between
+  (4 s into 8 s = 150). Wrong or no answer = 0. Up to 4000 over 20 questions. The two numbers live
+  in one place: `R1_MAX_POINTS` / `R1_MIN_POINTS` in `server/config.ts`.
 - **Ties:** lower total answer time ranks higher (a miss counts as the full answer time).
 - **Late joiners** play from the next question whose answers haven't opened yet (joining during a
   read step = they play that question); earlier questions count as missed for the tie-break.
@@ -83,8 +98,8 @@ For each question the quizmaster clicks through:
   `wildcard`). Anyone joining after the cut joins as **audience**.
 - **Fewer than 10 played Round 1:** everyone who played is a finalist and the wild card round is
   skipped (Admin's next step becomes Open predictions / Start Blackout).
-- Host: the ranked list with the cut line under 9th; the safe bots glow (mood right), the wild card
-  players wait (mood idle: nobody is out yet).
+- Host: the ranked list with the cut line under 9th; the safe bots light up (mood right, mint
+  names), the wild card players wait (mood idle: nobody is out yet).
 - Phones: "You're through to Blackout" or "You're in the wild card round", with their rank. This is
   the only time a Round 1 rank shows on a phone.
 - Default: **9 safe** at the event; **3** in the demo preset (so the wild card round runs with a few tabs).
@@ -123,44 +138,57 @@ For each question the quizmaster clicks through:
   standing escapes and wins.
 - **Track:** whole steps. The dark starts at step 0. Each runner starts at `BASE_GAP` + a head
   start by Round 1 rank: ranks 1–3 → +2, ranks 4–9 → +1, the wild card → +0.
-- **Each question, the quizmaster clicks:**
-  1. **Show question** → 5s read (no options) → 8s answer (the 4 options numbered 1–4, the same
-     order on the Host and every runner's phone; first tap locks) → time's up (holds; ends early
-     when every runner still running has answered).
-  2. **Reveal answer**: the correct answer shows and runners move. Correct: **+3** if the answer
-     arrived in the first third of the answer time (elapsed < limit / 3), **+2** in the middle
-     third, **+1** in the last third. Wrong: **−1** (never below step 0). No answer: **0**.
-  3. **Advance the darkness**: the dark moves forward by `DARKNESS_STEPS[question]` (a config
-     list). Every runner whose position ≤ the dark's new position is **caught**: they stay a
-     finalist, `caughtOnQuestion` = this question's number, mood out.
-  4. **Next question**, or **Show winner** once it's over.
+- **Autopilot (v3.1).** The quizmaster clicks **Start Blackout** once. The server then runs every
+  step by itself; every duration lives in `server/config.ts`:
+  0. **Intro**: the runners at their start positions, held **6 s**.
+  1. **Read**: **5 s**, the question, no options.
+  2. **Answer**: **10 s**, the 4 options numbered 1–4 (the same order on the Host and every
+     runner's phone; first tap locks). Ends early once every runner still running has answered.
+  3. **Time's up**: held **1.5 s**.
+  4. **Reveal**: the correct answer shows and runners move. Correct: **+3** if the answer arrived
+     in the first third of the answer time (elapsed < limit / 3, so < 3.33 s of 10 s), **+2** in
+     the middle third, **+1** in the last third. Wrong: **−1** (never below step 0). No answer:
+     **0** (they stay put). Held **3 s + 0.15 s per runner still running**.
+  5. **The dark moves** forward by `DARKNESS_STEPS[question]` (a config list; past its end, its
+     last value repeats). Every runner whose position ≤ the dark's new position is **caught**:
+     they stay a finalist, `caughtOnQuestion` = this question's number, mood out. Held **2.5 s +
+     0.25 s per step the dark moved + 1.5 s if anyone was caught**.
+  6. Then the next question's read step starts by itself, or, once it's over, the **winner
+     moment** (held **7 s**) and then the **podium**, by itself.
 - A runner who steps back onto or behind the dark at the reveal is **not** caught then; catches
-  only happen at Advance the darkness (the drama stays in one beat).
+  only happen when the dark moves (the drama stays in one beat).
+- Every autopilot step gets a new step id, so a stale Pause / Skip / Void sent from a step that
+  has already passed is ignored, and a double tap never skips two steps.
 - **Catch order** (for places): caught on a later question ranks higher. Caught on the same
   question: the one who was further ahead before the dark moved ranks higher; then lower total
   Blackout answer time (a wrong answer or miss counts as the full answer time); then better
   Round 1 rank.
-- **The end:**
-  - after Advance the darkness, exactly one runner left → they win;
+- **The end** (the winner moment and the podium follow by themselves in every case):
+  - after the dark moves, exactly one runner left → they win;
   - every runner still running caught on the same question → the best of them by catch order wins;
-  - two or more still running after the last planned question (Default 12) → the one furthest
-    ahead wins; tie → lower total Blackout answer time; then better Round 1 rank.
-  - **Show winner** is always a click, never automatic.
-- Questions: the quiz's **Blackout** list (in `data/questions.json`: tagged `round: 3`, then
-  untagged unused ones). Default **12** at the event plus **3 spares**, used only to replace voided
-  questions. Demo: 6 questions and 1 spare.
+  - the questions run out with two or more still running → the one furthest ahead wins; tie →
+    lower total Blackout answer time; then better Round 1 rank.
+- Questions: the quiz's **Blackout** list, in order (in `data/questions.json`: every question
+  tagged `round: 3`, then untagged unused ones). **No fixed count and no spares:** questions keep
+  coming until the chase ends; a voided question simply doesn't count and the next one comes. The
+  event needs **at least 12** Blackout questions to open a room (the server warns below 15). Demo:
+  at least 8 (the demo reuses its few questions).
+- Tuning (from `npm run tune-blackout`, 10 s answers): event `BASE_GAP` 6, `DARKNESS_STEPS`
+  [1, 2, 2, 3] (3 from then on): the first catch around Q3–4, decided around Q10. Demo `BASE_GAP` 2,
+  [1, 2].
 - **Moods:** read → idle; answer → thinking (not answered) / locked (answered); time's up →
   locked / idle; reveal → right / wrong (no answer → idle); after the dark moves → caught runners
   out, survivors idle; podium → the winner right.
-- **Runner phones:** Eyes up → the 4 options → Locked in → after the reveal "CORRECT +3" /
-  "WRONG −1" / "Too slow: no move" (with "It was …" when wrong or missed) and their distance from
-  the dark; after the dark moves "Still running: 2 steps ahead of the dark" or "The darkness got
-  you" with their final place.
+- **Runner phones** (the screens change by themselves; the player only taps answers): Eyes up →
+  the 4 options → Locked in, with their distance from the dark → after the reveal "CORRECT +3" /
+  "WRONG −1" / "Too slow: no move" (with "It was …" when wrong or missed) → after the dark moves
+  "Still running: 2 steps ahead of the dark" and "Next question in 3", or "The darkness got you"
+  with their final place.
 - **Audience phones:** who they backed, the runners still running with their distance, "7 still
-  running".
+  running", "{name} got caught".
 
 ### Podium
-- **Show winner** (click). 1st = the Blackout winner; 2nd and 3rd = the next by the end rules and
+- Arrives **by itself** after Blackout's winner moment. 1st = the Blackout winner; 2nd and 3rd = the next by the end rules and
   catch order; the other finalists below. Removed finalists aren't placed.
 - Host: 1st–3rd on the podium, the rest below, confetti, and "38 of 70 called it" (audience
   members who backed the winner, out of those who backed anyone).
@@ -171,25 +199,32 @@ For each question the quizmaster clicks through:
 
 - One big **primary button** that always does the logical next step: Start quiz · Show question ·
   Reveal answer · Show results · Show leaderboard · Next question · End round 1 · Start wild card
-  round · Show standings · Reveal wild card · Open predictions · Start Blackout · Advance the
-  darkness · Show winner.
+  round · Show standings · Reveal wild card · Open predictions · Start Blackout. During the
+  Blackout autopilot it is **Pause / Resume**, with an "AUTOPILOT" strip showing the step and the
+  countdown to the next one. Advance the darkness and Show winner are gone (the autopilot does
+  them); sending them, or Show question / Reveal answer / Next question, in Blackout is refused.
+- In Blackout Admin also sees where the dark goes next and who it would catch (only Admin).
 - Always visible: the current step, the timer, the current question **with its correct answer**,
   a preview of the next question, and in Blackout every runner's position and distance.
-- **Pause / resume**, **+5 seconds**, **skip timer**.
+- **Pause / resume** (in Blackout it freezes whichever step or hold is running, on every screen;
+  Resume carries on from the same moment), **+5 seconds** (answer steps; in Blackout only while
+  answering), **skip** (ends the current timer or Blackout hold now).
 - **Void question** (doesn't count): Round 1 → dropped. Wild card → the next unused question takes
-  its number. Blackout → no moves and the dark doesn't move; the next spare takes its number. With
-  no question left to replace it, the round ends one question early and the hint says
-  "No spare questions left".
-- **Restart question**: undoes that question's points / correct counts / moves / dark advance /
-  catches and replays it from its read step with fresh ids.
+  its number. Blackout (during its read, answer or time's up) → no moves and the dark doesn't move;
+  "cancelled" shows for 3 s, then the next question takes its number. If no question is left, the
+  chase ends there (furthest ahead wins).
+- **Restart question**: undoes that question's points / correct counts / moves and replays it from
+  its read step with fresh ids. In Blackout: during its read, answer, time's up or the reveal hold
+  (not once the dark has moved).
 - **Restart round**: Round 1 → everyone back to 0 at the Round 1 intro (until the cut). Wild card →
-  tallies back to 0 (until Reveal wild card). Blackout → positions and the dark back to the start
-  (until Show winner).
+  tallies back to 0 (until Reveal wild card). Blackout → positions and the dark back to the start,
+  and the autopilot starts again from the intro (until the winner moment).
 - **End quiz now**: before the cut → the Round 1 ranking on the podium; during the wild card round
   → the 9 safe finalists by Round 1 rank; during Blackout → runners still running by position,
   then caught ones by catch order.
 - **Remove participant**: in the wild card round, removing the leader just takes them out. In
-  Blackout a removed runner leaves the chase and isn't placed. **Before the first Blackout
+  Blackout a removed runner leaves the chase and isn't placed; if that leaves one runner, the
+  winner moment starts straight away. **Before the first Blackout
   question**, removing a finalist gives their seat to the next-best person (the next Round 1 rank
   outside the finalists, or the wild card runner-up if the wild card round happened); backers'
   picks for the removed one are cleared.
@@ -199,22 +234,25 @@ For each question the quizmaster clicks through:
 - **Results CSV**: name, result (winner / 2nd / 3rd / finalist / wildcard / played / audience),
   Round 1 score, Round 1 rank, wild card correct, wild card time (s), Blackout place, Blackout
   final position.
-- Keyboard on a laptop: Space = primary button, P = pause / resume. Destructive actions (void,
+- After any of these the Blackout autopilot carries on by itself; after Pause it waits for Resume.
+- Keyboard on a laptop: Space = primary button (Pause / Resume in Blackout), P = pause / resume,
+  S = skip (Blackout). Destructive actions (void,
   restart, end quiz, remove) need a second tap. No browser pop-ups.
 - PIN protected (`ADMIN_PIN`, default 1234); after 5 wrong PINs the connection is refused.
   Several Admin devices can be signed in at once.
 
 ## Edge cases
 
-- **A double tap or two Admin devices** never move a step twice (and never move the dark twice):
-  every command carries the step it was sent from; a command from an old step is ignored.
+- **A double tap or two Admin devices** never move a step twice: every command carries the step it
+  was sent from; a command from an old step is ignored (Pause and Skip included, so a Pause aimed
+  at a Blackout step that has already passed does nothing).
 - **Fewer than 10 Round 1 players:** no wild card round (see The cut).
 - **Wild card with nobody right:** the fallback above.
 - **Sudden death with everyone wrong:** they all stay in for the next one (up to 3).
 - **Answers from anyone who can't answer the current question** (a finalist in the wild card
   round, a caught runner, the audience) are ignored by the server.
 - **Removing a finalist mid-Blackout** takes them out of the chase; if that leaves one runner, the
-  quizmaster can Show winner after the next Advance the darkness or straight away from the reveal.
+  winner moment starts straight away.
 - **Podium after End quiz now** uses the order for the round the quiz was in.
 
 ## Rules that don't change
@@ -227,14 +265,23 @@ For each question the quizmaster clicks through:
 - Phone screen stays awake during the quiz (Screen Wake Lock).
 - Questions: MCQ only, exactly 4 options. Images appear on the Host only, preloaded.
 
-## Look: "Server Corridor, Lights Low" (approved 11 Oct 2026)
+## Look: "Server Corridor, Lights Low" (approved 11 Oct 2026; no glow since 14 Oct)
 
 The approved design, with every animation, is **`public/finaldesign.html`** (open
 `http://localhost:3000/finaldesign.html` while `npm run dev` runs). Build every screen to match it.
+
+- **No glow: light is flat and crisp** (Sukrit, 14 Oct). No text-shadow halos, no blurred or
+  coloured-spread box-shadows, no drop-shadow / blur halos, no radial blooms around LEDs, lights,
+  bots, buttons or text, no pulsing glows. Light is solid fills, 1–2 px solid borders, colour and
+  opacity changes. Allowed: hard offset shadows with zero blur (the clock's `4px 4px 0` mint), the
+  dark scrims behind text and the vignette, and the alarm's flat colour/opacity flicker. Where an
+  older rule says "glow" (names above the cut, the leader, a selected option, the right mood) it
+  means a solid mint outline, mint text or a mint fill. `npm run check-glow` enforces it.
 Inspired by Jackbox's Murder Trivia 2; themed on the Hermes AI agent running a server room.
 
-- **Background (Host):** a dark server-room corridor in one-point perspective: rack walls with dim
-  mint and red LEDs, a red alarm pulse, a vignette, and dark pools behind the text. `<Corridor />`.
+- **Background (Host):** a dark server-room corridor in one-point perspective: rack walls with dim,
+  hard-edged mint and red LEDs, a flat red alarm flicker, a vignette, and dark pools behind the
+  text. `<Corridor />`.
   Blackout uses the same corridor: the bots run toward the camera as the rack lights die behind them.
 - **Layout (Host question screens):** question on the left, tilted; answers on the right with big
   amber numbers 1–4; the clock bottom-left with "38 / 64 answered"; the cast of bots across the top;

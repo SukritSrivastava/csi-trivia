@@ -185,6 +185,8 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
   });
 
   const fallbackRules = defaultRules(options.config);
+  /** Blackout plays until one runner is left: a room needs at least this many Blackout questions (12 at the event). */
+  const minBlackout = options.config.blackout.minQuestions;
   /** Quizzes as stored, cleaned up (and upgraded, if saved before v3). */
   const readQuiz = (raw: unknown) => cleanQuiz(raw, fallbackRules, true);
   const getQuiz = async (id: string) => readQuiz(await library.get(id));
@@ -196,7 +198,7 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
     wildcard: q.wildcard.length,
     blackout: q.blackout.length,
     updatedAt: q.updatedAt,
-    problems: quizProblems(q),
+    problems: quizProblems(q, minBlackout),
   });
   /** Runs a library call for a signed-in socket; logs and answers `failed` if the store throws. */
   const withLibrary = <T>(socket: GameSocket, ack: unknown, failed: NoInfer<T>, run: () => Promise<T>) => {
@@ -238,8 +240,11 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
       withLibrary<OpenRoomResult>(socket, ack, { ok: false, error: "not-signed-in" }, async () => {
         const quiz = await getQuiz(str(payload?.quizId, 40));
         if (!quiz) return { ok: false, error: "not-found" };
-        const problems = quizProblems(quiz);
+        const problems = quizProblems(quiz, minBlackout);
         if (problems.length) return { ok: false, error: "not-ready", problems };
+        if (quiz.blackout.length < options.config.blackout.warnBelow) {
+          log(`[library] "${quiz.title}" has ${quiz.blackout.length} Blackout questions; ${options.config.blackout.warnBelow}+ is safer (voids use them up).`);
+        }
         return { ok: true, roomCode: rooms.openRoom(socket, quiz) };
       }),
     );

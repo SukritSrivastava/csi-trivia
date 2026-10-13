@@ -60,7 +60,7 @@ function Home({ onEdit }: { onEdit: (id: string) => void }) {
     <div className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-4 px-4 pt-4 pb-10">
       <header className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <p className="font-term text-2xl leading-none text-mint [text-shadow:0_0_8px_var(--color-mint)]">hermes://admin</p>
+          <p className="font-term text-2xl leading-none text-mint">hermes://admin</p>
           <p className="mt-1 flex items-center gap-2 text-[14px] text-fog">
             <Dot on={status === "online"} /> {status === "online" ? "Live" : "Reconnecting…"}
           </p>

@@ -21,7 +21,7 @@
   --color-panel: #0b1114; /* cards, phone background top */
   --color-deep: #132027; /* phone background bottom, raised surfaces */
   --color-line: #1e3036; /* hairlines, borders on dark */
-  --color-mint: #6cf0b0; /* the room's light: outlines, glows, LEDs, primary actions */
+  --color-mint: #6cf0b0; /* the room's light: outlines, LEDs, primary actions (flat: no glow, decided 14 Oct) */
   --color-mint-soft: #bfe9d6; /* secondary text */
   --color-ghost: #e7fff4; /* main text on dark */
   --color-bright: #f1fff8; /* Host question and answer text */
@@ -81,7 +81,7 @@ html:has(.host-root) {
   .corridor-left,
   .corridor-right {
     background:
-      radial-gradient(circle, rgb(108 240 176 / 0.45) 0 0.19rem, transparent 0.34rem) 0 0 / 3.36rem 2.4rem,
+      radial-gradient(circle, rgb(108 240 176 / 0.45) 0 0.19rem, transparent 0.2rem) 0 0 / 3.36rem 2.4rem,
       repeating-linear-gradient(90deg, #091013 0 5.5%, #030506 5.5% 6.5%),
       #091013;
   }
@@ -91,17 +91,19 @@ html:has(.host-root) {
   .corridor-right {
     clip-path: polygon(100% 0, 58% 40%, 58% 60%, 100% 100%);
     background:
-      radial-gradient(circle, rgb(214 51 77 / 0.55) 0 0.19rem, transparent 0.34rem) 1.2rem 0.72rem / 4.32rem 3.12rem,
-      radial-gradient(circle, rgb(108 240 176 / 0.45) 0 0.19rem, transparent 0.34rem) 0 0 / 3.36rem 2.4rem,
+      radial-gradient(circle, rgb(214 51 77 / 0.55) 0 0.19rem, transparent 0.2rem) 1.2rem 0.72rem / 4.32rem 3.12rem,
+      radial-gradient(circle, rgb(108 240 176 / 0.45) 0 0.19rem, transparent 0.2rem) 0 0 / 3.36rem 2.4rem,
       repeating-linear-gradient(90deg, #091013 0 5.5%, #030506 5.5% 6.5%),
       #091013;
   }
   .corridor-end {
     clip-path: polygon(42% 40%, 58% 40%, 58% 60%, 42% 60%);
-    background: radial-gradient(#24443e, #030506 70%);
+    /* The far end of the corridor: a flat, dim panel of light (no bloom). */
+    background: #13241f;
   }
+  /* The alarm: a flat red band along the top that flickers (opacity only, no glow). */
   .corridor-alarm {
-    background: radial-gradient(ellipse at 50% 0%, rgb(214 51 77 / 0.28), transparent 55%);
+    background: linear-gradient(rgb(214 51 77 / 0.3) 0 0.6rem, rgb(214 51 77 / 0.07) 0.6rem 100%);
     animation: corridor-alarm 3.2s infinite;
   }
   /* Dark pools behind the text so it reads from the back row. */
@@ -123,7 +125,7 @@ html:has(.host-root) {
   /* ======================================================================
      HOST TYPE (sizes in rem: the Host scales rem with screen width)
      ====================================================================== */
-  /* Question: typewriter, tilted like it was written by the host, soft mint glow. */
+  /* Question: typewriter, tilted like it was written by the host. Flat: a hard black offset, no glow. */
   .host-q {
     font-family: var(--font-type);
     color: var(--color-bright);
@@ -131,9 +133,7 @@ html:has(.host-root) {
     line-height: 1.08;
     text-wrap: balance;
     transform: rotate(-3deg);
-    text-shadow:
-      0 0 1.2rem rgb(108 240 176 / 0.45),
-      0 0.3rem 0.7rem #000;
+    text-shadow: 0 0.25rem 0 #000;
   }
   .host-q-center {
     font-size: 6rem;
@@ -148,7 +148,7 @@ html:has(.host-root) {
     font-family: var(--font-type);
     font-size: 3rem;
     color: var(--color-bright);
-    text-shadow: 0 0.24rem 0.6rem #000;
+    text-shadow: 0 0.2rem 0 #000;
   }
   .host-opts > :nth-child(odd) {
     transform: rotate(-1.5deg);
@@ -169,14 +169,12 @@ html:has(.host-root) {
     color: var(--color-amber);
     font-size: 6.5rem;
     line-height: 1;
-    text-shadow: 0 0 1.2rem rgb(255 182 39 / 0.6);
   }
   .host-opt[data-dim="true"] {
     opacity: 0.3;
   }
   .host-opt[data-correct="true"] .opt-num {
     color: var(--color-mint);
-    text-shadow: 0 0 1.2rem var(--color-mint);
   }
   .host-count {
     font-family: var(--font-type);
@@ -198,7 +196,6 @@ html:has(.host-root) {
     font-family: var(--font-term);
     font-size: 4rem;
     color: var(--color-mint);
-    text-shadow: 0 0 1.2rem var(--color-mint);
   }
   .host-watermark {
     font-family: var(--font-term);
@@ -263,49 +260,14 @@ html:has(.host-root) {
   .phone-go:disabled {
     opacity: 0.4;
   }
-  /* The finalist's BUZZ: a huge round solid-mint button (Phase 3 extension, same language as LOCK IN and the clock). */
-  .phone-buzz {
-    display: grid;
-    place-items: center;
-    width: min(72vw, 19rem);
-    aspect-ratio: 1;
-    border-radius: 50%;
-    border: 5px solid var(--color-void);
-    background: var(--color-mint);
-    color: var(--color-void);
-    font-family: var(--font-term);
-    font-size: clamp(3.6rem, 18vw, 5rem);
-    line-height: 1;
-    box-shadow:
-      6px 6px 0 var(--color-mint-soft),
-      0 0 34px rgb(108 240 176 / 0.45);
-    transition:
-      transform 60ms ease-out,
-      box-shadow 60ms ease-out;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .phone-buzz:active:not(:disabled) {
-    transform: translate(4px, 4px) scale(0.97);
-    box-shadow:
-      2px 2px 0 var(--color-mint-soft),
-      0 0 20px rgb(108 240 176 / 0.35);
-  }
-  .phone-buzz:disabled {
-    background: var(--color-line);
-    color: var(--color-fog);
-    box-shadow: none;
-  }
   .phone-result {
     font-family: var(--font-term);
     font-size: 3.2rem;
     line-height: 1;
     color: var(--color-mint);
-    text-shadow: 0 0 6px var(--color-mint);
   }
   .phone-result[data-bad="true"] {
     color: var(--color-wrong);
-    text-shadow: 0 0 6px var(--color-wrong);
   }
 
   /* ======================================================================
@@ -317,9 +279,7 @@ html:has(.host-root) {
     place-items: center;
     border-radius: 50%;
     border: 0.6rem solid var(--color-void);
-    box-shadow:
-      0.72rem 0.72rem 0 var(--color-mint),
-      0 0 2.9rem rgb(108 240 176 / 0.35);
+    box-shadow: 0.72rem 0.72rem 0 var(--color-mint);
     font-family: var(--font-term);
     line-height: 1;
     color: var(--color-void);
@@ -350,12 +310,10 @@ html:has(.host-root) {
     background: color-mix(in srgb, var(--c) 20%, #081014);
     border: 0.06em solid var(--c);
     border-radius: 0.22em;
-    box-shadow:
-      0 0 0.22em color-mix(in srgb, var(--c) 55%, transparent),
-      inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
+    box-shadow: inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
     transition:
       border-color 0.3s,
-      box-shadow 0.3s,
+      outline-color 0.3s,
       filter 0.4s;
   }
   .bot[data-head="round"] .bot-head {
@@ -384,7 +342,6 @@ html:has(.host-root) {
     border-radius: 50%;
     background: var(--c);
     transform: translateX(-50%);
-    box-shadow: 0 0 0.15em var(--c);
     animation: bot-pulse 1.6s infinite var(--d);
   }
   .bot[data-head="bolts"] .bot-head::before,
@@ -457,7 +414,6 @@ html:has(.host-root) {
     border-radius: 50%;
     background: #effff8;
     position: relative;
-    box-shadow: 0 0 0.12em var(--c);
     animation: bot-blink 4.2s infinite var(--d);
     transition: height 0.2s;
   }
@@ -527,14 +483,13 @@ html:has(.host-root) {
   .bot[data-mood="right"] {
     animation: bot-hop 0.55s ease-out 3 var(--d);
   }
+  /* Right: a solid mint ring around the head (flat, no glow). */
   .bot[data-mood="right"] .bot-head {
-    box-shadow:
-      0 0 0.5em var(--c),
-      inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
+    outline: 0.05em solid var(--color-mint);
+    outline-offset: 0.04em;
   }
   .bot[data-mood="right"] .bot-eye {
     background: transparent;
-    box-shadow: none;
     border: 0.06em solid #effff8;
     border-color: #effff8 transparent transparent transparent;
     height: 0.22em;
@@ -557,13 +512,9 @@ html:has(.host-root) {
   }
   .bot[data-mood="wrong"] .bot-head {
     border-color: #ff4d5e;
-    box-shadow:
-      0 0 0.35em rgb(255 77 94 / 0.6),
-      inset 0 -0.12em 0 rgb(0 0 0 / 0.35);
   }
   .bot[data-mood="wrong"] .bot-eye {
     background: transparent;
-    box-shadow: none;
     animation: none;
   }
   .bot[data-mood="wrong"] .bot-eye::before,
@@ -585,12 +536,10 @@ html:has(.host-root) {
   }
   .bot[data-mood="out"] .bot-head {
     filter: grayscale(1) brightness(0.45);
-    box-shadow: none;
   }
   .bot[data-mood="out"] .bot-eye {
     height: 0.04em;
     background: #55646a;
-    box-shadow: none;
     animation: none;
   }
   .bot[data-mood="out"] .bot-pupil,

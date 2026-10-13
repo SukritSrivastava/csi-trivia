@@ -49,13 +49,12 @@ export function Heading({ children, size = "5.4rem" }: { children: ReactNode; si
 }
 
 /** A bot with its name under it. */
-export function NamedBot({ tag, mood, size = "6rem", nameSize = "1.6rem", glow = false }: { tag: ParticipantTag; mood: BotMood; size?: string; nameSize?: string; glow?: boolean }) {
+export function NamedBot({ tag, mood, size = "6rem", nameSize = "1.6rem", highlight = false }: { tag: ParticipantTag; mood: BotMood; size?: string; nameSize?: string; highlight?: boolean }) {
   return (
     <div className="flex min-w-0 flex-col items-center gap-[0.6rem]">
-      <span className={glow ? "drop-shadow-[0_0_1.2rem_var(--color-mint)]" : ""}>
-        <Bot color={tag.color} head={tag.head} mood={mood} size={size} delay={botDelay(tag.id)} />
-      </span>
-      <span className="host-name max-w-full truncate" style={{ fontSize: nameSize }}>
+      <Bot color={tag.color} head={tag.head} mood={mood} size={size} delay={botDelay(tag.id)} />
+      {/* Highlighted: mint name text (flat, no glow). */}
+      <span className={`host-name max-w-full truncate ${highlight ? "!text-mint" : ""}`} style={{ fontSize: nameSize }}>
         {tag.name}
       </span>
     </div>

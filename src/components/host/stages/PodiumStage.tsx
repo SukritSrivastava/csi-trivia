@@ -39,10 +39,8 @@ export function PodiumStage({ view, stage }: { view: HostView; stage: PodiumData
     return (
       <div className="flex w-[20rem] flex-col items-center gap-[1rem]">
         <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: p.delay + 0.35, type: "spring", stiffness: 220, damping: 16 }} className="flex flex-col items-center gap-[0.8rem]">
-          <span className={place === 1 ? "drop-shadow-[0_0_1.6rem_var(--color-mint)]" : ""}>
-            <Bot color={e.color} head={e.head} mood={mood(e.id, place === 1 ? "right" : "idle")} size={p.bot} delay={botDelay(e.id)} />
-          </span>
-          <span className="host-name max-w-[20rem] truncate" style={{ fontSize: place === 1 ? "3.4rem" : "2.6rem" }}>
+          <Bot color={e.color} head={e.head} mood={mood(e.id, place === 1 ? "right" : "idle")} size={p.bot} delay={botDelay(e.id)} />
+          <span className={`host-name max-w-[20rem] truncate ${place === 1 ? "!text-mint" : ""}`} style={{ fontSize: place === 1 ? "3.4rem" : "2.6rem" }}>
             {e.name}
           </span>
           <span className="font-term text-[3.4rem] leading-none text-amber">{detail(e)}</span>
@@ -52,14 +50,14 @@ export function PodiumStage({ view, stage }: { view: HostView; stage: PodiumData
           className="relative w-full overflow-hidden rounded-t-[0.8rem] border-2 border-line bg-rack"
           style={{
             backgroundImage:
-              "radial-gradient(circle, rgb(108 240 176 / 0.55) 0 0.2rem, transparent 0.32rem), repeating-linear-gradient(0deg, transparent 0 2.2rem, #030506 2.2rem 2.5rem)",
+              "radial-gradient(circle, rgb(108 240 176 / 0.55) 0 0.2rem, transparent 0.21rem), repeating-linear-gradient(0deg, transparent 0 2.2rem, #030506 2.2rem 2.5rem)",
             backgroundSize: "2.4rem 2.5rem, 100% 100%",
           }}
           initial={{ height: 0 }}
           animate={{ height: p.h }}
           transition={{ delay: p.delay, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         >
-          <span className="absolute inset-x-0 top-[1rem] text-center font-term text-[7rem] leading-none text-amber [text-shadow:0_0_1.2rem_rgb(255_182_39/0.6)]">{place}</span>
+          <span className="absolute inset-x-0 top-[1rem] text-center font-term text-[7rem] leading-none text-amber">{place}</span>
         </motion.div>
       </div>
     );

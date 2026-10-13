@@ -58,7 +58,6 @@ export function rulesProblems(r: QuizRules, counts: Record<ListName, number>): s
   };
   enough(r.round1Questions, "round1", "Round 1");
   enough(r.wildCardQuestions, "wildcard", "wild card");
-  enough(r.blackoutQuestions, "blackout", "Blackout");
   if (!inRange(r.safe, L.safe)) p.push(`Safe at the cut must be ${L.safe.min}–${L.safe.max}.`);
   secs(r.round1ReadSeconds, L.readSeconds, "Round 1 read time");
   secs(r.round1AnswerSeconds, L.openSeconds, "Round 1 answer time");
@@ -67,13 +66,20 @@ export function rulesProblems(r: QuizRules, counts: Record<ListName, number>): s
   return p;
 }
 
-/** Everything that stops this quiz being played. Empty = ready to open a room. */
-export function quizProblems(quiz: Quiz): string[] {
+/**
+ * Everything that stops this quiz being played. Empty = ready to open a room.
+ * `minBlackout`: Blackout plays its whole list until one runner is left, so the
+ * game server asks for at least this many (12 at the event, from its preset).
+ */
+export function quizProblems(quiz: Quiz, minBlackout = 1): string[] {
   const p: string[] = [];
   if (!quiz.title.trim()) p.push("Give the quiz a title.");
   for (const list of LIST_NAMES) {
     if (quiz[list].length === 0) p.push(`Add at least one ${LIST_LABELS[list]} question.`);
     quiz[list].forEach((q, i) => p.push(...questionProblems(q, `${LIST_LABELS[list]}, question ${i + 1}`)));
+  }
+  if (quiz.blackout.length > 0 && quiz.blackout.length < minBlackout) {
+    p.push(`Blackout needs at least ${minBlackout} questions (it plays until one runner is left); the list has ${quiz.blackout.length}.`);
   }
   p.push(...rulesProblems(quiz.rules, { round1: quiz.round1.length, wildcard: quiz.wildcard.length, blackout: quiz.blackout.length }));
   return p;

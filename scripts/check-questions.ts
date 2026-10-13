@@ -175,11 +175,13 @@ if (questions.length) {
   const rounds = [
     { round: 1 as const, name: "Round 1", planned: config.round1.questions, spares: 0, tag: 1 },
     { round: 2 as const, name: "The wild card round", planned: config.wildCard.questions, spares: config.wildCard.suddenDeathMax, tag: 2 },
-    { round: 3 as const, name: "Blackout", planned: config.blackout.questions, spares: config.blackout.spares, tag: 3 },
+    // Blackout plays until one runner is left: it needs minQuestions, and warnBelow is safer (voids use them up).
+    { round: 3 as const, name: "Blackout", planned: config.blackout.minQuestions, spares: Math.max(0, config.blackout.warnBelow - config.blackout.minQuestions), tag: 3 },
   ];
   const lines: string[] = [];
   for (const r of rounds) {
-    const got = pickRound(questions, r.round, r.planned + r.spares, used, false);
+    // Blackout takes every question it can get; the other rounds take what they plan to play.
+    const got = pickRound(questions, r.round, r.round === 3 ? Number.MAX_SAFE_INTEGER : r.planned + r.spares, used, false);
     if (got.length < r.planned) {
       // Event: a hard stop (the server refuses to open a room). Demo: it reuses questions, so a warning.
       (config.name === "event" ? errors : warnings).push(
@@ -188,7 +190,7 @@ if (questions.length) {
     } else if (got.length < r.planned + r.spares) {
       warnings.push(`${r.name}: only ${got.length - r.planned} spare question(s) for voids${r.round === 2 ? " and sudden death" : ""}; ${r.spares} recommended.`);
     }
-    lines.push(`  ${r.name} plays ${r.planned} (${got.length} available)`);
+    lines.push(r.round === 3 ? `  Blackout plays until one runner is left: ${got.length} available (needs ${r.planned}, ${r.planned + r.spares}+ is safer)` : `  ${r.name} plays ${r.planned} (${got.length} available)`);
   }
   const tagged = (n: 1 | 2 | 3 | null) => questions.filter((q) => q.round === n).length;
   console.log(`  ${questions.length} questions: ${tagged(1)} tagged Round 1, ${tagged(2)} wild card, ${tagged(3)} Blackout, ${tagged(null)} any round`);
@@ -208,7 +210,7 @@ if (existsSync(libDir)) {
       const raw = JSON.parse(readFileSync(path.join(libDir, name), "utf8"));
       // Saved before v3? Upgraded the way the server reads it (buzzer list → Wild card).
       const quiz = (cleanQuiz(raw, defaultRules(config), true) ?? raw) as Quiz;
-      const problems = quizProblems(quiz);
+      const problems = quizProblems(quiz, config.blackout.minQuestions);
       for (const p of problems) warnings.push(`Library quiz "${quiz.title}": ${p}`);
       const lists = { round1: quiz.round1 ?? [], wildcard: quiz.wildcard ?? (quiz as unknown as { buzzer?: Quiz["round1"] }).buzzer ?? [], blackout: quiz.blackout ?? [] };
       [...lists.round1, ...lists.wildcard, ...lists.blackout].forEach((q, i) => q.image && checkImage(q.image, `Library quiz "${quiz.title}", question ${i + 1}`));

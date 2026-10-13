@@ -70,7 +70,7 @@ function questionLabel(s: ParticipantScreen): string | null {
     case "eyesUp":
     case "answer": {
       if (s.round === 2) return s.suddenDeath ? "Wild card · sudden death" : `Wild card Q${s.questionNumber} of ${s.questionCount}`;
-      if (s.round === 3) return `Blackout Q${s.questionNumber} of ${s.questionCount}`;
+      if (s.round === 3) return `Blackout Q${s.questionNumber}`;
       return `Q${s.questionNumber} of ${s.questionCount}`;
     }
     case "safeWatch":
@@ -78,7 +78,7 @@ function questionLabel(s: ParticipantScreen): string | null {
       return "The wild card round";
     case "runnerStatus":
     case "blackoutWatch":
-      return s.questionNumber ? `Blackout Q${s.questionNumber} of ${s.questionCount}` : "Blackout";
+      return s.questionNumber ? `Blackout Q${s.questionNumber}` : "Blackout";
     default:
       return null;
   }

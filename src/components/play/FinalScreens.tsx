@@ -143,7 +143,7 @@ export function RunnerStatusScreen({ view, screen: s }: { view: ParticipantView;
     <Moment me={me} mood="idle" big="STILL RUNNING" testId="runner-alive">
       <b className="font-term text-[1.5em] font-normal text-amber">{steps(s.gap)}</b> ahead of the dark.
       <span className="mt-2 block">
-        {s.aliveCount} still running · question {s.questionNumber} of {s.questionCount}
+        {s.aliveCount} still running · question {s.questionNumber}
       </span>
     </Moment>
   );

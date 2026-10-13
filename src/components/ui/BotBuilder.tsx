@@ -167,11 +167,12 @@ function ColourWheel({ value, onDrag, onDone, disabled }: { value: string; onDra
         }}
         className="relative aspect-square w-[min(100%,11rem)] touch-none rounded-full border-2 border-line outline-offset-4 select-none aria-disabled:opacity-50"
         style={{
+          // no-glow: allow (the colour wheel's pale centre: a colour picker, not a light)
           background: `radial-gradient(circle closest-side, ${wheelColour(0, 0)}, transparent), conic-gradient(${Array.from({ length: 13 }, (_, i) => wheelColour(i * 30, 1)).join(", ")})`,
         }}
       >
         <span
-          className="pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-ghost shadow-[0_0_0_2px_var(--color-void)]"
+          className="pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-ghost outline-2 outline-void"
           style={{ ...marker, background: value }}
           aria-hidden
         />

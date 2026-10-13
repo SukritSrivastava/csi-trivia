@@ -56,7 +56,7 @@ export function LobbyStage({ view }: { view: HostView }) {
                 {view.roomCode.split("").map((ch, i) => (
                   <span
                     key={i}
-                    className="grid h-[12.5rem] w-[10.5rem] place-items-center rounded-[1rem] border-[0.3rem] border-mint bg-void/85 font-term text-[11rem] leading-none text-mint [text-shadow:0_0_1.2rem_var(--color-mint)]"
+                    className="grid h-[12.5rem] w-[10.5rem] place-items-center rounded-[1rem] border-[0.3rem] border-mint bg-void/85 font-term text-[11rem] leading-none text-mint"
                     style={{ transform: `rotate(${TILT[i % 4]}deg)` }}
                   >
                     {ch}
@@ -69,7 +69,7 @@ export function LobbyStage({ view }: { view: HostView }) {
 
         <div className="flex items-center gap-[4rem]">
           <div className="text-center" aria-live="polite">
-            <p className="font-term text-[12rem] leading-none text-amber [text-shadow:0_0_1.2rem_rgb(255_182_39/0.5)]">
+            <p className="font-term text-[12rem] leading-none text-amber">
               <NumberFlow value={view.counts.joined} />
             </p>
             <p className="host-hint">{view.counts.joined === 1 ? "bot in the room" : "bots in the room"}</p>

@@ -5,7 +5,7 @@
 > skills, agent roles, plugins and the frontend↔backend API. If you change anything it
 > describes, update this file in the same change (see §10 "Keeping this file true").
 >
-> Last updated: 14 Oct 2026 (SPEC v3) · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
+> Last updated: 14 Oct 2026, night (SPEC v3.1: 200→100 scoring, Blackout autopilot, no glow) · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
 
 ---
 
@@ -17,25 +17,27 @@ on the **Hermes AI agent**. The **event is Thursday 16 Oct 2026**.
 
 - One laptop drives the **projector** (`/host`). Everyone answers on their **phone** (`/play`).
   A **quizmaster** runs every step from **Admin** (`/admin`, PIN), usually on a phone.
-- **Round 1:** everyone answers multiple-choice questions (8 s to read, 8 s to answer, faster
-  correct answers score more). **Top 9 are safe.** Everyone else plays the **wild card round**
+- **Round 1:** everyone answers multiple-choice questions (8 s to read, 8 s to answer; a correct
+  answer scores **200 down to 100 by speed**, wrong or none 0). **Top 9 are safe.** Everyone else plays the **wild card round**
   (5 questions, most right wins) for the **10th seat**; the rest become the **audience** and back
   a finalist. **Blackout:** the 10 finalists' bots race a darkness down the corridor: right answers
-  move them forward (+3/+2/+1 by speed), wrong ones back, and the dark catches whoever it reaches.
-  Last bot running wins. **Every answer is a phone tap marked by the server** (no judging).
-  Then the **podium**. Rules: `docs/SPEC.md` v3 (14 Oct).
+  move them forward (+3/+2/+1 by speed, 10 s to answer), wrong ones back, and the dark catches
+  whoever it reaches. Last bot running wins. **Blackout runs on autopilot:** one click (Start
+  Blackout) and the server runs every question, the dark and the winner to the podium.
+  **Every answer is a phone tap marked by the server** (no judging). Rules: `docs/SPEC.md` v3.1.
 - **Look:** "Server Corridor, Lights Low", inspired by Jackbox's *Murder Trivia 2*. A dark
   server-room corridor, typewriter type, terminal digits, and every player is a **robot** whose
   eyes react to their answers. The approved reference is **`public/finaldesign.html`**.
+  **No glow** (14 Oct): light is flat and crisp; `npm run check-glow` enforces it.
 - **Team:** Sukrit builds the **frontend** (this Next.js app). Lelouch (teammate) owns the
   **backend**: **`server/`** runs the whole game, implements the contract in
   **`src/shared/protocol.ts`**, and saves results to Supabase. It's what's deployed on Render.
   (Lelouch's first prototype is kept in `archive/ws-backend-v1/`.)
 
-**Where we are (14 Oct):** SPEC v3 (three rounds: Round 1, wild card, Blackout) replaced the buzzer
-round. The engine, contract, server and tests are done (`docs/BUILD-PHASES.md` v5 Phase 1); the screens
-work for the new flow in a plain form (the existing Host, phone and Admin screens, extended) and are
-polished in Phases 2–3. The live deployment still runs the v2 buzzer-round version until Sukrit says "push".
+**Where we are (14 Oct, night):** SPEC v3.1 (three rounds; 200→100 scoring; Blackout on autopilot;
+no glow). v5 Phase 1 (the engine) and Phase 2 (the rules update, Admin and the phones) are done;
+Phase 3 is the Host (projector) for the new rounds. The live deployment still runs the v2
+buzzer-round version until Sukrit says "push".
 
 ### Read these, in this order
 1. **This file.**
@@ -107,6 +109,9 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 14 Oct | The game server in `server/` (the prompt called it "mock-server") **is the real server on the night**. Event preset: 20 Round 1 questions, 9 safe, 5 wild card (+3 sudden death), 12 Blackout (+3 spares), 8 s/8 s, Blackout 5 s/8 s. |
 | 14 Oct | Quiz library: three lists per quiz (Round 1, Wild card, Blackout); quizzes saved before v3 are upgraded on read (buzzer list → Wild card, Blackout empty, rules from the preset except Round 1's own). Bots stay shared (12 Oct decision), even though the v5 prompt repeated the old unique-bot rule. |
 | 14 Oct | If time runs short, **sound is the first thing to cut**. |
+| 14 Oct (night) | **Round 1 scoring 200 → 100:** correct = `round(200 − 100 × elapsed/limit)` (clamped), wrong or none 0; ties unchanged (lower total time, a miss = the full 8 s). Constants `R1_MAX_POINTS` / `R1_MIN_POINTS` in `server/config.ts`. |
+| 14 Oct (night) | **Blackout on autopilot:** Start Blackout is the only click; the server runs intro (6 s) → read 5 s → answer **10 s** → time's up 1.5 s → reveal (3 s + 0.15 s per runner) → the dark (2.5 s + 0.25 s per step + 1.5 s if caught) → next question … → winner moment (7 s) → podium. Plays **every** round-3 question (then untagged unused ones) until one runner is left: no fixed count, no spares; the event needs ≥ 12 (warns < 15). `DARKNESS_STEPS` repeats its last value. Admin keeps Pause/Resume, Skip, +5 s (answer only), Void, Restart question (until the dark moves), Restart round, End quiz now, Remove. `advanceDarkness` / `showWinner` and Show/Reveal/Next in Blackout → `not-allowed`. Pause and Skip are step-bound (a stale one is ignored). Retuned: event BASE_GAP 6, `[1,2,2,3]`; demo BASE_GAP 2, `[1,2]`. *Replaces the "two clicks per question" row above.* |
+| 14 Oct (night) | **No glow** (Sukrit): no text-shadow halos, blurred/coloured-spread box-shadows, drop-shadow/blur halos, radial blooms or glow keyframes. Flat fills, 1–2 px borders, colour/opacity changes; zero-blur offsets, dark scrims and the vignette stay. Where "glow" was used: mint outline / mint text / mint fill. `public/finaldesign.html` updated the same way (approved). `npm run check-glow` (`scripts/no-glow.ts`) is an end-of-phase check. |
 | 12 Oct | **Backend = option 1 (§8.9):** the game server in `server/` is the real backend; the teammate's Postgres/Supabase tables (`archive/ws-backend-v1/db.js`) are wired in via `server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
 
 ---
@@ -154,15 +159,16 @@ lobby → r1Intro → [ r1Read (8s) → r1Answer (8s) → r1TimesUp → r1Reveal
       → cut (top 9 safe; fewer than 10 played → everyone safe, no wild card round)
       → wcIntro → [ wcRead (8s) → wcAnswer (8s) → wcTimesUp → wcReveal → wcStandings? ] × 5 (+ up to 3 sudden death)
       → wcWinner (the 10th finalist) → predictions?
-      → boIntro → [ boRead (5s) → boAnswer (8s) → boTimesUp → boReveal (runners move) → boDark (the dark moves, catches) ] × ≤12
-      → podium (Show winner)
-(?) = optional step the quizmaster may skip. Timed steps advance by themselves; every other step is a click.
+      → boIntro (6s) → [ boRead (5s) → boAnswer (10s) → boTimesUp (1.5s) → boReveal (runners move) → boDark (the dark moves, catches) ] × until one runner is left
+      → boWinner (7s) → podium
+(?) = optional step the quizmaster may skip. Timed steps advance by themselves; in Round 1 and the wild
+card every other step is a click. **Blackout is automatic** from Start Blackout to the podium (autopilot).
 ```
-Scoring: **Round 1** correct = `round(500 + 500 × (1 − elapsed/limit))`, wrong or none = 0; ties →
+Scoring: **Round 1** correct = `round(200 − 100 × elapsed/limit)` (200 instant, 100 at the last moment), wrong or none = 0; ties →
 lower total answer time (a miss = the full time). **Wild card**: number right; ties → lower total time
 (wrong/miss = the full time); exact tie → sudden death. **Blackout**: right +3/+2/+1 by third of the
-answer time, wrong −1, none 0; the dark advances by `DARKNESS_STEPS[q]` and catches anyone at or behind it.
-Full rules and edge cases: `docs/SPEC.md` v3.
+answer time (10 s), wrong −1, none 0; the dark advances by `DARKNESS_STEPS[q]` (last value repeats) and
+catches anyone at or behind it. Full rules and edge cases: `docs/SPEC.md` v3.1.
 
 ### 2.4 Folder map
 ```
@@ -170,7 +176,7 @@ README.md                   the front door: what it is, live links, run it, repo
 docs/PROJECT-RULES.md       ← this file (the full handoff)
 AGENTS.md / CLAUDE.md       short pointers + the must-follow rules (read by AI tools; stay at the root)
 data/questions.json         the questions (MCQ, 4 options, correct = index, round 1/2/3/null); seeds the Demo quiz
-docs/SPEC.md                game rules v3 (source of truth for rules)
+docs/SPEC.md                game rules v3.1 (source of truth for rules)
 docs/BUILD-PHASES.md        the build prompts (v4, done; the v5 three-phase plan came in chat on 14 Oct)
 docs/RUN-SHEET.md           the quizmaster's checklist and script for the night
 docs/BACKEND-NOTES.md       every event and view, what the server must enforce
@@ -219,7 +225,7 @@ src/lib/                    socket, session, useCountdown, useWakeLock, usePageV
 | `void` | `#05080a` | page background |
 | `rack` / `panel` / `deep` | `#091013` / `#0b1114` / `#132027` | walls / cards / phone gradient |
 | `line` | `#1e3036` | borders |
-| `mint` | `#6cf0b0` | the room's light: outlines, glows, primary actions |
+| `mint` | `#6cf0b0` | the room's light: outlines, LEDs, primary actions (flat, never a glow) |
 | `mint-soft` / `ghost` / `bright` | `#bfe9d6` / `#e7fff4` / `#f1fff8` | secondary text / text / Host question text |
 | `amber` | `#ffb627` | answer numbers 1–4 and counts only (the one warm colour) |
 | `alarm` / `wrong` | `#d6334d` / `#ff4d5e` | alarm pulse, timer wedge, PAUSED / wrong answers, X eyes |
@@ -230,7 +236,17 @@ src/lib/                    socket, session, useCountdown, useWakeLock, usePageV
 
 Classes: `host-q`, `host-q-center`, `host-opts`, `host-opt`, `opt-num`, `host-count`, `host-hint`,
 `host-banner`, `host-watermark`, `host-name`, `phone-bg`, `phone-opt`, `phone-go`, `phone-result`,
-`phone-buzz` (unused since v3; the buzzer round is gone), `clock`, `bot` (+`data-head`, `data-mood`), `corridor-*`. (The old marigold tokens were deleted in Phase 5.)
+`clock`, `bot` (+`data-head`, `data-mood`), `corridor-*`. (The old marigold tokens were deleted in Phase 5;
+`phone-buzz` was deleted with the glow on 14 Oct.)
+
+**No glow: light is flat and crisp** (14 Oct). No text-shadow halos, no box-shadow with a blur or a
+coloured spread, no `drop-shadow()`/`blur()` halos, no radial-gradient blooms around LEDs, lights,
+bots, buttons or text, no pulsing-glow keyframes. Light = solid fills, 1–2 px solid borders, colour
+and opacity changes. Allowed: hard offset shadows with zero blur (the clock's `0.72rem 0.72rem 0` mint,
+`text-shadow: 0 0.25rem 0 #000` on Host text), the dark scrims, the vignette, hard-edged LED dots,
+the alarm's flat opacity flicker. "Glow" in older rules = a solid mint outline (the right mood's head
+ring), mint text (names above the cut, the leader) or a mint fill. `npm run check-glow` scans `src/`
+and `public/finaldesign.html` (`// no-glow: allow` marks a deliberate exception: the colour wheel).
 
 Components (`src/components/ui/`):
 - `<Bot color head mood size delay label />`: a robot. `mood` ∈ idle/thinking/locked/right/wrong/out.
@@ -285,12 +301,19 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 
 ### Done
 - ✅ v4 Phases 1–5 (12–13 Oct): design foundation, Admin, phones, Host, event-proofing. Deployed 13 Oct (v2 buzzer-round game).
+- ✅ **v5 Phase 2, Part 0: rules update (14 Oct, night):** SPEC v3.1; Round 1 200→100 (`round1Points`);
+  Blackout autopilot in `server/quiz.ts` (`nextBlackoutQuestion`, `afterDark`, `winnerMoment`, holds in
+  `config.blackout.holds`, `boWinner` phase, `AdminView.autopilot` + `darkPreview`, `questionsLeft`,
+  phone `nextUp`, `lockedIn.choiceNumber`, runner `gap` on question screens); `tune-blackout` remodelled
+  (answer times in seconds, 10 s window); `simulate` (37 checks; 50 × 100-player event games reach the
+  podium after one click), `smoke` (one click, pause/resume, a double Skip); `check-glow`; every glow
+  removed from `src/` and `public/finaldesign.html`.
 - ✅ **v5 Phase 1, the engine (14 Oct):** SPEC v3; contract (`protocol.ts`: `wc*` and `bo*` phases, `McqQuestion`, `WildCardState`, `BlackoutState`, `Runner`, new phone screens, new Admin actions); `server/quiz.ts` (wild card with sudden death and the fallback, Blackout with catches and catch order, seat hand-over, void/restart/restart round/end quiz in every round); `npm run tune-blackout`; `simulate` (33 checks, 50 event seeds), `smoke` (whole three-round game over sockets), `bots` (every round, accuracy); quiz library with three lists (old quizzes upgraded); `/health` JSON; the existing Host / phone / Admin screens extended to the new flow (plain stages for the wild card and Blackout); play-shots, host-shots, admin-run (68 checks) and drills pass.
 
 ### Next
-1. ⬜ **v5 Phase 2:** the Host (projector) for the wild card round and Blackout in the approved look (the bots running toward the camera, rack lights dying behind them).
-2. ⬜ **v5 Phase 3:** the phone and Admin screens for the new rounds, polished.
-3. ⬜ **Write 48 questions** (20 Round 1, 5 + 3 wild card, 12 + 3 Blackout + spares) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
+1. ⬜ **v5 Phase 2, Parts A–C:** Admin and the phones for the new flow (see the Phase 2 prompt; status in the commits "Phase 2: Admin" / "Phase 2: Participant").
+2. ⬜ **v5 Phase 3:** the Host (projector) for the wild card round and the Blackout autopilot in the approved look (the bots running toward the camera, rack lights dying behind them).
+3. ⬜ **Write 48+ questions** (20 Round 1, 5 + 3 wild card, **15+ Blackout**: it plays until one runner is left) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
 4. ⬜ **Push and deploy** (only when Sukrit says "push"); the live site runs the v2 buzzer game until then.
 
 ### Not in a phase yet
@@ -433,33 +456,40 @@ phone updates to 150 ms). Every view carries `serverNow` (ms).
 
 ### 8.4 The three views (shape summary)
 **`HostView`**: `roomCode`, `joinUrl`, `roomCodeVisible`, `soundOn`, `settings: QuizSettings`
-(`safeCount`, `wildCardQuestions`, `blackoutQuestions`, timings), `participants`, **`cast: CastMember[]`**
+(`safeCount`, `wildCardQuestions`, timings; no Blackout count since v3.1), `participants`, **`cast: CastMember[]`**
 (each with `mood`; everyone, then in the wild card round only its players, in Blackout the runners),
 `counts` (+ `wildcard`), `timer`, `paused`, `serverNow`, `nextImage`, `stage: HostStage` keyed by
-`phase`: question steps carry `question: McqQuestion` (`round` 1/2/3, `number`, `count`,
+`phase`: question steps carry `question: McqQuestion` (`round` 1/2/3, `number`, `count` (null in Blackout),
 `suddenDeath`, **`options` 1–4** from the answer step); reveals add `correctText` / `correctIndex` /
 `voided`; `cut` has `standings` (rank, score, timeMs, finalist), `safeCount`, `wildCardCount`,
 `wildCardSkipped`; `wc*` stages carry `wildCard: WildCardState` (standings only on `wcStandings` /
 `wcWinner`); `bo*` stages carry `blackout: BlackoutState` (`dark`, `darkFrom`, `runners` with position,
 from, delta (after the reveal only), gap, alive, caughtOnQuestion, place, headStart, mood),
-`caughtThisQuestion`, `alive`, `over`, `winner`; `podium` has `basis` (blackout / wildcard / round1),
+`caughtThisQuestion`, `alive`, `over`, `winner`, `questionsLeft`); `boWinner` (the winner moment, 7 s) carries
+`blackout` + `backing`; during Blackout's holds `timer` counts the hold down; `podium` has `basis` (blackout / wildcard / round1),
 `entries`, `calledIt`.
 
 **`ParticipantView`**: `roomCode`, `me` (+ `status`: playing / finalist / wildcard / audience /
 removed), `timer`, `paused`, `serverNow`, `screen` keyed by `kind`: `lobby`, `r1Intro`,
-`nextQuestion`, `eyesUp` / `answer` / `lockedIn` / `timesUp` (all with `round`), `result` (Round 1
+`nextQuestion`, `eyesUp` / `answer` / `lockedIn` / `timesUp` (all with `round`; Blackout runners also get
+`gap`; `lockedIn` has `choiceNumber` 1–4), `result` (Round 1
 and wild card: `outcome`, **`correctText`** after the reveal only, wild card `tally`), `voided`,
 `cut` (`outcome` safe / wildcard, `rank`: the only time a rank shows), `safeWatch`, `wcStatus`
 (`right`, `asked`, `suddenDeath` in / out), `wcWinner` (`you` won / lost), `audience`,
 `backFinalist`, `runnerResult` (`outcome`, `delta`, `position`, `gap`, `correctText` when wrong or
-missed), `runnerStatus` (alive, gap, headStart, caughtNow, place), `blackoutWatch` (audience: backed,
-runners with gap, alive count), `podium`, `removed`.
+missed), `runnerStatus` (alive, gap, headStart, caughtNow, place, `questionsLeft`, **`nextUp`**
+question / winner / podium: what the running hold leads to, for "Next question in 3"), `blackoutWatch`
+(audience: backed, runners with gap, alive count, `questionsLeft`, `winner`), `podium`, `removed`.
 
 **`AdminView`**: `phase`, **`stepId`**, `stepLabel`, **`primary`**, `hint`, **`allowed`**, `timer`,
 `paused`, `question: AdminQuestion` (**with the answer**, numbered 1–4), `nextQuestion`, `counts`
 (+ `answered`/`expected`), `participants` (score, rank, `wildCorrect`, `wildTimeMs`, `isWildCard`,
 `blackout` {position, gap, caughtOnQuestion, place}, answered, flags, backing), `finalists:
-FinalistInfo[]`, `wildCard` (full standings), `blackout`, `backing`, `podium`, `quizTitle`.
+FinalistInfo[]`, `wildCard` (full standings), `blackout`, **`autopilot`** (`running`, `paused`, `step`
+intro/read/answer/timesUp/reveal/dark/winner, `nextInMs`, `nextLabel`, `questionNumber`, `questionsLeft`;
+null outside Blackout), **`darkPreview`** (`steps`, `to`, `catches`, `exact`: who the dark would catch,
+Admin only, during read/answer/time's up/reveal), `backing`, `podium`, `quizTitle`. `nextQuestion` has
+`correctText` (Admin only). In Blackout `primary` is Pause / Resume.
 
 Shared types: `ParticipantTag { id, name, color, head }`, `CastMember = ParticipantTag & { mood }`,
 `BotMood = "idle"|"thinking"|"locked"|"right"|"wrong"|"out"`, `BotHead` (8), `PARTICIPANT_COLORS` (12),
@@ -468,13 +498,15 @@ Shared types: `ParticipantTag { id, name, color, head }`, `CastMember = Particip
 ### 8.5 Admin commands (`AdminAction.type`)
 | Group | Actions |
 |---|---|
-| Flow (the big button sends one) | `startQuiz`, `showQuestion`, `revealAnswer`, `showResults`, `showLeaderboard`, `nextQuestion`, `endRound1`, `startWildCard`, `showStandings`, `revealWildCard`, `openPredictions`, `startBlackout`, `advanceDarkness`, `showWinner` |
-| Timers | `pause`, `resume`, `addTime` (+5 s), `skipTimer` |
+| Flow (the big button sends one) | `startQuiz`, `showQuestion`, `revealAnswer`, `showResults`, `showLeaderboard`, `nextQuestion`, `endRound1`, `startWildCard`, `showStandings`, `revealWildCard`, `openPredictions`, `startBlackout`. (`advanceDarkness`, `showWinner` still exist but are never allowed since v3.1: the autopilot does them. Show/Reveal/Next are refused in Blackout.) |
+| Timers | `pause`, `resume`, `addTime` (+5 s; Blackout: answer step only), `skipTimer` (also ends a Blackout hold) |
 | Fixes | `voidQuestion`, `restartQuestion`, `restartRound` |
 | Room | `removeParticipant {participantId}`, `setRoomCodeVisible {visible}`, `setSound {on}`, `endQuiz` |
 
-Step-independent (accepted from any step): `pause`, `resume`, `removeParticipant`,
-`setRoomCodeVisible`, `setSound`, `endQuiz`. Everything else must carry the current `stepId`.
+Step-independent (accepted from any step): `resume`, `removeParticipant`, `setRoomCodeVisible`,
+`setSound`, `endQuiz`. Everything else, **`pause` and `skipTimer` included** (v3.1), must carry the
+current `stepId`; during the Blackout autopilot the stepId changes every few seconds, so always send
+the one on screen.
 Destructive (UI asks for a second tap): `voidQuestion`, `restartQuestion`, `restartRound`, `endQuiz`, `removeParticipant`.
 
 ### 8.6 Bot rules the server enforces
@@ -512,7 +544,7 @@ Admin  → revealAnswer → Host r1Reveal {correctText} · phones {kind:"result"
   "timer":null, "paused":false, "serverNow":1791735000000,
   "screen":{"kind":"lobby","joined":12} }
 // admin:command
-{ "stepId": 12, "action": { "type": "advanceDarkness" } }
+{ "stepId": 12, "action": { "type": "startBlackout" } }
 ```
 
 ### 8.9 The first backend prototype (resolved 12 Oct: the backend is `server/`)
@@ -527,7 +559,7 @@ different, earlier design:
 | Messages | events above, full views | JSON `{event:…}`: `room_created`, `next_question`, `question_started`, `show_controller_options`, `submit_answer`, `answer_locked`, `answer_progress`, `end_question`, `question_results`, `round_over`, `game_over`, `player_joined`, `player_left` |
 | Who drives | Admin (PIN) with `stepId` | the Host sends `next_question` / `end_question` |
 | Rounds | Round 1 + top 6 + buzzer round + predictions + podium | one round of questions, leaderboard at the end |
-| Timing / scoring | 8 s read + 8 s answer; 500–1000 by speed | 15 s; 1000 + up to 500 speed bonus |
+| Timing / scoring | 8 s read + 8 s answer; 500–1000 by speed (200–100 since v3.1) | 15 s; 1000 + up to 500 speed bonus |
 | Questions | `data/questions.json` `{id, round, text, image, options[4], correct}` | `backend/questions.json` `{question, options, correctOption}` |
 | Extras | bots, moods, reconnect, wake lock, CSV | Postgres (`DATABASE_URL`, Supabase) / sqlite tables `rooms`, `players`, `game_history` |
 
@@ -546,6 +578,7 @@ Whichever is chosen: record it in §1.3 and §4.
 | Date | Change | Screens must |
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
+| 14 Oct 2026 (night) | **v3.1: Blackout autopilot, 200→100 scoring, no glow.** + phase `boWinner` (HostStage `{blackout, backing}`); `McqQuestion.count`, `AdminQuestion.count`, `QuestionPreview.count` and `eyesUp`/`answer` `questionCount` may be `null` (Blackout); `BlackoutState.questionCount` → `questionsLeft`; `runnerStatus.questionCount` → `questionsLeft` + `nextUp`; `blackoutWatch` → `questionsLeft` + `winner`; `eyesUp`/`answer`/`lockedIn` + `gap`; `lockedIn` + `choiceNumber`; `QuestionPreview.correctText`; `AdminView` + `autopilot: AutopilotState`, `darkPreview: DarkPreview`; `QuizSettings` − `blackoutQuestions`; `QuizRules` − `blackoutQuestions`; `pause` no longer step-independent. `advanceDarkness`/`showWinner` kept as types but never allowed. Timers run during Blackout's holds (the view's `timer` counts the hold). | Admin: Pause/Resume as the big button in Blackout, the autopilot strip, the catch preview; phones: "Next question in N" from `nextUp` + `timer`; no "of N" in Blackout; the Host draws `boWinner` |
 | 14 Oct 2026 | **v3: three rounds.** Phases `r2*`/`suddenDeath` → `wcIntro…wcWinner`, `boIntro…boDark`. `Round1Question`/`BuzzerQuestion` → `McqQuestion` (with `round`, `suddenDeath`); `OptionResult.letter` → `number`; `Reveal` (`correctText`, `correctIndex`, `voided`). New `WildCardState`, `WildCardStanding`, `BlackoutState`, `Runner`, `RunnerLite`, `FinalistInfo` (replaces `FinalistState`), `PodiumBasis`; `PodiumEntry` gets `round1Score`, `position`, `caughtOnQuestion`, `wildCard` (no `points`). `ParticipantStatus` + `wildcard`; `Counts.wildcard`; `QuizSettings` (`safeCount`, `wildCardQuestions`, `wildCardSuddenDeathMax`, `blackoutQuestions`, Blackout timings). Phone screens: `cut` (`outcome`), `safeWatch`, `wcStatus`, `wcWinner`, `runnerResult`, `runnerStatus`, `blackoutWatch`; question screens carry `round`; removed `finalist`, `buzzer`, `buzzerWatch`. `AdminAction`: − `markCorrect`, `markWrong`, `undoMark`, `startBuzzerRound`, `showScores`, `startSuddenDeath`; + `startWildCard`, `showStandings`, `revealWildCard`, `startBlackout`, `advanceDarkness`. `AdminQuestion` numbered 1–4 (`correctNumber`). `AdminParticipant` − `points`, + `wildCorrect`, `wildTimeMs`, `isWildCard`, `blackout`. `AdminView` − `round2`, `canUndo`, `lastMark`; + `wildCard`, `blackout`. Removed `participant:buzz`. Library: `Quiz.wildcard` + `Quiz.blackout` (was `buzzer`), `QuizRules` (`safe`, `wildCardQuestions`, `blackoutQuestions`, Blackout timings), `QuizSummary` counts. `/health` returns JSON. | Draw the new stages and screens; Admin shows the wild card standings and the runners |
 | 12 Oct 2026 | `AdminView.podium` (`PodiumSummary`, or null before the podium) (same data as the Host podium stage) | Admin shows the winner; the real backend must send it on the podium |
 | 12 Oct 2026 (evening) | **Bots for 100:** removed `BotPicker` and the lobby's `botPicker`; `BotError` no longer has `"taken"`; `participant:bot` takes any `#rrggbb`; new `normalizeBotColor`, `hexToHsl`, `hslToHex`, `BOT_LIGHTNESS`. | `BotBuilder` has no `picker` prop; colour swatches + wheel; nothing greyed out |
@@ -569,8 +602,9 @@ Whichever is chosen: record it in §1.3 and §4.
 | Bot | a participant's robot avatar (colour + head) |
 | Mood | what a bot's eyes are doing (`BotMood`) |
 | Step / stepId | the current position in the flow; changes every step |
-| Void | cancel a question: it doesn't count (Blackout: no moves, the dark stays) |
-| Preset | `demo` (3 questions, top 3 safe, short Blackout) or `event` (20 / top 9 / 5 / 12) |
+| Void | cancel a question: it doesn't count (Blackout: no moves, the dark stays, the next question comes) |
+| Autopilot | Blackout runs itself after Start Blackout: each step and hold starts the next, to the podium |
+| Preset | `demo` (3 questions, top 3 safe, short Blackout) or `event` (20 / top 9 / 5 / Blackout until one is left, ≥ 12 questions) |
 
 ---
 

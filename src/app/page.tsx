@@ -21,7 +21,7 @@ export default function Home() {
         </ul>
 
         <div className="flex flex-col items-center gap-4">
-          <h1 className="font-term text-7xl leading-none text-mint [text-shadow:0_0_18px_var(--color-mint)] sm:text-9xl">
+          <h1 className="font-term text-7xl leading-none text-mint sm:text-9xl">
             {APP_NAME.toUpperCase()}
           </h1>
           <p className="max-w-xl -rotate-2 text-lg text-bright sm:text-2xl">

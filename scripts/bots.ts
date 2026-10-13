@@ -10,7 +10,8 @@
  *   --prefix Bot         name prefix (default "Bot"), names are "Bot 01", "Bot 02", ...
  *   --accuracy 0.4-0.85  each bot's chance of answering right: a range (each bot
  *                        gets its own) or one number (default 0.4-0.85)
- *   --slow               answer anywhere in the answer time (default: mostly in
+ *   --slow               answer anywhere in the answer time (Round 1 and wild card 8 s,
+ *                        Blackout 10 s, from the server's timer; default: mostly in
  *                        the first half, like keen players)
  *   --miss 0.08          chance a bot doesn't answer at all (default 0.08)
  *   --pin 1234           the Admin PIN (default: $env:ADMIN_PIN, else 1234). Bots

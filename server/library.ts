@@ -163,7 +163,6 @@ export function defaultRules(config: GameConfig, counts?: Partial<Record<"round1
     round1AnswerSeconds: config.round1.answerMs / 1000,
     safe: config.safe,
     wildCardQuestions: cap(config.wildCard.questions, counts?.wildcard),
-    blackoutQuestions: cap(config.blackout.questions, counts?.blackout),
     blackoutReadSeconds: config.blackout.readMs / 1000,
     blackoutAnswerSeconds: config.blackout.answerMs / 1000,
   };
@@ -193,7 +192,8 @@ export function quizToGame(quiz: Quiz, base: GameConfig): { config: GameConfig; 
       safe: r.safe,
       // The wild card round uses Round 1's timings (docs/SPEC.md v3).
       wildCard: { ...base.wildCard, questions: r.wildCardQuestions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000 },
-      blackout: { ...base.blackout, questions: r.blackoutQuestions, readMs: r.blackoutReadSeconds * 1000, answerMs: r.blackoutAnswerSeconds * 1000 },
+      // Blackout plays its whole list (no count); the tuning and the autopilot holds come from the preset.
+      blackout: { ...base.blackout, readMs: r.blackoutReadSeconds * 1000, answerMs: r.blackoutAnswerSeconds * 1000 },
     },
     questions: [
       ...quiz.round1.map(toQuestion(1, "r1-")),
@@ -210,12 +210,14 @@ export const DEMO_QUIZ_ID = "demo";
  * data/questions.json. Each list takes the questions tagged for it, else the
  * untagged ones, repeated to fill the preset's counts (the demo reuses its 3
  * questions in every round; each run still gets fresh ids). A Demo quiz saved
- * before v3 (no Blackout list) is rebuilt.
+ * before v3 (no Blackout list) or with too few Blackout questions is rebuilt.
  */
 export async function ensureDemoQuiz(store: LibraryStore, config: GameConfig, questionsFile?: string) {
   const quizzes = await store.list();
   const demo = quizzes.find((q) => q.id === DEMO_QUIZ_ID);
-  if (quizzes.length > 0 && (!demo || !isLegacyQuiz(demo))) return;
+  // Rebuilt when it was saved before v3 (no Blackout list) or before v3.1 (too few Blackout questions for the autopilot).
+  const outdated = !!demo && (isLegacyQuiz(demo) || (Array.isArray(demo.blackout) ? demo.blackout.length : 0) < config.blackout.minQuestions);
+  if (quizzes.length > 0 && !outdated) return;
   const all = loadQuestions(questionsFile);
   const toLib = (q: QuizQuestion) => ({ ...blankQuestion(), text: q.text, options: q.options, correct: q.correct, image: q.image });
   const fill = (round: 1 | 2 | 3, count: number) => {
@@ -226,7 +228,7 @@ export async function ensureDemoQuiz(store: LibraryStore, config: GameConfig, qu
   };
   const round1 = fill(1, config.round1.questions);
   const wildcard = fill(2, config.wildCard.questions + config.wildCard.suddenDeathMax);
-  const blackout = fill(3, config.blackout.questions + config.blackout.spares);
+  const blackout = fill(3, config.blackout.minQuestions);
   await store.save({
     id: DEMO_QUIZ_ID,
     title: "Demo quiz",
