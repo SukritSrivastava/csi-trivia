@@ -127,7 +127,7 @@ export function QuestionForm({
             </div>
           );
         })}
-        <p className="text-[13px] text-fog">The 4 answers are shuffled on screen, so put them in any order.</p>
+        <p className="text-[14px] text-fog">The 4 answers are shuffled on screen, so put them in any order.</p>
       </fieldset>
 
       <Panel title="Picture (projector only, optional)">

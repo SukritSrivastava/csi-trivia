@@ -38,6 +38,7 @@ export function ControlButton({
   armed = false,
   testId,
   className = "",
+  title,
 }: {
   children: ReactNode;
   onClick: () => void;
@@ -47,6 +48,8 @@ export function ControlButton({
   armed?: boolean;
   testId?: string;
   className?: string;
+  /** Hover / long-press text: why it's greyed out. */
+  title?: string;
 }) {
   const look =
     tone === "danger"
@@ -59,6 +62,8 @@ export function ControlButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
+      aria-disabled={disabled || undefined}
       data-testid={testId}
       data-armed={armed || undefined}
       className={`flex min-h-14 items-center justify-center rounded-[0.9rem] border-2 px-3 py-2 text-center text-[15px] leading-tight transition-[transform,background-color] duration-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-line disabled:bg-transparent disabled:text-fog disabled:opacity-60 ${look} ${className}`}

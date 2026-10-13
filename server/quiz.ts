@@ -63,7 +63,7 @@ import {
   type WildCardStanding,
   type WildCardState,
 } from "../src/shared/protocol";
-import { darknessStep, type GameConfig, round1Points } from "./config";
+import { darknessStep, type GameConfig, R1_MAX_POINTS, round1Points } from "./config";
 import { pickRound, type QuizQuestion } from "./questions";
 
 // ============================================================================
@@ -1613,7 +1613,17 @@ export class QuizRoom {
     });
   }
 
-  private primaryAndHint(): { primary: PrimaryAction | null; hint: string | null } {
+  /** The big button (main path), the optional steps offered beside it, and the hint. */
+  private primaryAndHint(): { primary: PrimaryAction | null; optional: PrimaryAction[]; hint: string | null } {
+    return { optional: [], ...this.primaryAndHintFor() };
+  }
+
+  private primaryAndHintFor(): { primary: PrimaryAction | null; optional?: PrimaryAction[]; hint: string | null } {
+    const showResults: PrimaryAction = { action: { type: "showResults" }, label: "Show results" };
+    const showLeaderboard: PrimaryAction = { action: { type: "showLeaderboard" }, label: "Show leaderboard" };
+    const showStandings: PrimaryAction = { action: { type: "showStandings" }, label: "Show standings" };
+    const openPredictions: PrimaryAction = { action: { type: "openPredictions" }, label: "Open predictions" };
+    const startBlackout: PrimaryAction = { action: { type: "startBlackout" }, label: "Start Blackout" };
     const answeredLine = () => {
       const c = this.answerCounts();
       return c ? `${c.answered} of ${c.expected} answered.` : null;
@@ -1647,9 +1657,10 @@ export class QuizRoom {
           ? { action: { type: "endRound1" }, label: "End round 1" }
           : { action: { type: "nextQuestion" }, label: "Next question" };
         if (run!.voided) return { primary: next, hint: "Question cancelled. Nobody gained or lost points." };
-        if (this.phase === "r1Reveal") return { primary: { action: { type: "showResults" }, label: "Show results" }, hint: `Results and leaderboard are optional. "${next.label}" works now too.` };
-        if (this.phase === "r1Results") return { primary: { action: { type: "showLeaderboard" }, label: "Show leaderboard" }, hint: `Leaderboard is optional. "${next.label}" works now too.` };
-        return { primary: next, hint: this.isLastRound1Question() ? `That was the last question. Next: the cut (top ${this.config.safe} safe).` : "End round 1 also works now, to cut Round 1 short." };
+        const last = this.isLastRound1Question() ? `That was the last question. Next: the cut (top ${this.config.safe} safe).` : null;
+        if (this.phase === "r1Reveal") return { primary: next, optional: [showResults, showLeaderboard], hint: last ?? "Answer revealed. The results and the leaderboard are optional." };
+        if (this.phase === "r1Results") return { primary: next, optional: [showLeaderboard], hint: last ?? "The leaderboard is optional." };
+        return { primary: next, hint: last ?? "End round 1 (in Controls) also works now, to cut Round 1 short." };
       }
       case "cut": {
         const wild = this.wildPlayerIds().length;
@@ -1660,7 +1671,11 @@ export class QuizRoom {
           };
         }
         return this.finalistIds().length
-          ? { primary: { action: { type: "openPredictions" }, label: "Open predictions" }, hint: `Fewer than ${this.config.safe + 1} played, so everyone is a finalist and there's no wild card round. Start Blackout works now too.` }
+          ? {
+              primary: startBlackout,
+              optional: [openPredictions],
+              hint: `Fewer than ${this.config.safe + 1} played, so everyone is a finalist and there's no wild card round. Predictions are optional.`,
+            }
           : { primary: null, hint: "Nobody played Round 1, so there are no finalists. Use End quiz now." };
       }
       case "wcIntro":
@@ -1676,16 +1691,21 @@ export class QuizRoom {
         const noSpare = this.wcNext >= this.wildQuestions.length && !this.wildDecided ? " No spare questions left." : "";
         if (run!.voided) return { primary: after, hint: `Question cancelled. It doesn't count; the next one takes its place.${noSpare}` };
         const lead = this.sudden && after.action.type === "nextQuestion" ? `Exact tie: sudden death between ${this.sudden.alive.map((id) => this.find(id)?.name).join(", ")}. ` : "";
-        if (this.phase === "wcReveal") return { primary: { action: { type: "showStandings" }, label: "Show standings" }, hint: `${lead}Standings are optional. "${after.label}" works now too.` };
-        return { primary: after, hint: lead || (after.action.type === "revealWildCard" ? "The wild card is decided." : null) };
+        const decided = after.action.type === "revealWildCard" ? "The wild card is decided. " : "";
+        if (this.phase === "wcReveal") return { primary: after, optional: [showStandings], hint: `${lead}${decided}The standings are optional.` };
+        return { primary: after, hint: lead || decided.trim() || null };
       }
       case "wcWinner":
-        return { primary: { action: { type: "openPredictions" }, label: "Open predictions" }, hint: "Next, the audience backs a finalist (or Start Blackout straight away)." };
+        return {
+          primary: startBlackout,
+          optional: [openPredictions],
+          hint: "Predictions (the audience backs a finalist) are optional. Start Blackout and it runs by itself to the podium.",
+        };
       case "predictions": {
         const b = this.backing();
         return {
-          primary: { action: { type: "startBlackout" }, label: "Start Blackout" },
-          hint: `${b.backers} of ${b.audience} audience have backed someone. Backing closes when Blackout starts.`,
+          primary: startBlackout,
+          hint: `${b.backers} of ${b.audience} audience have backed someone. Predictions lock when you start Blackout; then it runs by itself to the podium.`,
         };
       }
       case "boIntro":
@@ -1816,6 +1836,7 @@ export class QuizRoom {
       round1Questions: this.round1Questions.length,
       round1ReadSeconds: this.config.round1.readMs / 1000,
       round1AnswerSeconds: this.config.round1.answerMs / 1000,
+      round1MaxPoints: R1_MAX_POINTS,
       safeCount: this.config.safe,
       wildCardQuestions: this.config.wildCard.questions,
       wildCardSuddenDeathMax: this.config.wildCard.suddenDeathMax,
@@ -2348,7 +2369,14 @@ export class QuizRoom {
   private adminQuestion(): AdminQuestion | null {
     const run = this.run;
     if (!run) return null;
-    const options = run.hostOrder.map((i, slot) => ({ number: slot + 1, text: run.question.options[i], correct: i === run.question.correct }));
+    const revealed = REVEALED_PHASES.includes(this.phase) || this.phase === "podium";
+    const counts = revealed ? this.optionResults(run) : null;
+    const options = run.hostOrder.map((i, slot) => ({
+      number: slot + 1,
+      text: run.question.options[i],
+      correct: i === run.question.correct,
+      count: counts ? counts[slot].count : null,
+    }));
     const correct = options.find((o) => o.correct)!;
     const q = this.mcqQuestion(run);
     return {
@@ -2362,6 +2390,7 @@ export class QuizRoom {
       options,
       correctNumber: correct.number,
       correctText: correct.text,
+      voided: run.voided,
     };
   }
 
@@ -2456,7 +2485,7 @@ export class QuizRoom {
   }
 
   adminView(): AdminView {
-    const { primary, hint } = this.cached("primary", () => this.primaryAndHint());
+    const { primary, optional, hint } = this.cached("primary", () => this.primaryAndHint());
     const answerCounts = this.answerCounts();
     return {
       roomCode: this.code,
@@ -2466,6 +2495,7 @@ export class QuizRoom {
       stepId: this.step,
       stepLabel: this.stepLabel(),
       primary,
+      optional: optional.filter((o) => this.allowedActions().has(o.action.type)),
       hint,
       allowed: [...this.allowedActions()],
       timer: this.timer,
@@ -2480,6 +2510,14 @@ export class QuizRoom {
       finalists: this.cutOrder ? this.finalistInfos() : [],
       wildCard: this.wildCardState(true),
       blackout: this.blackoutState(),
+      cut: this.cutOrder
+        ? {
+            standings: this.standings(),
+            safeCount: this.participants.filter((p) => p.status === "finalist" && !p.isWildCard).length,
+            wildCardCount: this.wildPlayerIds().length,
+            wildCardSkipped: this.wildSkipped,
+          }
+        : null,
       autopilot: this.autopilotState(),
       darkPreview: this.cached("darkPreview", () => this.darkPreview()),
       backing: this.cutOrder ? this.backing() : null,

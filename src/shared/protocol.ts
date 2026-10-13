@@ -279,6 +279,8 @@ export interface QuizSettings {
   round1Questions: number;
   round1ReadSeconds: number;
   round1AnswerSeconds: number;
+  /** Points for an instant correct Round 1 answer (200; the last moment scores 100). */
+  round1MaxPoints: number;
   /** Safe at the cut (9 at the event). The wild card makes it one more. */
   safeCount: number;
   wildCardQuestions: number;
@@ -816,11 +818,13 @@ export interface AdminQuestion {
   suddenDeath: boolean;
   text: string;
   image: string | null;
-  /** In the Host's 1–4 order. */
-  options: { number: number; text: string; correct: boolean }[];
+  /** In the Host's 1–4 order. `count`: how many picked it, after the reveal (null before). */
+  options: { number: number; text: string; correct: boolean; count: number | null }[];
   /** 1–4. */
   correctNumber: number;
   correctText: string;
+  /** Cancelled by Void question: it doesn't count. */
+  voided: boolean;
 }
 
 /** What "Show question" / "Next question" will put up next. */
@@ -899,8 +903,13 @@ export interface AdminView {
   stepId: number;
   /** Where we are, in plain words: "Wild card, question 2 of 5: reveal". */
   stepLabel: string;
-  /** The big button. null while a timer runs. */
+  /** The big button: always the main path. null while a Round 1 / wild card timer runs. Pause / Resume during the Blackout autopilot. */
   primary: PrimaryAction | null;
+  /**
+   * Optional steps, offered as small "or: Show results" chips above the big
+   * button: Show results, Show leaderboard, Show standings, Open predictions.
+   */
+  optional: PrimaryAction[];
   /** One line under the button: what happens next, or why there's no button. */
   hint: string | null;
   /** Every action the server will accept right now. Grey out the rest. */
@@ -926,6 +935,8 @@ export interface AdminView {
   wildCard: WildCardState | null;
   /** From Start Blackout onward. */
   blackout: BlackoutState | null;
+  /** The ranking at the cut (from End round 1 on; everyone, best first). null before the cut. */
+  cut: { standings: Standing[]; safeCount: number; wildCardCount: number; wildCardSkipped: boolean } | null;
   /** Blackout's autopilot (boIntro to boWinner), else null. */
   autopilot: AutopilotState | null;
   /** During Blackout's read, answer, time's up and reveal steps; else null. */
@@ -996,6 +1007,8 @@ export interface QuizSummary {
   updatedAt: number;
   /** Problems that stop it being played (empty = ready). */
   problems: string[];
+  /** The game server's minimum Blackout list (12 at the event, 8 in the demo): the editor checks it too. */
+  blackoutMin: number;
 }
 
 /** A room that's open now (Admin's home screen, and where the Host attaches). */
@@ -1164,8 +1177,8 @@ export const JOIN_ERROR_MESSAGES: Record<JoinError, string> = {
   "room-not-found": "No quiz with that code. Check the code on the projector.",
   "name-taken": 'Someone already joined with that name. Add your surname initial, like "Rahul S".',
   "name-invalid": `Enter your name (up to ${NAME_MAX_LENGTH} characters).`,
-  "quiz-ended": "This quiz has already finished.",
-  removed: "The quizmaster removed you from this quiz.",
+  "quiz-ended": "The quiz has ended.",
+  removed: "You were removed from the quiz.",
   "room-full": "This quiz is full.",
 };
 

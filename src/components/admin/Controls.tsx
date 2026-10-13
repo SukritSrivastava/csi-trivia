@@ -2,7 +2,7 @@
 
 import { ACTION_LABELS } from "@/lib/adminLabels";
 import type { AdminActionType, AdminView } from "@/shared/protocol";
-import type { Send } from "./GamePanels";
+import { notNowReason, type Send } from "./GamePanels";
 import { ControlButton, Panel, useConfirm } from "./parts";
 
 type Simple = "voidQuestion" | "restartQuestion" | "restartRound" | "endQuiz";
@@ -34,12 +34,16 @@ export function Controls({
 }) {
   const { armed, guard } = useConfirm();
   const can = (t: AdminActionType) => view.allowed.includes(t) && !pending;
+  const why = (t: AdminActionType) => (can(t) ? undefined : notNowReason(t, view));
+  // End round 1 is the big button after the last question; before that it lives here.
+  const endRound1Here = view.allowed.includes("endRound1") && view.primary?.action.type !== "endRound1";
 
   const destructive = (type: Simple) => (
     <ControlButton
       tone="danger"
       armed={armed === type}
       disabled={!can(type)}
+      title={why(type)}
       onClick={() => guard(type, () => send({ type }))}
       testId={`ctl-${type}`}
     >
@@ -54,15 +58,16 @@ export function Controls({
         <ControlButton
           onClick={() => send({ type: view.paused ? "resume" : "pause" })}
           disabled={!can(view.paused ? "resume" : "pause")}
+          title={why(view.paused ? "resume" : "pause")}
           testId="ctl-pause"
         >
           {view.paused ? "Resume" : "Pause"}
         </ControlButton>
-        <ControlButton onClick={() => send({ type: "addTime" })} disabled={!can("addTime")} testId="ctl-addTime">
+        <ControlButton onClick={() => send({ type: "addTime" })} disabled={!can("addTime")} title={why("addTime")} testId="ctl-addTime">
           <span className="font-term text-2xl leading-none">+5s</span>
         </ControlButton>
-        <ControlButton onClick={() => send({ type: "skipTimer" })} disabled={!can("skipTimer")} testId="ctl-skipTimer">
-          Skip timer
+        <ControlButton onClick={() => send({ type: "skipTimer" })} disabled={!can("skipTimer")} title={why("skipTimer")} testId="ctl-skipTimer">
+          Skip
         </ControlButton>
       </div>
 
@@ -87,6 +92,18 @@ export function Controls({
       </p>
 
       <h3 className="mt-4 mb-2 text-[14px] text-fog">Quiz</h3>
+      {endRound1Here && (
+        <ControlButton
+          tone="danger"
+          armed={armed === "endRound1"}
+          onClick={() => guard("endRound1", () => send({ type: "endRound1" }))}
+          disabled={pending}
+          className="mb-2 w-full"
+          testId="ctl-endRound1"
+        >
+          {armed === "endRound1" ? "Tap again: go to the cut now" : "End round 1 now"}
+        </ControlButton>
+      )}
       <div className="grid grid-cols-3 gap-2">
         <ControlButton onClick={onDownload} testId="ctl-csv">
           Results CSV

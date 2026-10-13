@@ -4,7 +4,8 @@ import { useEffect, useRef } from "react";
 import type { AdminAction, AdminView } from "@/shared/protocol";
 
 /**
- * Laptop keys: Space = primary button, P = pause/resume. Ignored while typing
+ * Laptop keys: Space = primary button (Pause / Resume during the Blackout
+ * autopilot), P = pause/resume, S = skip (Blackout only). Ignored while typing
  * in a field, with modifier keys held,
  * and for actions the server wouldn't accept right now.
  */
@@ -29,6 +30,10 @@ export function useShortcuts(view: AdminView | null, send: (action: AdminAction)
         case "p":
         case "P":
           if (allowed(view.paused ? "resume" : "pause")) action = { type: view.paused ? "resume" : "pause" };
+          break;
+        case "s":
+        case "S":
+          if (view.autopilot && allowed("skipTimer") && !pending) action = { type: "skipTimer" };
           break;
       }
       if (action) send(action);

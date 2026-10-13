@@ -39,9 +39,12 @@ const THUMB_ACTIONS: readonly AdminActionType[] = [
   "revealWildCard",
   "openPredictions",
   "startBlackout",
-  "advanceDarkness",
-  "showWinner",
+  // The Blackout big button: a double tap must not pause and resume at once.
+  "pause",
+  "resume",
 ];
+/** The server refuses a socket after this many wrong PINs (rooms.ts PIN_ATTEMPTS); a reload starts over. */
+const PIN_ATTEMPTS = 5;
 const COMMAND_TIMEOUT_MS = 5000;
 const LIBRARY_TIMEOUT_MS = 10_000;
 
@@ -61,8 +64,12 @@ interface AdminStore {
   signingIn: boolean;
   /** A command waiting for the server's reply (disable buttons meanwhile). */
   pending: AdminActionType | null;
-  /** The last command's reply, e.g. to show "That step already moved on". */
+  /** The last command's reply, e.g. to show "That step already happened". */
   lastResult: { action: AdminActionType; result: SendResult } | null;
+  /** Wrong PINs on this connection (the server refuses it after 5). */
+  wrongPins: number;
+  /** The game server's minimum Blackout questions (from library:list), for the editor's checks. */
+  blackoutMin: number;
 
   connect: () => () => void;
   /** PIN, and optionally a room to go straight into (from /admin?code=ABCD). */
@@ -140,7 +147,14 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
     socket().emit("admin:login", { pin }, (result) => {
       if (!result.ok) {
         saveAdminSession(null);
-        set({ signingIn: false, signedIn: false, view: null, error: ADMIN_AUTH_ERROR_MESSAGES["wrong-pin"] });
+        const wrongPins = get().wrongPins + 1;
+        set({
+          signingIn: false,
+          signedIn: false,
+          view: null,
+          wrongPins,
+          error: wrongPins >= PIN_ATTEMPTS ? "Too many tries. Reload the page to try again." : ADMIN_AUTH_ERROR_MESSAGES["wrong-pin"],
+        });
         return;
       }
       saveAdminSession({ pin, roomCode });
@@ -159,6 +173,8 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
     signingIn: false,
     pending: null,
     lastResult: null,
+    wrongPins: 0,
+    blackoutMin: 1,
 
     connect: () => {
       const s = socket();
@@ -238,7 +254,14 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
           set({ pending: null, lastResult: { action: action.type, result } });
           resolve(result);
         };
-        socket().emit("admin:command", { stepId: stepId ?? view.stepId, action }, finish);
+        socket().emit("admin:command", { stepId: stepId ?? view.stepId, action }, (result) => {
+          // During the Blackout autopilot the step can change between the tap and its arrival.
+          // A Pause is still clearly meant: send it once more from the step now on screen.
+          const latest = get().view;
+          if (!result.ok && result.reason === "stale-step" && action.type === "pause" && latest?.allowed.includes("pause")) {
+            socket().emit("admin:command", { stepId: latest.stepId, action }, finish);
+          } else finish(result);
+        });
         window.setTimeout(() => finish({ ok: false, reason: "no-reply" }), COMMAND_TIMEOUT_MS);
       }),
 
@@ -266,7 +289,11 @@ export const useAdminStore = create<AdminStore>()((set, get) => {
         }),
       ),
     closeRoom: async (roomCode) => (await ask<{ ok: boolean }>({ ok: false }, (ack) => socket().emit("admin:closeRoom", { roomCode }, ack))).ok,
-    listQuizzes: () => ask<QuizSummary[] | null>(null, (ack) => socket().emit("library:list", ack)),
+    listQuizzes: async () => {
+      const list = await ask<QuizSummary[] | null>(null, (ack) => socket().emit("library:list", ack));
+      if (list?.[0]) set({ blackoutMin: list[0].blackoutMin });
+      return list;
+    },
     getQuiz: (id) => ask<Quiz | null>(null, (ack) => socket().emit("library:get", { id }, ack)),
     createQuiz: (title) => ask<SaveQuizResult>({ ok: false, error: "not-signed-in" }, (ack) => socket().emit("library:create", { title }, ack)),
     duplicateQuiz: (id) => ask<SaveQuizResult>({ ok: false, error: "not-signed-in" }, (ack) => socket().emit("library:duplicate", { id }, ack)),

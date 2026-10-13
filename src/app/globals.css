@@ -243,7 +243,7 @@ html:has(.host-root) {
     color: var(--color-void);
   }
   .phone-opt:disabled:not([aria-pressed="true"]) {
-    opacity: 0.35;
+    opacity: 0.4;
   }
   /* Solid mint action (LOCK IN, BUZZ when live). */
   .phone-go {
@@ -549,6 +549,11 @@ html:has(.host-root) {
   .bot[data-mood="out"] .bot-head::after {
     animation: none;
   }
+  /* A still bot (Admin lists): its mood's pose, no animation. */
+  .bot[data-still],
+  .bot[data-still] * {
+    animation: none !important;
+  }
   /* Phase 5 fix: the visor band powers down with the head (the reference left it lit). */
   .bot[data-mood="out"][data-head="visor"] .bot-eyes {
     outline-color: #55646a;
@@ -649,8 +654,8 @@ html:has(.host-root) {
 }
 
 :focus-visible {
-  outline: 3px solid var(--color-mint);
-  outline-offset: 3px;
+  outline: 2px solid var(--color-mint);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -14,7 +14,7 @@ import type { AdminAction, AdminView } from "@/shared/protocol";
 import { useAdminStore } from "@/stores/adminStore";
 import { Controls } from "./Controls";
 import { Dock } from "./Dock";
-import { BlackoutPanel, Counts, Finalists, Podium, QuestionCard, type Send, WildCardPanel } from "./GamePanels";
+import { BlackoutPanel, Counts, CutPanel, Finalists, NextUp, notNowReason, Podium, PredictionsPanel, QuestionCard, type Send, WildCardPanel } from "./GamePanels";
 import { AdminHome } from "./library/AdminHome";
 import { ControlButton, Panel } from "./parts";
 import { ParticipantsPanel } from "./ParticipantsPanel";
@@ -28,8 +28,10 @@ export function AdminApp() {
   const signedIn = useAdminStore((s) => s.signedIn);
   useEffect(() => connect(), [connect]);
   return (
-    <div className="min-h-dvh bg-void font-type text-ghost">
-      {view ? <Panelled view={view} /> : signedIn ? <AdminHome /> : <SignIn />}
+    <div className="relative min-h-dvh bg-void font-type text-ghost">
+      {/* A faint vignette (it darkens; no corridor on Admin). */}
+      <div className="corridor-vignette pointer-events-none fixed inset-0 opacity-50" aria-hidden />
+      <div className="relative">{view ? <Panelled view={view} /> : signedIn ? <AdminHome /> : <SignIn />}</div>
     </div>
   );
 }
@@ -67,29 +69,38 @@ function Panelled({ view }: { view: AdminView }) {
 
   const game = (
     <div className="flex flex-col gap-3">
-      {!wide && <TimerControls view={view} send={send} pending={pending} />}
+      {!wide && !view.autopilot && <TimerControls view={view} send={send} pending={pending} />}
       <Podium view={view} />
       {view.phase === "lobby" && <JoinInfo view={view} />}
       <Counts view={view} />
-      <BlackoutPanel view={view} />
+      <CutPanel view={view} />
+      <BlackoutPanel view={view} send={send} pending={pending} />
       <QuestionCard view={view} />
       <WildCardPanel view={view} />
+      <PredictionsPanel view={view} />
       <Finalists view={view} />
+      <NextUp view={view} />
     </div>
   );
   const controls = <Controls view={view} send={send} pending={pending} onDownload={downloadResults} onLeave={leaveRoom} />;
   const people = <ParticipantsPanel view={view} send={send} />;
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex h-dvh w-full flex-col overflow-x-hidden">
       <TopBar view={view} clockOffset={clockOffset} status={status} />
       {!wide && <Tabs tab={tab} setTab={setTab} joined={view.counts.joined} />}
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="flex min-h-0 flex-col">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="flex min-h-0 min-w-0 flex-col">
           <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
             {wide || tab === "game" ? game : tab === "controls" ? controls : people}
           </main>
-          <Dock view={view} pending={pending} onPrimary={() => view.primary && send(view.primary.action)} onDownload={downloadResults} />
+          <Dock
+            view={view}
+            pending={pending}
+            onPrimary={() => view.primary && send(view.primary.action)}
+            onOptional={(o) => send(o.action)}
+            onDownload={downloadResults}
+          />
         </div>
         {wide && (
           <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain border-l border-line p-4">
@@ -133,15 +144,17 @@ function Tabs({ tab, setTab, joined }: { tab: Tab; setTab: (t: Tab) => void; joi
 function TimerControls({ view, send, pending }: { view: AdminView; send: Send; pending: boolean }) {
   if (!view.timer) return null;
   const can = (t: AdminAction["type"]) => view.allowed.includes(t) && !pending;
+  const why = (t: AdminAction["type"]) => (can(t) ? undefined : notNowReason(t, view));
+  const pause = view.paused ? "resume" : "pause";
   return (
     <div className="grid grid-cols-3 gap-2" data-testid="timer-controls">
-      <ControlButton onClick={() => send({ type: view.paused ? "resume" : "pause" })} disabled={!can(view.paused ? "resume" : "pause")} testId="quick-pause">
+      <ControlButton onClick={() => send({ type: pause })} disabled={!can(pause)} title={why(pause)} testId="quick-pause">
         {view.paused ? "Resume" : "Pause"}
       </ControlButton>
-      <ControlButton onClick={() => send({ type: "addTime" })} disabled={!can("addTime")} testId="quick-addTime">
+      <ControlButton onClick={() => send({ type: "addTime" })} disabled={!can("addTime")} title={why("addTime")} testId="quick-addTime">
         <span className="font-term text-2xl leading-none">+5s</span>
       </ControlButton>
-      <ControlButton onClick={() => send({ type: "skipTimer" })} disabled={!can("skipTimer")} testId="quick-skipTimer">
+      <ControlButton onClick={() => send({ type: "skipTimer" })} disabled={!can("skipTimer")} title={why("skipTimer")} testId="quick-skipTimer">
         Skip timer
       </ControlButton>
     </div>

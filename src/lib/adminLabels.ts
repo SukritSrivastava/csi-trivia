@@ -14,12 +14,13 @@ export const ACTION_LABELS: Record<AdminActionType, string> = {
   revealWildCard: "Reveal wild card",
   openPredictions: "Open predictions",
   startBlackout: "Start Blackout",
+  // Never allowed since v3.1 (the Blackout autopilot does these); kept for the contract.
   advanceDarkness: "Advance the darkness",
   showWinner: "Show winner",
   pause: "Pause",
   resume: "Resume",
   addTime: "+5 seconds",
-  skipTimer: "Skip timer",
+  skipTimer: "Skip",
   voidQuestion: "Void question",
   restartQuestion: "Restart question",
   restartRound: "Restart round",
@@ -38,10 +39,10 @@ export const DESTRUCTIVE_ACTIONS: readonly AdminActionType[] = [
   "removeParticipant",
 ];
 
-/** What a refused command means, in plain words. */
+/** What a refused command means, in plain words. Empty = say nothing (the screen has already caught up). */
 export const COMMAND_ERROR_TEXT: Record<string, string> = {
-  "stale-step": "That step had already moved on, so nothing happened.",
-  "not-allowed": "That isn't possible at this step.",
+  "stale-step": "",
+  "not-allowed": "That step already happened, or it isn't possible right now.",
   "not-signed-in": "You're signed out. Sign in again.",
   invalid: "The server didn't understand that command.",
   "no-reply": "No reply from the quiz server. Check the connection and try again.",

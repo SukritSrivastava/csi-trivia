@@ -57,7 +57,7 @@ export function TopBar({ view, clockOffset, status }: { view: AdminView; clockOf
             className="absolute inset-0 animate-[corridor-alarm_3.2s_infinite] bg-wrong/70"
             aria-hidden
           />
-          <span className="relative font-term text-[2rem] leading-none tracking-[0.2em] text-ghost">PAUSED</span>
+          <span className="relative font-term text-[2rem] leading-none tracking-[0.12em] text-ghost">PAUSED: TAP RESUME</span>
         </div>
       )}
       {!online && (

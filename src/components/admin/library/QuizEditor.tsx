@@ -26,6 +26,7 @@ const LIST_LABEL: Record<ListName, string> = { round1: "Round 1", wildcard: "Wil
 export function QuizEditor({ id, onClose }: { id: string; onClose: () => void }) {
   const getQuiz = useAdminStore((s) => s.getQuiz);
   const saveQuiz = useAdminStore((s) => s.saveQuiz);
+  const blackoutMin = useAdminStore((s) => s.blackoutMin);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving" | "failed">("saved");
@@ -86,7 +87,7 @@ export function QuizEditor({ id, onClose }: { id: string; onClose: () => void })
     );
   }
 
-  const problems = quizProblems(quiz);
+  const problems = quizProblems(quiz, blackoutMin);
 
   if (sub.kind === "question") {
     const list = quiz[sub.list];
@@ -264,6 +265,7 @@ function QuestionList({
   onDelete: (index: number) => void;
 }) {
   const items = quiz[list];
+  const blackoutMin = useAdminStore((s) => s.blackoutMin);
   const played = list === "round1" ? quiz.rules.round1Questions : list === "wildcard" ? quiz.rules.wildCardQuestions : items.length;
   const { armed, guard } = useConfirm();
 
@@ -282,7 +284,7 @@ function QuestionList({
           ? `Everyone answers these, top to bottom. The first ${played} are played (change it in Settings).`
           : list === "wildcard"
             ? `Everyone outside the safe seats answers these, top to bottom. The first ${played} count; the rest are spares for voided questions and sudden death.`
-            : `The finalists race the dark on these, top to bottom, until one runner is left. The event needs at least 12; 15 or more is safer.`}
+            : `The finalists race the dark on these, top to bottom, until one runner is left. This server needs at least ${blackoutMin} (the event 12); 15 or more is safer.`}
       </p>
 
       {items.length === 0 ? (
@@ -343,7 +345,7 @@ function QuestionCard({
         <span className="min-w-0 flex-1">
           <span className="line-clamp-2 text-[16px] leading-snug text-bright">{q.text || <span className="text-wrong">Empty question</span>}</span>
           <span className="mt-1 block truncate text-[14px] text-mint">✓ {q.options[q.correct] || "—"}</span>
-          <span className="mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-fog">
+          <span className="mt-0.5 flex flex-wrap gap-x-3 text-[14px] text-fog">
             {spare && <span>spare</span>}
             {q.image && <span>picture</span>}
             {(q.readSeconds !== null || q.openSeconds !== null) && (

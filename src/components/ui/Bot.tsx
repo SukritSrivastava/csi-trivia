@@ -13,6 +13,8 @@ interface BotProps {
   delay?: number;
   /** Accessible label. Leave out when a name is printed next to the bot. */
   label?: string;
+  /** Sits still in its mood's pose (no blinking or looking): long lists stay light. */
+  still?: boolean;
   className?: string;
 }
 
@@ -21,13 +23,14 @@ interface BotProps {
  * (.bot, data-head, data-mood), copied exactly from public/finaldesign.html.
  * Changing `mood` restarts the matching animation (hop for right, shake for wrong).
  */
-export function Bot({ color, head, mood = "idle", size = "44px", delay = 0, label, className = "" }: BotProps) {
+export function Bot({ color, head, mood = "idle", size = "44px", delay = 0, label, still = false, className = "" }: BotProps) {
   const style = { "--c": color, "--d": `${delay}s`, fontSize: size } as CSSProperties;
   return (
     <span
       className={`bot ${className}`}
       data-head={head}
       data-mood={mood}
+      data-still={still || undefined}
       style={style}
       role={label ? "img" : undefined}
       aria-label={label}

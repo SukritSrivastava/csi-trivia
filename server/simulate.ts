@@ -178,6 +178,12 @@ class Game {
     this.do(p.action);
     return p.label;
   }
+  /** The optional steps offered beside the big button ("or: Show results"). */
+  optional(): string[] {
+    const o = this.admin().optional;
+    for (const x of o) assert.ok(this.admin().allowed.includes(x.action.type), `optional ${x.action.type} must be allowed`);
+    return o.map((x) => x.label);
+  }
   /** Lets the running timer run out. */
   tick() {
     assert.ok(this.clock.runNext(), `a timer should be running in ${this.phase}`);
@@ -227,8 +233,6 @@ class Game {
    * reveal. `plan`: who answers, what, and when (ms into the answer step).
    */
   playQuestion(plan: [string, Pick, number][], startLabel?: string) {
-    // The optional standings come first after a wild card reveal: show them, then go on.
-    if (this.admin().primary?.action.type === "showStandings") this.do({ type: "showStandings" });
     const label = this.primary();
     if (startLabel) assert.equal(label, startLabel);
     this.tick(); // read → answer
@@ -433,11 +437,16 @@ test("round 1: instant 200, last moment 100, wrong 0; early time's up; moods; on
   const reveal = g.host().stage;
   assert.ok(reveal.phase === "r1Reveal" && reveal.correctText === "Large Language Model" && reveal.correctIndex !== null);
 
-  assert.equal(g.primary(), "Show results");
+  assert.equal(g.admin().primary?.label, "Next question", "the big button is the main path");
+  assert.deepEqual(g.optional(), ["Show results", "Show leaderboard"], "results and leaderboard are optional chips");
+  assert.ok(g.admin().question!.options.every((o) => o.count !== null), "Admin sees how many picked each option after the reveal");
+  g.do({ type: "showResults" });
   const res = g.host().stage;
   assert.ok(res.phase === "r1Results" && res.options.reduce((s, o) => s + o.count, 0) === 3);
   if (res.phase === "r1Results") assert.deepEqual(res.options.map((o) => o.number), [1, 2, 3, 4]);
-  assert.equal(g.primary(), "Show leaderboard");
+  assert.deepEqual(g.optional(), ["Show leaderboard"]);
+  g.do({ type: "showLeaderboard" });
+  assert.deepEqual(g.optional(), []);
   const board = g.host().stage;
   assert.ok(board.phase === "r1Leaderboard" && board.rows.map((r) => r.name).join() === "Fast,Slow,Wrong");
   assert.equal(g.primary(), "Next question");
@@ -575,7 +584,9 @@ test("the cut: fewer than 10 played → everyone is a finalist and the wild card
   const stage = g.host().stage;
   assert.ok(stage.phase === "cut" && stage.wildCardSkipped && stage.wildCardCount === 0);
   assert.ok(ids.every((id) => g.person(id).status === "finalist"));
-  assert.equal(g.admin().primary?.label, "Open predictions");
+  assert.equal(g.admin().primary?.label, "Start Blackout");
+  assert.deepEqual(g.optional(), ["Open predictions"]);
+  assert.ok(g.admin().cut?.wildCardSkipped && g.admin().cut?.standings.length === 8, "Admin's cut table");
   assert.ok(g.admin().allowed.includes("startBlackout") && !g.admin().allowed.includes("startWildCard"));
   const s = g.screen(ids[7]);
   assert.ok(s.kind === "cut" && s.outcome === "safe");
@@ -623,7 +634,9 @@ test("wild card: only wild card players answer; safe finalists watch; tallies; m
   assert.ok(r.kind === "result" && r.round === 2 && r.outcome === "correct" && r.tally?.right === 1 && r.tally.asked === 1, "\"1 of 1 right\"");
   const rf = g.screen(f);
   assert.ok(rf.kind === "result" && rf.outcome === "wrong" && rf.correctText.length > 0);
-  assert.equal(g.primary(), "Show standings");
+  assert.equal(g.admin().primary?.label, "Next question");
+  assert.deepEqual(g.optional(), ["Show standings"]);
+  g.do({ type: "showStandings" });
   const standings = g.host().stage;
   assert.ok(standings.phase === "wcStandings");
   if (standings.phase === "wcStandings") {
@@ -635,7 +648,8 @@ test("wild card: only wild card players answer; safe finalists watch; tallies; m
   g.playQuestion([[e, "correct", 500], [d, "correct", 500], [f, "wrong", 500]], "Next question");
   assert.equal(g.person(e).wildCorrect, 3);
   assert.equal(g.person(d).wildCorrect, 2);
-  assert.equal(g.admin().primary?.label, "Show standings");
+  assert.equal(g.admin().primary?.label, "Reveal wild card");
+  assert.deepEqual(g.optional(), ["Show standings"]);
   assert.ok(g.admin().allowed.includes("revealWildCard"), "decided after the planned questions");
   g.do({ type: "revealWildCard" });
   g.expect("wcWinner");
@@ -670,7 +684,7 @@ test("wild card: exact tie → sudden death among the tied only; all wrong stay 
   const [d, e, f] = wild;
   g.do({ type: "startWildCard" });
   for (let q = 0; q < 3; q++) g.playQuestion([[d, "correct", 1000], [e, "correct", 1000], [f, "wrong", 1000]]);
-  assert.equal(g.admin().primary?.label, "Show standings");
+  assert.equal(g.admin().primary?.label, "Next question (sudden death)");
   assert.ok(g.admin().allowed.includes("nextQuestion") && !g.admin().allowed.includes("revealWildCard"), "an exact tie isn't decided");
   assert.match(g.admin().hint ?? "", /sudden death/);
   g.do({ type: "showStandings" });
@@ -688,7 +702,7 @@ test("wild card: exact tie → sudden death among the tied only; all wrong stay 
   assert.deepEqual(g.admin().wildCard?.suddenDeath?.alive.map((t) => t.id).sort(), [d, e].sort());
   // Next: E right, D wrong → E wins.
   g.playQuestion([[e, "correct", 500], [d, "wrong", 500]], "Next question (sudden death)");
-  assert.equal(g.admin().primary?.label, "Show standings");
+  assert.equal(g.admin().primary?.label, "Reveal wild card");
   assert.ok(g.admin().allowed.includes("revealWildCard"));
   const out = g.screen(d);
   assert.ok(out.kind === "result");
@@ -1487,8 +1501,8 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
         continue;
       }
       case "r1Reveal":
-        if (rng() < 0.3 && admin.allowed.includes("nextQuestion")) {
-          g.do({ type: "nextQuestion" });
+        if (rng() < 0.3 && admin.optional.some((o) => o.action.type === "showResults")) {
+          g.do({ type: "showResults" });
           continue;
         }
         break;
@@ -1519,6 +1533,7 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
         continue;
       }
     }
+    if (admin.primary?.action.type === "startBlackout") blackoutClicks += 1;
     g.primary();
   }
 

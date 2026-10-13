@@ -199,6 +199,7 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
     blackout: q.blackout.length,
     updatedAt: q.updatedAt,
     problems: quizProblems(q, minBlackout),
+    blackoutMin: minBlackout,
   });
   /** Runs a library call for a signed-in socket; logs and answers `failed` if the store throws. */
   const withLibrary = <T>(socket: GameSocket, ack: unknown, failed: NoInfer<T>, run: () => Promise<T>) => {

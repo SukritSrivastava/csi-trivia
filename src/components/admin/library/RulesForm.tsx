@@ -38,7 +38,7 @@ function Stepper({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
       <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
         <p className="text-[16px] leading-snug text-ghost">{label}</p>
-        {hint && <p className="text-[13px] leading-snug text-fog">{hint}</p>}
+        {hint && <p className="text-[14px] leading-snug text-fog">{hint}</p>}
       </div>
       <button type="button" className={`${btn} ml-auto sm:ml-0`} onClick={() => onChange(clamp(value - 1))} disabled={value <= min} aria-label={`${label}: less`}>
         −
@@ -55,7 +55,7 @@ function Stepper({
           className="w-full bg-transparent text-center font-term text-[2.2rem] leading-none text-amber outline-none"
           data-testid={testId}
         />
-        {unit && <span className="text-[12px] text-fog">{unit}</span>}
+        {unit && <span className="text-[14px] text-fog">{unit}</span>}
       </label>
       <button type="button" className={btn} onClick={() => onChange(clamp(value + 1))} disabled={value >= max} aria-label={`${label}: more`}>
         +
@@ -135,10 +135,10 @@ export function RulesForm({ quiz, onChange }: { quiz: Quiz; onChange: (rules: Qu
             Quiz as JSON
           </ControlButton>
         </div>
-        <p className="mt-2 text-[13px] text-fog">A backup, or to edit in Excel / Google Sheets and import again.</p>
+        <p className="mt-2 text-[14px] text-fog">A backup, or to edit in Excel / Google Sheets and import again.</p>
       </Panel>
 
-      <p className="pb-6 text-center text-[13px] text-fog">
+      <p className="pb-6 text-center text-[14px] text-fog">
         Blank spreadsheet to fill in:{" "}
         <button type="button" onClick={() => downloadText("hermes-quiz-template.csv", TEMPLATE_CSV, "text/csv")} className="text-mint-soft underline underline-offset-4">
           download the template
