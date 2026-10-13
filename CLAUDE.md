@@ -70,11 +70,20 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   restart restore a per-question snapshot. Blackout tuning (`baseGap`, `darkness`, head starts) lives
   in `server/config.ts`, from `npm run tune-blackout`. The phone tally field is `right` (not
   `correct`), so the leak scans stay strict.
-- Admin UI (phase 2): `src/components/admin/` (`AdminApp` layout: phone tabs Game/Controls/People,
-  two columns from 1024 px; `Dock` = hint + primary button; `GamePanels`; `Controls`;
-  `ParticipantsPanel`; `parts.tsx` = `Panel`, `ControlButton`, `useConfirm` (two taps, cancels after 3 s);
-  `useShortcuts`: Space = big button, P = pause). `GamePanels`: `QuestionCard`, `Counts`,
-  `WildCardPanel`, `BlackoutPanel`, `Podium`, `Finalists`. Buttons send the stepId of the view they were drawn from.
+- Admin UI (v5 Phase 2, 14 Oct): `src/components/admin/` (`AdminApp` layout: phone tabs Game/Controls/People,
+  two columns from 1024 px, a faint vignette; `TopBar` (step, timer, Live/Reconnecting, room code,
+  "PAUSED: TAP RESUME" band); `Dock` = hint + `AdminView.optional` as "or: …" chips + the big button
+  (main path; a disabled "ANSWERING… 5" countdown while a timer runs; in Blackout the AUTOPILOT strip
+  and PAUSE / alarm-red RESUME) + a toast for refused commands (stale steps silent); `GamePanels`:
+  `QuestionCard` (mint-filled answer, counts after the reveal), `NextUp`, `Counts`, `CutPanel`
+  (top 20, `AdminView.cut`), `WildCardPanel` (SAFE row, standings, leader outlined, sudden death,
+  winner), `PredictionsPanel`, `BlackoutPanel` (the distance ladder, `darkPreview`, +5s / Skip / Void /
+  Restart question right under it), `Podium`, `Finalists`, `notNowReason` (titles for disabled
+  controls); `Controls`; `ParticipantsPanel` (still bots); `parts.tsx` = `Panel`, `ControlButton`
+  (`title`), `useConfirm` (two taps, cancels after 3 s); `useShortcuts`: Space = big button, P = pause,
+  S = skip in Blackout). Buttons send the stepId of the view they were drawn from; a Pause refused as
+  stale is resent once from the step on screen. Sign in: room code (from ?code) + PIN; after 5 wrong
+  PINs "Too many tries. Reload the page to try again."
 - Quiz library (12 Oct): quizzes are made in Admin and saved by the server (`server/library.ts`:
   Supabase tables `quizzes`/`quiz_images`, or `data/library/` without a database). Shared rules,
   imports (text/CSV/Excel rows/JSON) and exports: `src/shared/quiz.ts`. Admin UI:
@@ -100,12 +109,15 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   Phase 2 turns it into the bots running toward the camera), PodiumStage. `sound.ts`: Web Audio beeps, unlocked by a click; plays only if
   `view.soundOn` and the Host's own mute is off. Live counters are plain numbers (NumberFlow only for
   scores/percentages, which change once). `npm run host-shots` screenshots every Host state.
-- Phones (phase 3): `src/components/play/` (`PlayApp`: connect, wake lock, page visibility, header with
-  "Q1 of 3 · 5s" + mint timer bar, Reconnecting/Paused bands, screen transition keyed by `screenKey`,
+- Phones (phase 3; copy and Blackout reworked in v5 Phase 2): `src/components/play/` (`PlayApp`: connect,
+  wake lock, page visibility, header with the round name (ROUND 1 / WILD CARD / BLACKOUT) + "Q1 of 3 · 5s"
+  + a mint timer bar (holds too; no countdown while offline), Reconnecting/Paused bands, screen transition keyed by `screenKey`,
   confetti for the cut/winning/calling it; `JoinScreen`; `LobbyScreen` (BotBuilder + LOCK IN → "You're in",
   remembered per tab); `Round1Screens` (answer buttons numbered 1–4 in the Host's order, podium, every
-  `Moment` screen); `FinalScreens` (backing, safe/wild card status, the wild card result, a runner's
-  move and status, the audience's view of the chase); `parts.tsx`). Phone bot moods follow the phone's own screen state (only the Host uses `HostView.cast`).
+  `Moment` screen, the runner's gap on question screens); `FinalScreens` (backing with BACKING, safe/wild
+  card status, sudden death, the wild card result, a runner's move, "Still running" + "Next question in 3"
+  from `runnerStatus.nextUp` and the hold's timer, caught, ESCAPED!, the audience's pick and the chase);
+  `parts.tsx` (`PhoneHeader`, `Moment` with an optional relieved `hop`, `Gap`, `useSecondsLeft`, `Banner`)). Phone bot moods follow the phone's own screen state (only the Host uses `HostView.cast`).
   `/play` sets `viewportFit: "cover"` and pads with the safe-area insets. `src/components/temp/` is gone.
 - Event-proofing (phase 5): every connection gets `server:hello { bootId }`; `src/lib/socket.ts`
   remembers it per tab (`serverRestarted()`), so after a game-server restart every screen says
@@ -137,11 +149,14 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
 - `npm run host-shots [-- --bots 94 --out screenshots/host-100]` (with `npm run dev`, database off): plays a game and
   screenshots every Host state at 1920×1080 and 1366×768, enables sound, reports fps and page errors.
 - `npm run admin-run [-- --bots 80 --out screenshots/x]` (with `npm run dev` running): Playwright drives a
-  whole game from Admin (3 devices), 68 checks, screenshots in `screenshots/` (git-ignored).
+  whole game from Admin (3 devices: 390×844, 360×740, 1440×900), 81 checks incl. the chips, the cut table
+  and the Blackout autopilot (one click, pause/resume, +5 s, skip, void, restart, double Space, refresh),
+  screenshots in `screenshots/` (git-ignored).
 - `npm run play-shots [-- --bots 20 --out screenshots/play]` (with `npm run dev`, database off): 5 phone tabs
-  (360–430 wide) play a whole three-round game with checks (name clash, shared bot, refresh mid-question
-  and mid-Blackout, removal, a late joiner, a tab winning the wild card, a wrong move back, a catch) and
-  screenshot every phone state; `compare.png` = design | app.
+  (375×667 and 390×844, plus 360×640 / 430×932 for the answer screens) play a whole three-round game with
+  checks (name clash, shared bot, refresh mid-question and mid-Blackout, removal, a late joiner, a tab
+  winning the wild card, a wild card loser, "Too slow: no move", a wrong move back, a catch, "You called
+  it!") and screenshot every phone state; `compare.png` = design | app.
 - `npm run drills` (against `npm run dev` or `npm run preview`): failure drills on all three screens,
   including a game-server restart (it touches `server/index.ts`, so `tsx watch` must be running).
 - `npm run rehearsal -- --gpu` (against `npm run build; npm run preview` with `GAME_PRESET=event`, database

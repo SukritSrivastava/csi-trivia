@@ -217,32 +217,28 @@ async function main() {
     await send({ type: "startBlackout" });
     await shot("18-blackout-intro", 1800);
 
-    // Blackout: question 1 step by step, then on until it's over.
-    await send({ type: "showQuestion" });
-    await phase("boRead");
+    // Blackout runs on autopilot from here: no more clicks. Question 1 step by step, then watch it to the end.
+    await phase("boRead", 20_000);
     await shot("19-blackout-read", 1000);
     await phase("boAnswer");
     await shot("20-blackout-answer", 1500);
     console.log(`  fps during a Blackout answer step: ${await fps()}`);
-    await phase("boTimesUp");
-    await send({ type: "revealAnswer" });
-    await shot("21-blackout-reveal", 2200);
-    await send({ type: "advanceDarkness" });
-    await shot("22-blackout-dark", 2600);
+    await phase("boReveal", 30_000);
+    await shot("21-blackout-reveal", 1200);
+    await phase("boDark", 20_000);
+    await shot("22-blackout-dark", 1200);
     let caughtShot = false;
-    while (primaryType() === "nextQuestion") {
-      await send({ type: "nextQuestion" });
-      await phase("boTimesUp", 60_000);
-      await send({ type: "revealAnswer" });
-      await sleep(300);
-      await send({ type: "advanceDarkness" });
-      if (!caughtShot && admin!.blackout!.caughtThisQuestion.length) {
+    while (admin!.phase !== "boWinner" && admin!.phase !== "podium") {
+      await until("the dark or the end", (v) => v.phase === "boDark" || v.phase === "boWinner" || v.phase === "podium", 120_000);
+      if (!caughtShot && admin!.phase === "boDark" && admin!.blackout!.caughtThisQuestion.length) {
         caughtShot = true;
-        await shot("23-blackout-caught", 2600);
+        await shot("23-blackout-caught", 1200);
       }
+      if (admin!.phase === "boDark") await until("the dark's hold to end", (v) => v.phase !== "boDark", 20_000);
     }
-    await send({ type: "showWinner" });
-    await phase("podium");
+    await phase("boWinner", 120_000);
+    await shot("23b-blackout-winner", 1500);
+    await phase("podium", 20_000);
     await shot("24-podium", 3600);
 
     // The two projector frames from public/finaldesign.html, next to ours.

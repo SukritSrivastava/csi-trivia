@@ -77,7 +77,7 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
     const onState = (view: ParticipantView) => set({ view, clockOffset: view.serverNow - Date.now() });
     const onClosed = ({ reason }: { reason: string }) => {
       saveParticipantSession(null);
-      set({ view: null, notice: reason });
+      set({ view: null, notice: `The quiz has ended. ${reason}` });
     };
 
     // The browser knows about a dropped Wi-Fi long before the socket's ping times out.

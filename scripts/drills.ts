@@ -213,7 +213,7 @@ async function main() {
     await kabir.page.getByTestId("screen-result").waitFor({ timeout: 20_000 });
     await shot(kabir, "02-after-lock");
     check(true, "phone unlocked after 30 s: shows this question's result (missed)");
-    check((await kabir.page.locator("main").textContent())?.includes("MISSED"), "it says MISSED, with the answer");
+    check((await kabir.page.locator("main").textContent())?.includes("TOO SLOW"), "it says TOO SLOW, with the answer");
 
     // ---- Paused in the middle of a question: every screen says so.
     await send({ type: "nextQuestion" });

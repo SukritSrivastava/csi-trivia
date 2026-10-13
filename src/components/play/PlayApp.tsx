@@ -65,20 +65,32 @@ export function PlayApp() {
   );
 }
 
-function questionLabel(s: ParticipantScreen): string | null {
+const ROUND_NAME = { 1: "Round 1", 2: "Wild card", 3: "Blackout" } as const;
+
+/** The header: the round's name and "Q3 of 20" (null = keep the last question's). */
+function questionLabel(s: ParticipantScreen): { round: string | null; label: string } | null {
   switch (s.kind) {
     case "eyesUp":
-    case "answer": {
-      if (s.round === 2) return s.suddenDeath ? "Wild card · sudden death" : `Wild card Q${s.questionNumber} of ${s.questionCount}`;
-      if (s.round === 3) return `Blackout Q${s.questionNumber}`;
-      return `Q${s.questionNumber} of ${s.questionCount}`;
-    }
+    case "answer":
+      return {
+        round: ROUND_NAME[s.round],
+        label: s.suddenDeath ? "Sudden death" : s.questionCount ? `Q${s.questionNumber} of ${s.questionCount}` : `Q${s.questionNumber}`,
+      };
+    case "r1Intro":
+      return { round: ROUND_NAME[1], label: "Get ready" };
+    case "cut":
+      return { round: ROUND_NAME[1], label: "The cut" };
     case "safeWatch":
+      return { round: ROUND_NAME[2], label: s.questionNumber ? `Q${s.questionNumber} of ${s.questionCount}` : "Watching" };
     case "wcStatus":
-      return "The wild card round";
+      return { round: ROUND_NAME[2], label: s.suddenDeath ? "Sudden death" : "Between questions" };
+    case "wcWinner":
+      return { round: ROUND_NAME[2], label: "The last seat" };
+    case "backFinalist":
+      return { round: "Predictions", label: "Back a finalist" };
     case "runnerStatus":
     case "blackoutWatch":
-      return s.questionNumber ? `Blackout Q${s.questionNumber}` : "Blackout";
+      return { round: ROUND_NAME[3], label: s.questionNumber ? `Q${s.questionNumber}` : "Get ready" };
     default:
       return null;
   }
@@ -86,24 +98,27 @@ function questionLabel(s: ParticipantScreen): string | null {
 
 /** Screens that follow a question keep its "Q2 of 3" in the header. */
 const AFTER_QUESTION = new Set<ParticipantScreen["kind"]>(["lockedIn", "timesUp", "result", "voided", "runnerResult"]);
+/** Screens where the header shows the countdown's seconds (the bar drains on every timer, holds too). */
+const COUNTDOWN_SCREENS = new Set<ParticipantScreen["kind"]>(["eyesUp", "answer", "lockedIn"]);
 
 /** Changing this key plays the screen transition. */
 function screenKey(s: ParticipantScreen): string {
   if (s.kind === "answer") return `answer:${s.questionId}`;
   if (s.kind === "eyesUp") return `eyes:${s.round}:${s.questionNumber}`;
-  if (s.kind === "runnerStatus") return `runner:${s.alive}:${s.questionNumber}`;
+  if (s.kind === "runnerStatus") return `runner:${s.alive}:${s.questionNumber}:${s.nextUp}`;
   return s.kind;
 }
 
 function Playing({ view, offline }: { view: ParticipantView; offline: boolean }) {
   const s = view.screen;
-  const lastQuestion = useRef<string | null>(null);
+  const lastQuestion = useRef<{ round: string | null; label: string } | null>(null);
   const label = questionLabel(s);
   if (label && (s.kind === "eyesUp" || s.kind === "answer")) lastQuestion.current = label;
-  const header =
-    label ??
-    (AFTER_QUESTION.has(s.kind) ? lastQuestion.current : null) ??
-    (s.kind === "lobby" ? `Room ${view.roomCode} · ${view.me.name}` : `${view.me.name} · room ${view.roomCode}`);
+  const header = label ??
+    (AFTER_QUESTION.has(s.kind) ? lastQuestion.current : null) ?? {
+      round: null,
+      label: s.kind === "lobby" ? `Room ${view.roomCode} · ${view.me.name}` : `${view.me.name} · room ${view.roomCode}`,
+    };
   const key = screenKey(s);
 
   // Confetti for being safe at the cut, winning the wild card, winning, and calling the winner.
@@ -123,7 +138,7 @@ function Playing({ view, offline }: { view: ParticipantView; offline: boolean })
 
   return (
     <>
-      <PhoneHeader label={header} me={view.me} timer={view.timer} />
+      <PhoneHeader round={header.round} label={header.label} me={view.me} timer={view.timer} seconds={COUNTDOWN_SCREENS.has(s.kind)} stale={offline} />
       {offline && <Banner testId="reconnecting">RECONNECTING…</Banner>}
       {view.paused && !offline && <Banner testId="paused">PAUSED BY THE QUIZMASTER</Banner>}
       <AnimatePresence mode="wait" initial={false}>

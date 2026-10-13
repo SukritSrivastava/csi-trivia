@@ -56,13 +56,13 @@ tap on a phone and the server marks it (rules: `docs/SPEC.md` v3).
 | **Question** | (read it out) "Eyes up." | **Show question**. 8 s to read, then 8 s to answer on phones. The numbers 1–4 on the projector match the phones. |
 | **Time's up** | "Time!" | wait for the clock (or **Skip timer**) |
 | **Reveal** | "The answer is…" | **Reveal answer**. Phones say CORRECT or WRONG. |
-| Results, leaderboard | (optional) "Here's how you voted… and the top 10." | **Show results**, **Show leaderboard**, or skip straight to **Next question** |
+| Results, leaderboard | (optional) "Here's how you voted… and the top 10." | The small chips above the big button: **or: Show results**, **or: Show leaderboard**. The big button is always **Next question**. |
 | **The cut** | "That's Round 1. The top 9 are safe: you're in Blackout. Everyone else: you're in the wild card round, and one of you takes the last seat." | **End round 1** |
 | **Wild card** | "Wild card round: five questions, only those below the line answer. Most right answers wins the last seat; a tie goes to the faster. Safe players, sit back and watch." | **Start wild card round**, then **Show question** |
-| Wild card questions | (read it out) "Eyes up." | Same as Round 1: **Show question** → (timers) → **Reveal answer** → (optional) **Show standings** → **Next question** |
+| Wild card questions | (read it out) "Eyes up." | Same as Round 1: **Show question** → (timers) → **Reveal answer** → (optional chip) **or: Show standings** → **Next question** |
 | Exact tie | "Dead heat! Sudden death: first one right takes it." | **Next question (sudden death)**: the button says so by itself |
 | **Reveal wild card** | "And the last seat goes to…" | **Reveal wild card**. The projector shows the winner; the rest power down. |
-| **Predictions** | "Audience: on your phone, back the finalist you think will escape. If they win, you called it." | **Open predictions**, give it 20–30 s (optional) |
+| **Predictions** | "Audience: on your phone, back the finalist you think will escape. If they win, you called it." | The chip **or: Open predictions**, give it 20–30 s (optional; the big button is Start Blackout) |
 | **Blackout** | "Blackout. The lights are dying behind our 10 finalists. Right answers move you forward, faster moves you further; wrong ones move you back. Each question the dark moves on, and if it reaches you, you power down. Last bot running escapes." | **Start Blackout**. That's the last click: Blackout runs on **autopilot** from here to the podium. |
 | Each Blackout question (automatic) | Read the question out while it shows (5 s), then commentate: "Let's see who moved." … "Here comes the dark…" Admin's autopilot strip shows what comes next and when ("REVEAL · 3"), and a red line shows who the dark will catch. | Nothing to click. The big button is **PAUSE** (tap it if you need to talk; **RESUME** carries on from the same moment). |
 | **Podium** | "Our last bot running is…" Then: "(N) of you called it." | Comes by itself after the winner moment. Admin shows the final order to read out. Controls → **Results CSV** for the prizes. |

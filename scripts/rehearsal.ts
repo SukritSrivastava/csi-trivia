@@ -163,6 +163,13 @@ async function main() {
     // Admin ignores a second big-button tap within 600 ms (double-tap guard).
     await sleep(700);
   };
+  /** An optional step: the small "or: …" chip above the big button. */
+  const chip = async (type: string) => {
+    const step = admin!.stepId;
+    await adminPage.page.getByTestId(`optional-${type}`).click();
+    await until(type, (v) => v.stepId > step, 5000);
+    await sleep(700);
+  };
 
   /** Each phone answers the open question (right or wrong) by tapping. */
   const answerAll = async (skip: string[] = []) => {
@@ -198,8 +205,8 @@ async function main() {
     await tap("Reveal");
     await measure("reveal");
     await shot("03-reveal");
-    await tap();
-    await tap();
+    await chip("showResults");
+    await chip("showLeaderboard");
 
     // Q2: Meera refreshes mid-question.
     await tap();
@@ -210,8 +217,6 @@ async function main() {
     await answerAll();
     await phase("r1TimesUp");
     await tap("Reveal");
-    await tap();
-    await tap();
 
     // Q3: voided from Admin's Controls tab (two taps).
     await tap();
@@ -261,8 +266,8 @@ async function main() {
         await phase("wcTimesUp", 20_000);
         continue;
       }
-      if (admin!.allowed.includes("revealWildCard") && admin!.primary?.action.type === "showStandings") {
-        await tap("Show standings");
+      if (admin!.allowed.includes("revealWildCard") && admin!.optional.some((o) => o.action.type === "showStandings")) {
+        await chip("showStandings");
         continue;
       }
       await tap();
@@ -271,7 +276,7 @@ async function main() {
     await shot("06-wildcard-winner");
     check(admin!.finalists.length === 10, `the wild card makes ${admin!.finalists.length} finalists`);
 
-    await tap("Open predictions");
+    await chip("openPredictions");
     await until("predictions", (v) => v.phase === "predictions");
     await sleep(2500);
     await tap("Start Blackout");
@@ -284,7 +289,8 @@ async function main() {
     let measuredDark = false;
     for (const giveUp = Date.now() + 300_000; Date.now() < giveUp && now() !== "podium"; ) {
       const p = now();
-      if (p === "boRead") {
+      // Blackout runs on autopilot: only the fixes are clicked, never the big button (it's Pause).
+      if (p === "boRead" || p === "boIntro" || p === "boTimesUp" || p === "boWinner") {
         await sleep(200);
         continue;
       }
@@ -295,12 +301,10 @@ async function main() {
       }
       if (p === "boReveal" && !restarted) {
         restarted = true;
-        await adminPage.page.getByRole("tab", { name: /controls/i }).click();
-        await adminPage.page.getByTestId("ctl-restartQuestion").click();
-        await adminPage.page.getByTestId("ctl-restartQuestion").click();
+        await adminPage.page.getByTestId("bo-restartQuestion").click();
+        await adminPage.page.getByTestId("bo-restartQuestion").click();
         await phase("boRead", 5000);
         check(true, "restart question in Blackout: moves undone, back to the read step");
-        await adminPage.page.getByRole("tab", { name: /game/i }).click();
         continue;
       }
       if (p === "boReveal" && !measuredReveal) {
@@ -314,6 +318,10 @@ async function main() {
         await sleep(300);
         await measure("Blackout dark moves");
         await shot("08-blackout-dark");
+      }
+      if (p.startsWith("bo")) {
+        await sleep(200);
+        continue;
       }
       await tap();
     }

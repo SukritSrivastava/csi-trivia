@@ -308,13 +308,14 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
   (answer times in seconds, 10 s window); `simulate` (37 checks; 50 × 100-player event games reach the
   podium after one click), `smoke` (one click, pause/resume, a double Skip); `check-glow`; every glow
   removed from `src/` and `public/finaldesign.html`.
+- ✅ **v5 Phase 2, Admin (14 Oct, night):** main-path big button + "or:" chips (`AdminView.optional`), countdown button, AUTOPILOT strip, PAUSE / alarm-red RESUME, the cut table (`AdminView.cut`), wild card SAFE row / standings / sudden death / winner, predictions with counts and %, the Blackout distance ladder with deltas, the catch preview and fast controls, podium, answer counts after the reveal (`AdminQuestion.options[].count`, `.voided`), next-up answer, sign-in with the room code and a PIN lockout message, toast, S shortcut, titles on disabled controls; `admin-run` 81 checks at three sizes.
+- ✅ **v5 Phase 2, Participant (14 Oct, night):** round name in the header, every B4 screen's copy (200 points, "Not out yet", "Too slow", sudden death, "BACKING", the Blackout intro with the head start, gaps on question screens, "Still running" + "Next question in 3", ESCAPED!, the audience's pick), `QuizSettings.round1MaxPoints`; `play-shots`, `drills` pass; event rehearsal with 80 bots.
 - ✅ **v5 Phase 1, the engine (14 Oct):** SPEC v3; contract (`protocol.ts`: `wc*` and `bo*` phases, `McqQuestion`, `WildCardState`, `BlackoutState`, `Runner`, new phone screens, new Admin actions); `server/quiz.ts` (wild card with sudden death and the fallback, Blackout with catches and catch order, seat hand-over, void/restart/restart round/end quiz in every round); `npm run tune-blackout`; `simulate` (33 checks, 50 event seeds), `smoke` (whole three-round game over sockets), `bots` (every round, accuracy); quiz library with three lists (old quizzes upgraded); `/health` JSON; the existing Host / phone / Admin screens extended to the new flow (plain stages for the wild card and Blackout); play-shots, host-shots, admin-run (68 checks) and drills pass.
 
 ### Next
-1. ⬜ **v5 Phase 2, Parts A–C:** Admin and the phones for the new flow (see the Phase 2 prompt; status in the commits "Phase 2: Admin" / "Phase 2: Participant").
-2. ⬜ **v5 Phase 3:** the Host (projector) for the wild card round and the Blackout autopilot in the approved look (the bots running toward the camera, rack lights dying behind them).
-3. ⬜ **Write 48+ questions** (20 Round 1, 5 + 3 wild card, **15+ Blackout**: it plays until one runner is left) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
-4. ⬜ **Push and deploy** (only when Sukrit says "push"); the live site runs the v2 buzzer game until then.
+1. ⬜ **v5 Phase 3:** the Host (projector) for the wild card round and the Blackout autopilot in the approved look (the bots running toward the camera, rack lights dying behind them).
+2. ⬜ **Write 50 questions** (20 Round 1, 5 + 3 wild card, **15+ Blackout**: it plays until one runner is left) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
+3. ⬜ **Push and deploy** (only when Sukrit says "push"); the live site runs the v2 buzzer game until then.
 
 ### Not in a phase yet
 - ⬜ CSI club logo in a corner (optional, "later").
@@ -485,11 +486,14 @@ question / winner / podium: what the running hold leads to, for "Next question i
 `paused`, `question: AdminQuestion` (**with the answer**, numbered 1–4), `nextQuestion`, `counts`
 (+ `answered`/`expected`), `participants` (score, rank, `wildCorrect`, `wildTimeMs`, `isWildCard`,
 `blackout` {position, gap, caughtOnQuestion, place}, answered, flags, backing), `finalists:
-FinalistInfo[]`, `wildCard` (full standings), `blackout`, **`autopilot`** (`running`, `paused`, `step`
+FinalistInfo[]`, `wildCard` (full standings), **`cut`** (standings, safeCount, wildCardCount,
+wildCardSkipped; from the cut on), **`optional`** (the "or:" chips: Show results / leaderboard / standings,
+Open predictions; the big button `primary` is always the main path), `blackout`, **`autopilot`** (`running`, `paused`, `step`
 intro/read/answer/timesUp/reveal/dark/winner, `nextInMs`, `nextLabel`, `questionNumber`, `questionsLeft`;
 null outside Blackout), **`darkPreview`** (`steps`, `to`, `catches`, `exact`: who the dark would catch,
 Admin only, during read/answer/time's up/reveal), `backing`, `podium`, `quizTitle`. `nextQuestion` has
-`correctText` (Admin only). In Blackout `primary` is Pause / Resume.
+`correctText` (Admin only); `question.options[].count` after the reveal, `question.voided`. In Blackout
+`primary` is Pause / Resume. `QuizSummary.blackoutMin` = the server's minimum Blackout list.
 
 Shared types: `ParticipantTag { id, name, color, head }`, `CastMember = ParticipantTag & { mood }`,
 `BotMood = "idle"|"thinking"|"locked"|"right"|"wrong"|"out"`, `BotHead` (8), `PARTICIPANT_COLORS` (12),
@@ -578,6 +582,7 @@ Whichever is chosen: record it in §1.3 and §4.
 | Date | Change | Screens must |
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
+| 14 Oct 2026 (night, later) | **Phase 2 Admin / phones:** `AdminView.optional: PrimaryAction[]` (the big button is now always the main path: Next question / End round 1 after a reveal, Reveal wild card / Next question after a wild card reveal, Start Blackout at wcWinner and when the wild card round is skipped); `AdminView.cut`; `AdminQuestion.options[].count`, `AdminQuestion.voided`; `QuizSummary.blackoutMin`; `QuizSettings.round1MaxPoints`; `JOIN_ERROR_MESSAGES` quiz-ended / removed reworded. | Admin draws chips; phones read the 200 from settings |
 | 14 Oct 2026 (night) | **v3.1: Blackout autopilot, 200→100 scoring, no glow.** + phase `boWinner` (HostStage `{blackout, backing}`); `McqQuestion.count`, `AdminQuestion.count`, `QuestionPreview.count` and `eyesUp`/`answer` `questionCount` may be `null` (Blackout); `BlackoutState.questionCount` → `questionsLeft`; `runnerStatus.questionCount` → `questionsLeft` + `nextUp`; `blackoutWatch` → `questionsLeft` + `winner`; `eyesUp`/`answer`/`lockedIn` + `gap`; `lockedIn` + `choiceNumber`; `QuestionPreview.correctText`; `AdminView` + `autopilot: AutopilotState`, `darkPreview: DarkPreview`; `QuizSettings` − `blackoutQuestions`; `QuizRules` − `blackoutQuestions`; `pause` no longer step-independent. `advanceDarkness`/`showWinner` kept as types but never allowed. Timers run during Blackout's holds (the view's `timer` counts the hold). | Admin: Pause/Resume as the big button in Blackout, the autopilot strip, the catch preview; phones: "Next question in N" from `nextUp` + `timer`; no "of N" in Blackout; the Host draws `boWinner` |
 | 14 Oct 2026 | **v3: three rounds.** Phases `r2*`/`suddenDeath` → `wcIntro…wcWinner`, `boIntro…boDark`. `Round1Question`/`BuzzerQuestion` → `McqQuestion` (with `round`, `suddenDeath`); `OptionResult.letter` → `number`; `Reveal` (`correctText`, `correctIndex`, `voided`). New `WildCardState`, `WildCardStanding`, `BlackoutState`, `Runner`, `RunnerLite`, `FinalistInfo` (replaces `FinalistState`), `PodiumBasis`; `PodiumEntry` gets `round1Score`, `position`, `caughtOnQuestion`, `wildCard` (no `points`). `ParticipantStatus` + `wildcard`; `Counts.wildcard`; `QuizSettings` (`safeCount`, `wildCardQuestions`, `wildCardSuddenDeathMax`, `blackoutQuestions`, Blackout timings). Phone screens: `cut` (`outcome`), `safeWatch`, `wcStatus`, `wcWinner`, `runnerResult`, `runnerStatus`, `blackoutWatch`; question screens carry `round`; removed `finalist`, `buzzer`, `buzzerWatch`. `AdminAction`: − `markCorrect`, `markWrong`, `undoMark`, `startBuzzerRound`, `showScores`, `startSuddenDeath`; + `startWildCard`, `showStandings`, `revealWildCard`, `startBlackout`, `advanceDarkness`. `AdminQuestion` numbered 1–4 (`correctNumber`). `AdminParticipant` − `points`, + `wildCorrect`, `wildTimeMs`, `isWildCard`, `blackout`. `AdminView` − `round2`, `canUndo`, `lastMark`; + `wildCard`, `blackout`. Removed `participant:buzz`. Library: `Quiz.wildcard` + `Quiz.blackout` (was `buzzer`), `QuizRules` (`safe`, `wildCardQuestions`, `blackoutQuestions`, Blackout timings), `QuizSummary` counts. `/health` returns JSON. | Draw the new stages and screens; Admin shows the wild card standings and the runners |
 | 12 Oct 2026 | `AdminView.podium` (`PodiumSummary`, or null before the podium) (same data as the Host podium stage) | Admin shows the winner; the real backend must send it on the podium |

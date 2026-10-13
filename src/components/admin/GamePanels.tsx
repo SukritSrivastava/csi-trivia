@@ -16,9 +16,14 @@ export type Send = (action: AdminAction) => void;
 
 const ROUND_NAME = { 1: "Round 1", 2: "Wild card", 3: "Blackout" } as const;
 
-/** A number in terminal digits (amber by default). */
-function N({ children, className = "text-amber" }: { children: React.ReactNode; className?: string }) {
-  return <span className={`font-term leading-none tabular-nums ${className}`}>{children}</span>;
+/** A number in terminal digits: amber unless `className` gives another colour. */
+function N({ children, className = "", ...rest }: { children: React.ReactNode; className?: string; "aria-label"?: string }) {
+  const coloured = /text-(amber|ghost|fog|wrong|void|mint|bright|mint-soft)/.test(className);
+  return (
+    <span className={`font-term leading-none tabular-nums ${coloured ? "" : "text-amber"} ${className}`} {...rest}>
+      {children}
+    </span>
+  );
 }
 
 const seconds = (ms: number) => (ms / 1000).toFixed(1);
