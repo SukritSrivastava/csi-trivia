@@ -1,5 +1,5 @@
 /**
- * THE CONTRACT between the game server and every screen (rules: docs/SPEC.md v2).
+ * THE CONTRACT between the game server and every screen (rules: docs/SPEC.md v3).
  *
  *   Host         /host    the projector everyone sees. No game controls.   receives HostView
  *   Participant  /play    each person's phone. Gets its OWN private view.  receives ParticipantView
@@ -23,13 +23,15 @@
  *      The Host view doesn't either (the projector laptop may be screen-shared).
  *      Only the Admin view carries it, so the quizmaster can judge.
  *   2. Option ids are opaque random strings, new for every question run.
- *   3. The 4 options are shuffled once per question run. In Round 1 the Host and
- *      every phone show that same order, numbered 1–4 (like Murder Trivia).
+ *   3. The 4 options are shuffled once per question run. In every round the Host
+ *      and every phone show that same order, numbered 1–4 (like Murder Trivia).
  *   4. Answer times are measured on the server, never trusted from a phone.
  *   5. Admin flow commands carry the stepId they were issued from. If the
  *      step has moved on, ignore the command (see AdminCommandPayload).
  *   6. The quizmaster drives the flow. Timers only run where SPEC says so,
  *      and when a timer ends the game holds and waits for the next click.
+ *   7. Every answer is marked by the server (no judging): Round 1 points, wild
+ *      card tallies, Blackout moves, the dark and every catch.
  *
  * Views are sent whenever they change, and only to the sockets whose view
  * actually changed (100 phones). Every view carries `serverNow` so screens
@@ -149,8 +151,9 @@ export function hslToHex(h: number, s: number, l: number): string {
   return `#${[f(0), f(8), f(4)].map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("")}`;
 }
 
+
 // ============================================================================
-// The flow
+// The flow (docs/SPEC.md v3)
 // ============================================================================
 
 /**
@@ -158,32 +161,30 @@ export function hslToHex(h: number, s: number, l: number): string {
  * (timer) = runs by itself once started.
  *
  *   lobby
- *   → r1Intro                                   (click: Start quiz)
+ *   → r1Intro                                    (click: Start quiz)
  *   → for each Round 1 question:
- *       r1Read        8s, question on Host, "Eyes up" on phones    (click: Show question / Next question)
+ *       r1Read        8s, question on Host, "Eyes up" on phones       (click: Show question / Next question)
  *       r1Answer      8s, options on phones; ends early when every
- *                     connected participant has answered           (timer)
- *       r1TimesUp     holds                                        (timer)
- *       r1Reveal      correct answer; phones show right / wrong    (click: Reveal answer)
- *       r1Results     how many picked each option (optional)       (click: Show results)
- *       r1Leaderboard top 10 (optional)                            (click: Show leaderboard)
- *   → cut           full ranking, cut line under 6th               (click: End round 1)
- *   → predictions   audience backs a finalist                      (click: Open predictions)
- *   → r2Intro       the finalists, the buzzer rules                (click: Start buzzer round)
- *   → for each buzzer question:
- *       r2Read        question + A–D on Host, buzzers locked (5s)  (click: Show question / Next question)
- *       r2BuzzOpen    buzzers open (15s; 10s when reopened)        (timer)
- *       r2Answering   first buzz; they say the answer out loud,
- *                     10s countdown that never marks anything      (a buzz)
- *       → Correct → r2Reveal                                       (click: Correct)
- *       → Wrong   → r2BuzzOpen again for the others, or r2Reveal
- *                   if nobody is left                              (click: Wrong)
- *       r2BuzzOpen ends with no buzz → r2Reveal, nobody scores     (timer)
- *       r2Scores      the finalists' points (optional)             (click: Show scores)
- *   → suddenDeath   tie for 1st after the last question; only the
- *                   tied finalists buzz, first correct answer wins (click: Start sudden death)
- *                   (its questions use the r2 steps with suddenDeath: true)
- *   → podium                                                       (click: Show winner, or End quiz now)
+ *                     connected player has answered                   (timer)
+ *       r1TimesUp     holds                                           (timer)
+ *       r1Reveal      the correct answer; phones right / wrong        (click: Reveal answer)
+ *       r1Results     how many picked each option (optional)          (click: Show results)
+ *       r1Leaderboard top 10 (optional)                               (click: Show leaderboard)
+ *   → cut           the ranking, cut line under 9th                    (click: End round 1)
+ *   → wcIntro       the wild card players and the 9 safe              (click: Start wild card round)
+ *   → for each wild card question (and up to 3 sudden-death ones):
+ *       wcRead / wcAnswer / wcTimesUp / wcReveal   as Round 1           (only wildcard players answer)
+ *       wcStandings   top 10 by correct answers (optional)            (click: Show standings)
+ *   → wcWinner      the 10th finalist                                 (click: Reveal wild card)
+ *   → predictions   audience backs a finalist (optional)              (click: Open predictions)
+ *   → boIntro       the 10 runners at their start positions           (click: Start Blackout)
+ *   → for each Blackout question:
+ *       boRead        5s, no options                                  (click: Show question / Next question)
+ *       boAnswer      8s, options on the runners' phones              (timer)
+ *       boTimesUp     holds                                           (timer)
+ *       boReveal      correct answer, runners move +3/+2/+1/0/−1     (click: Reveal answer)
+ *       boDark        the dark moves; anyone it reaches is caught     (click: Advance the darkness)
+ *   → podium                                                          (click: Show winner, or End quiz now)
  */
 export type Phase =
   | "lobby"
@@ -195,15 +196,24 @@ export type Phase =
   | "r1Results"
   | "r1Leaderboard"
   | "cut"
+  | "wcIntro"
+  | "wcRead"
+  | "wcAnswer"
+  | "wcTimesUp"
+  | "wcReveal"
+  | "wcStandings"
+  | "wcWinner"
   | "predictions"
-  | "r2Intro"
-  | "r2Read"
-  | "r2BuzzOpen"
-  | "r2Answering"
-  | "r2Reveal"
-  | "r2Scores"
-  | "suddenDeath"
+  | "boIntro"
+  | "boRead"
+  | "boAnswer"
+  | "boTimesUp"
+  | "boReveal"
+  | "boDark"
   | "podium";
+
+/** 1 = Round 1, 2 = wild card, 3 = Blackout. */
+export type RoundNumber = 1 | 2 | 3;
 
 /**
  * A countdown. Phone clocks are often seconds off, so screens compute the time
@@ -221,12 +231,13 @@ export interface Timer {
 }
 
 /**
- * - playing:  in Round 1 (everyone who joins before Round 1 ends)
- * - finalist: made the top 6 at the cut; plays the buzzer round
- * - audience: cut after Round 1, or joined after it; backs a finalist
+ * - playing:  in Round 1 (everyone who joins before the cut)
+ * - finalist: safe at the cut (top 9) or the wild card winner; runs in Blackout
+ * - wildcard: outside the top 9 at the cut; plays the wild card round
+ * - audience: lost the wild card, joined after the cut, or no wild card round; backs a finalist
  * - removed:  removed by the quizmaster; can't rejoin
  */
-export type ParticipantStatus = "playing" | "finalist" | "audience" | "removed";
+export type ParticipantStatus = "playing" | "finalist" | "wildcard" | "audience" | "removed";
 
 /** How a person appears on every screen: name and bot. */
 export interface ParticipantTag {
@@ -249,42 +260,47 @@ export interface Counts {
   connected: number;
   playing: number;
   finalists: number;
+  wildcard: number;
   audience: number;
   removed: number;
 }
 
-/** Fixed settings of this quiz (from the server's preset), for intros and labels. */
+/** This room's settings (from the quiz's rules), for intros and labels. */
 export interface QuizSettings {
   preset: "event" | "demo";
   round1Questions: number;
   round1ReadSeconds: number;
   round1AnswerSeconds: number;
-  finalistCount: number;
-  round2Questions: number;
-  round2ReadSeconds: number;
-  buzzSeconds: number;
-  answerSeconds: number;
-  reopenSeconds: number;
+  /** Safe at the cut (9 at the event). The wild card makes it one more. */
+  safeCount: number;
+  wildCardQuestions: number;
+  wildCardSuddenDeathMax: number;
+  blackoutQuestions: number;
+  blackoutReadSeconds: number;
+  blackoutAnswerSeconds: number;
 }
 
 // ============================================================================
-// Round 1 pieces
+// Questions (one shape for all three rounds)
 // ============================================================================
 
-/** A Round 1 question as the Host shows it. */
-export interface Round1Question {
-  /** Opaque id of this question run. Changes on "restart question". */
+/** A question as the Host shows it. Never says which option is right. */
+export interface McqQuestion {
+  /** Opaque id of this question run. New on every run (restart question gives a new one). */
   id: string;
-  /** 1-based within Round 1. */
+  round: RoundNumber;
+  /** 1-based within its round (sudden-death questions count on: 6, 7, 8). */
   number: number;
+  /** Planned questions in the round. */
   count: number;
+  /** A wild card sudden-death question. */
+  suddenDeath: boolean;
   text: string;
-  /** Path under /public, e.g. "/questions/hexagon.svg", or null. */
+  /** "/questions/x.svg" on this site, or "/images/<id>" on the game server (assetUrl), or null. */
   image: string | null;
   /**
    * The 4 options, numbered 1–4 in this order, from the answer step on. null in
    * the read step. Every phone shows them in this same order with the same numbers.
-   * Never says which one is right (that's `correctText` on the reveal).
    */
   options: string[] | null;
 }
@@ -295,12 +311,22 @@ export interface AnswerOption {
   text: string;
 }
 
-/** Results bar chart: how many picked each option (after the reveal only). */
+/** Round 1 results bar chart: how many picked each option (after the reveal only). */
 export interface OptionResult {
-  letter: OptionLetter;
+  /** 1–4, the number shown on screen. */
+  number: number;
   text: string;
   count: number;
   correct: boolean;
+}
+
+/** After a reveal (Host, every round). */
+export interface Reveal {
+  /** null when the question was voided. */
+  correctText: string | null;
+  /** 0–3 into McqQuestion.options; null when voided. */
+  correctIndex: number | null;
+  voided: boolean;
 }
 
 export interface LeaderRow extends ParticipantTag {
@@ -312,66 +338,106 @@ export interface LeaderRow extends ParticipantTag {
   change: number;
 }
 
-/** One line of the end-of-Round-1 ranking. */
+/** One line of the ranking at the cut. */
 export interface Standing extends ParticipantTag {
   rank: number;
   score: number;
-  /** Above the cut line. */
+  /** Total Round 1 answer time (the tie-break), ms. */
+  timeMs: number;
+  /** Safe: in the top 9 (or everyone, when the wild card round is skipped). */
   finalist: boolean;
 }
 
 // ============================================================================
-// Round 2 (buzzer) pieces
+// Wild card round
 // ============================================================================
 
-/** A buzzer question. The options ARE shown on the Host (A–D) so the room can play along. */
-export interface BuzzerQuestion {
-  /** Opaque id of this question run. Phones send it with a buzz. */
-  id: string;
-  /** 1-based. Sudden-death questions count from 1 again. */
-  number: number;
-  /** Planned questions in the round (sudden death: 0, open-ended). */
-  count: number;
-  suddenDeath: boolean;
-  text: string;
-  image: string | null;
-  /** In A–D order (shuffled once per question, the same for everyone). */
-  options: string[];
+export interface WildCardStanding extends ParticipantTag {
+  rank: number;
+  correct: number;
+  /** Total answer time over the wild card questions (wrong / miss = the full time), ms. */
+  timeMs: number;
 }
 
-export interface FinalistState extends ParticipantTag {
-  points: number;
-  /** Seat order on screen = their Round 1 rank among finalists (1 = top). */
-  seat: number;
-  connected: boolean;
-  /** Buzzed and was marked wrong on this question. */
-  lockedOut: boolean;
-  /** Takes part in this question (false for non-tied finalists in sudden death). */
-  inPlay: boolean;
-}
-
-export type BuzzOutcome =
-  | { kind: "correct"; by: ParticipantTag }
-  /** allWrong: everyone in play was marked wrong. timeUp: buzz window ended with no buzz. */
-  | { kind: "nobody"; reason: "allWrong" | "timeUp" }
-  /** The quizmaster voided the question: no points either way. */
-  | { kind: "voided" };
-
-export interface Round2State {
-  question: BuzzerQuestion;
-  finalists: FinalistState[];
-  /** Who has the turn right now (only during r2Answering). */
-  buzzedBy: ParticipantTag | null;
-  /** The spoken-answer countdown ran out; waiting for Correct / Wrong. */
-  answerTimeUp: boolean;
-  /** Marked wrong on this question, in order. */
-  wrong: ParticipantTag[];
-  /** Set on r2Reveal only. */
-  outcome: BuzzOutcome | null;
-  /** Set on r2Reveal only. */
-  correct: { letter: OptionLetter; text: string } | null;
-  /** Sudden death decided. */
+export interface WildCardState {
+  /** Wild card players still in it (not removed). */
+  players: number;
+  /** The current question's number (0 before the first). */
+  questionNumber: number;
+  /** Planned questions. */
+  questionCount: number;
+  /** During the answer steps: answered / expected. Else null. */
+  answered: number | null;
+  expected: number | null;
+  /**
+   * Host: the top 10 on wcStandings and wcWinner only (empty otherwise, so the
+   * live tally can't be read off the projector mid-question). Admin: everyone, always.
+   */
+  standings: WildCardStanding[];
+  /** The 9 safe finalists (they watch). */
+  safe: ParticipantTag[];
+  suddenDeath: { active: boolean; number: number; max: number; alive: ParticipantTag[] } | null;
+  /** Set on wcWinner (and after). */
   winner: ParticipantTag | null;
+  /** Nobody got a wild card question right: the 10th-ranked Round 1 player got the seat. */
+  fallback: boolean;
+}
+
+// ============================================================================
+// Blackout
+// ============================================================================
+
+export interface Runner extends ParticipantTag {
+  mood: BotMood;
+  /** Steps from the start of the track (the dark starts at 0). */
+  position: number;
+  /** Position before the last reveal (for the move animation). */
+  from: number;
+  /** The last reveal's move: +3, +2, +1, 0 or −1. null before the first reveal of this question run. */
+  delta: number | null;
+  /** position − dark: how far ahead of the dark (≤ 0 once caught). */
+  gap: number;
+  alive: boolean;
+  caughtOnQuestion: number | null;
+  /** Final place once it's decided (caught, or the end). */
+  place: number | null;
+  /** 2 (ranks 1–3), 1 (ranks 4–9), 0 (the wild card). */
+  headStart: number;
+  wildCard: boolean;
+  /** Round 1 rank. */
+  round1Rank: number | null;
+}
+
+export interface BlackoutState {
+  /** The current question's number (0 before the first). */
+  questionNumber: number;
+  questionCount: number;
+  /** The dark's position. */
+  dark: number;
+  /** The dark's position before the last advance (for animation). */
+  darkFrom: number;
+  /** Seat order (Round 1 rank, the wild card last). */
+  runners: Runner[];
+  /** Ids caught by the last Advance the darkness. */
+  caughtThisQuestion: string[];
+  /** Runners still running. */
+  alive: number;
+  /** Decided (the primary button is Show winner). */
+  over: boolean;
+  /** Set once decided. */
+  winner: ParticipantTag | null;
+}
+
+// ============================================================================
+// Predictions and the podium
+// ============================================================================
+
+export interface FinalistInfo extends ParticipantTag {
+  /** 1-based seat: Round 1 rank order, the wild card last. */
+  seat: number;
+  round1Rank: number | null;
+  wildCard: boolean;
+  connected: boolean;
 }
 
 /** Live backing counts (predictions onward). */
@@ -387,9 +453,29 @@ export interface Backing {
 export interface PodiumEntry extends ParticipantTag {
   /** 1-based final place. */
   place: number;
-  /** Buzzer points (basis "buzzer") or Round 1 score (basis "round1"). */
-  points: number;
   round1Rank: number | null;
+  round1Score: number;
+  /** Blackout: final position on the track. null when the quiz ended before Blackout. */
+  position: number | null;
+  /** Blackout: caught on this question; null for the winner and survivors. */
+  caughtOnQuestion: number | null;
+  wildCard: boolean;
+}
+
+/**
+ * - blackout: the normal end, places from the chase
+ * - wildcard: ended during the wild card round (the safe finalists by Round 1 rank)
+ * - round1:   ended before the cut (the Round 1 ranking)
+ */
+export type PodiumBasis = "blackout" | "wildcard" | "round1";
+
+/** The result of the quiz: what the Host's podium shows. */
+export interface PodiumSummary {
+  basis: PodiumBasis;
+  /** Final order, winner first. */
+  entries: PodiumEntry[];
+  /** Audience members who backed the winner. */
+  calledIt: number;
 }
 
 // ============================================================================
@@ -399,42 +485,30 @@ export interface PodiumEntry extends ParticipantTag {
 export type HostStage =
   | { phase: "lobby" }
   | { phase: "r1Intro" }
-  | { phase: "r1Read"; question: Round1Question }
-  | { phase: "r1Answer"; question: Round1Question; answered: number; expected: number }
-  | { phase: "r1TimesUp"; question: Round1Question; answered: number; expected: number }
+  | { phase: "r1Read"; question: McqQuestion }
+  | { phase: "r1Answer" | "r1TimesUp"; question: McqQuestion; answered: number; expected: number }
+  | ({ phase: "r1Reveal"; question: McqQuestion } & Reveal)
+  | { phase: "r1Results"; question: McqQuestion; options: OptionResult[]; answered: number; expected: number }
+  | { phase: "r1Leaderboard"; question: McqQuestion; rows: LeaderRow[] }
   | {
-      phase: "r1Reveal";
-      question: Round1Question;
-      /** null when the question was voided */
-      correctText: string | null;
-      voided: boolean;
+      phase: "cut";
+      /** Everyone ranked, best first. */
+      standings: Standing[];
+      safeCount: number;
+      wildCardCount: number;
+      /** Fewer than 10 played: everyone is a finalist, no wild card round. */
+      wildCardSkipped: boolean;
     }
-  | { phase: "r1Results"; question: Round1Question; options: OptionResult[]; answered: number; expected: number }
-  | { phase: "r1Leaderboard"; question: Round1Question; rows: LeaderRow[] }
-  | { phase: "cut"; standings: Standing[] }
-  | { phase: "predictions"; finalists: FinalistState[]; backing: Backing }
-  | { phase: "r2Intro"; finalists: FinalistState[]; backing: Backing }
-  | { phase: "r2Read" | "r2BuzzOpen" | "r2Answering" | "r2Reveal"; round2: Round2State; backing: Backing }
-  | {
-      phase: "r2Scores";
-      /** Sorted by points, best first. */
-      finalists: FinalistState[];
-      questionNumber: number;
-      questionCount: number;
-      suddenDeath: boolean;
-      backing: Backing;
-    }
-  | { phase: "suddenDeath"; tied: FinalistState[]; backing: Backing }
-  | {
-      phase: "podium";
-      /** "buzzer": finalists by buzzer points. "round1": the quiz was ended before the cut. */
-      basis: "buzzer" | "round1";
-      /** Final order. The Host puts 1–3 on the podium and the rest below. */
-      entries: PodiumEntry[];
-      /** Audience members who backed the winner. */
-      calledIt: number;
-      backing: Backing;
-    };
+  | { phase: "wcIntro"; wildCard: WildCardState }
+  | { phase: "wcRead" | "wcAnswer" | "wcTimesUp"; question: McqQuestion; wildCard: WildCardState }
+  | ({ phase: "wcReveal"; question: McqQuestion; wildCard: WildCardState } & Reveal)
+  | { phase: "wcStandings" | "wcWinner"; wildCard: WildCardState }
+  | { phase: "predictions"; finalists: FinalistInfo[]; backing: Backing }
+  | { phase: "boIntro"; blackout: BlackoutState; backing: Backing }
+  | { phase: "boRead" | "boAnswer" | "boTimesUp"; question: McqQuestion; blackout: BlackoutState; answered: number; expected: number; backing: Backing }
+  | ({ phase: "boReveal"; question: McqQuestion; blackout: BlackoutState; backing: Backing } & Reveal)
+  | { phase: "boDark"; question: McqQuestion; blackout: BlackoutState; backing: Backing }
+  | ({ phase: "podium"; backing: Backing } & PodiumSummary);
 
 export interface HostView {
   roomCode: string;
@@ -448,8 +522,11 @@ export interface HostView {
   /** Everyone who joined (not removed), in join order: the lobby wall. */
   participants: ParticipantTag[];
   /**
-   * The bots across the top of the projector, in join order, each with its mood
-   * for the current step (see BotMood). Removed participants are left out.
+   * The bots across the top of the projector, each with its mood for the current
+   * step (see BotMood). Lobby and Round 1: everyone. The cut: everyone ranked.
+   * Wild card round: the wild card players only (the 9 safe are in
+   * WildCardState.safe). Blackout and the podium: the 10 finalists. Removed
+   * participants are left out.
    */
   cast: CastMember[];
   counts: Counts;
@@ -465,75 +542,106 @@ export interface HostView {
 // What each PARTICIPANT (phone) receives
 // ============================================================================
 
-/** Buzzer-round sub-step, for phones. */
-export type Round2Step = "intro" | "read" | "buzzOpen" | "answering" | "reveal" | "scores" | "suddenDeath";
-
-/** What every phone sees of the buzzer round. */
-export interface Round2Phone {
-  step: Round2Step;
-  /** Send this with a buzz. null outside a question. */
-  questionId: string | null;
-  questionNumber: number | null;
-  questionCount: number;
-  suddenDeath: boolean;
-  finalists: FinalistState[];
-  buzzedBy: ParticipantTag | null;
-  wrong: ParticipantTag[];
-  outcome: BuzzOutcome | null;
-  winner: ParticipantTag | null;
+/** A runner as an audience phone sees it (no correctness before the reveal). */
+export interface RunnerLite extends ParticipantTag {
+  mood: BotMood;
+  gap: number;
+  alive: boolean;
+  place: number | null;
 }
 
 export type ParticipantScreen =
-  /** Joined, waiting for the quiz to start. Build your bot here (participant:bot): any colour, any head. */
+  /** Joined, waiting for the quiz to start. Build your bot here (participant:bot). */
   | { kind: "lobby"; joined: number }
   /** Round 1 is about to start. */
   | { kind: "r1Intro"; settings: QuizSettings }
   /** Joined while a question was open: plays from the next question. */
   | { kind: "nextQuestion" }
   /** Read time: the question is on the projector, options come next. */
-  | { kind: "eyesUp"; questionNumber: number; questionCount: number }
+  | { kind: "eyesUp"; round: RoundNumber; questionNumber: number; questionCount: number; suddenDeath: boolean }
   /** The 4 options in the Host's order (number = position + 1). Never a correct flag. First tap locks. */
-  | { kind: "answer"; questionId: string; questionNumber: number; questionCount: number; options: AnswerOption[] }
+  | {
+      kind: "answer";
+      round: RoundNumber;
+      questionId: string;
+      questionNumber: number;
+      questionCount: number;
+      suddenDeath: boolean;
+      options: AnswerOption[];
+    }
   /** Tapped; waiting. `timeUp` once the answer time has ended. */
-  | { kind: "lockedIn"; choiceText: string; timeUp: boolean }
+  | { kind: "lockedIn"; round: RoundNumber; choiceText: string; timeUp: boolean }
   /** Time ran out without an answer. */
-  | { kind: "timesUp" }
-  /** After the reveal: right or wrong only (no points, no rank). */
+  | { kind: "timesUp"; round: RoundNumber }
+  /** After a Round 1 or wild card reveal: right or wrong (no points, no rank). */
   | {
       kind: "result";
+      round: 1 | 2;
       outcome: "correct" | "wrong" | "missed";
       /** The right answer, for "It was …" (after the reveal only, so it's safe). */
       correctText: string;
+      /** Wild card: "2 of 3 right". null in Round 1. (Not named "correct", so it can't be mistaken for an answer key.) */
+      tally: { right: number; asked: number } | null;
     }
   /** The quizmaster cancelled the question. */
-  | { kind: "voided" }
-  /** End of Round 1: the only time a phone shows its rank. */
-  | { kind: "cut"; madeIt: boolean; rank: number; of: number; finalistCount: number }
-  /** Joined after Round 1: watching until predictions open. */
+  | { kind: "voided"; round: RoundNumber }
+  /** End of Round 1: the only time a phone shows its Round 1 rank. */
+  | { kind: "cut"; outcome: "safe" | "wildcard"; rank: number; of: number; safeCount: number }
+  /** A safe finalist while the wild card round runs. */
+  | { kind: "safeWatch"; players: number; questionNumber: number; questionCount: number }
+  /** A wild card player between questions (intro, standings). */
+  | {
+      kind: "wcStatus";
+      /** Wild card questions they got right so far. */
+      right: number;
+      asked: number;
+      questionCount: number;
+      /** Sudden death: "in" = still in it, "out" = knocked out of it, null = not in sudden death. */
+      suddenDeath: "in" | "out" | null;
+    }
+  /** Reveal wild card. */
+  | { kind: "wcWinner"; you: "won" | "lost"; winner: ParticipantTag | null }
+  /** Joined after the cut, or lost the wild card, before predictions open. */
   | { kind: "audience" }
-  /** Audience: back one finalist (can change until the buzzer round starts). */
-  | { kind: "backFinalist"; finalists: FinalistState[]; backedId: string | null }
-  /** Finalist, before the buzzer round starts. */
-  | { kind: "finalist"; seat: number; finalistCount: number }
-  /** Finalist during the buzzer round. */
-  | (Round2Phone & {
-      kind: "buzzer";
-      /** Show the big BUZZ button as live. */
-      canBuzz: boolean;
-      /** This finalist takes part in this question (sudden death: only the tied ones). */
-      inPlay: boolean;
-      lockedOut: boolean;
-      points: number;
-      /** This finalist's own result on the current question. */
-      myResult: "correct" | "wrong" | null;
-    })
-  /** Audience during the buzzer round. */
-  | (Round2Phone & { kind: "buzzerWatch"; backedId: string | null })
+  /** Audience: back one finalist (can change until Blackout starts). */
+  | { kind: "backFinalist"; finalists: FinalistInfo[]; backedId: string | null }
+  /** A runner after a Blackout reveal. */
+  | {
+      kind: "runnerResult";
+      outcome: "correct" | "wrong" | "missed" | "voided";
+      /** +3, +2, +1, 0 or −1 (0 when voided). */
+      delta: number;
+      position: number;
+      /** Steps ahead of the dark. */
+      gap: number;
+      /** For "It was …" when wrong or missed. */
+      correctText: string | null;
+    }
+  /**
+   * A runner between questions: ready (before the first question), still running,
+   * or caught (with the final place).
+   */
+  | {
+      kind: "runnerStatus";
+      alive: boolean;
+      /** Steps ahead of the dark (alive), or how far behind it they ended. */
+      gap: number;
+      position: number;
+      headStart: number;
+      /** Caught just now (this Advance the darkness). */
+      caughtNow: boolean;
+      place: number | null;
+      aliveCount: number;
+      questionNumber: number;
+      questionCount: number;
+    }
+  /** Audience during Blackout. */
+  | { kind: "blackoutWatch"; backed: ParticipantTag | null; runners: RunnerLite[]; alive: number; questionNumber: number; questionCount: number }
   /** The quiz is over. */
   | {
       kind: "podium";
-      basis: "buzzer" | "round1";
-      /** Finalists (or everyone, basis "round1"): their final place. Audience: null. */
+      basis: PodiumBasis;
+      /** Finalists (or everyone, basis "round1"): their final place. Others: null. */
       place: number | null;
       /** How many places there are. */
       of: number;
@@ -572,29 +680,26 @@ export type AdminAction =
   | { type: "showLeaderboard" }
   | { type: "nextQuestion" }
   | { type: "endRound1" }
+  | { type: "startWildCard" }
+  | { type: "showStandings" }
+  | { type: "revealWildCard" }
   | { type: "openPredictions" }
-  | { type: "startBuzzerRound" }
-  | { type: "showScores" }
-  | { type: "startSuddenDeath" }
+  | { type: "startBlackout" }
+  | { type: "advanceDarkness" }
   | { type: "showWinner" }
-  // ---- judging the buzzer round
-  | { type: "markCorrect" }
-  | { type: "markWrong" }
-  /** Reverts the last Correct / Wrong (the point and the lockout) and goes back to judging. */
-  | { type: "undoMark" }
   // ---- timers
   | { type: "pause" }
   | { type: "resume" }
-  /** +ADD_TIME_MS on the running timer (or a fresh 5s on the spoken-answer countdown). */
+  /** +ADD_TIME_MS on the running timer. */
   | { type: "addTime" }
   /** End the running timer now, as if it ran out. */
   | { type: "skipTimer" }
   // ---- fixing mistakes
-  /** Cancel the current question: nobody gains or loses points. */
+  /** Cancel the current question: it doesn't count (see SPEC "Void question"). */
   | { type: "voidQuestion" }
-  /** Undo the current question's points and play it again from its read step. */
+  /** Undo the current question's effects and play it again from its read step. */
   | { type: "restartQuestion" }
-  /** Round 1: everyone back to 0, back to the Round 1 intro. Round 2: points to 0, back to its intro. */
+  /** Round 1: back to 0 at the intro. Wild card: tallies to 0. Blackout: positions and the dark to the start. */
   | { type: "restartRound" }
   // ---- room
   | { type: "removeParticipant"; participantId: string }
@@ -613,14 +718,13 @@ export const ADMIN_ACTION_TYPES: readonly AdminActionType[] = [
   "showLeaderboard",
   "nextQuestion",
   "endRound1",
+  "startWildCard",
+  "showStandings",
+  "revealWildCard",
   "openPredictions",
-  "startBuzzerRound",
-  "showScores",
-  "startSuddenDeath",
+  "startBlackout",
+  "advanceDarkness",
   "showWinner",
-  "markCorrect",
-  "markWrong",
-  "undoMark",
   "pause",
   "resume",
   "addTime",
@@ -638,7 +742,7 @@ export const ADMIN_ACTION_TYPES: readonly AdminActionType[] = [
  * Commands that apply whatever step the quiz is on, because sending them twice
  * changes nothing (pausing twice is still paused). Every OTHER command is
  * ignored unless its stepId matches the current step, so a double tap or two
- * Admin devices can never skip two steps or mark one answer twice.
+ * Admin devices can never skip two steps or move the dark twice.
  */
 export const STEP_INDEPENDENT_ACTIONS: readonly AdminActionType[] = [
   "pause",
@@ -658,22 +762,23 @@ export interface PrimaryAction {
 /** The current question, with the answer, for the quizmaster only. */
 export interface AdminQuestion {
   id: string;
-  round: 1 | 2;
+  round: RoundNumber;
   number: number;
-  /** Planned questions in the round (sudden death: 0). */
+  /** Planned questions in the round. */
   count: number;
   suddenDeath: boolean;
   text: string;
   image: string | null;
-  /** In the Host's A–D order. */
-  options: { letter: OptionLetter; text: string; correct: boolean }[];
-  correctLetter: OptionLetter;
+  /** In the Host's 1–4 order. */
+  options: { number: number; text: string; correct: boolean }[];
+  /** 1–4. */
+  correctNumber: number;
   correctText: string;
 }
 
 /** What "Show question" / "Next question" will put up next. */
 export interface QuestionPreview {
-  round: 1 | 2;
+  round: RoundNumber;
   number: number;
   count: number;
   suddenDeath: boolean;
@@ -684,7 +789,7 @@ export interface QuestionPreview {
 export interface AdminParticipant extends ParticipantTag {
   status: ParticipantStatus;
   connected: boolean;
-  /** Joined after Round 1 ended. */
+  /** Joined after the cut. */
   joinedLate: boolean;
   /** The quiz page is hidden on their phone right now. */
   pageHidden: boolean;
@@ -692,11 +797,15 @@ export interface AdminParticipant extends ParticipantTag {
   leftPageCount: number;
   /** Round 1 score. */
   score: number;
-  /** Round 1 rank (live during Round 1, final after the cut). null if they never played Round 1. */
+  /** Round 1 rank (live during Round 1, frozen at the cut). null if they never played Round 1. */
   rank: number | null;
-  /** Buzzer-round points (finalists). */
-  points: number;
-  /** Answered the current Round 1 question. null when no Round 1 question is open for them. */
+  /** Wild card correct answers (null if they didn't play it). */
+  wildCorrect: number | null;
+  wildTimeMs: number | null;
+  isWildCard: boolean;
+  /** Blackout (finalists, from Start Blackout): position, distance from the dark, catch, place. */
+  blackout: { position: number; gap: number; caughtOnQuestion: number | null; place: number | null } | null;
+  /** Answered the current question. null when no question is open for them. */
   answered: boolean | null;
   /** Audience: the finalist they back. */
   backingId: string | null;
@@ -709,9 +818,9 @@ export interface AdminView {
   phase: Phase;
   /** Changes every time the step changes. Send it back with every command. */
   stepId: number;
-  /** Where we are, in plain words: "Round 1, question 3 of 20: answering". */
+  /** Where we are, in plain words: "Wild card, question 2 of 5: reveal". */
   stepLabel: string;
-  /** The big button. null while a timer runs or a mark is awaited. */
+  /** The big button. null while a timer runs. */
   primary: PrimaryAction | null;
   /** One line under the button: what happens next, or why there's no button. */
   hint: string | null;
@@ -726,22 +835,20 @@ export interface AdminView {
   question: AdminQuestion | null;
   nextQuestion: QuestionPreview | null;
   counts: Counts & {
-    /** Current Round 1 question: answered / expected. null outside answering. */
+    /** Current question: answered / expected. null outside an answer step. */
     answered: number | null;
     expected: number | null;
   };
   /** Everyone who ever joined, removed ones included, in join order. */
   participants: AdminParticipant[];
-  /** The current buzzer question, while one is on (r2Read through r2Reveal). */
-  round2: Round2State | null;
-  /** The finalists with live points, from the cut onward (empty before). */
-  finalists: FinalistState[];
+  /** The finalists (safe + wild card), from the cut onward (empty before). */
+  finalists: FinalistInfo[];
+  /** From the cut (when it runs) onward, with the full standings. */
+  wildCard: WildCardState | null;
+  /** From Start Blackout onward. */
+  blackout: BlackoutState | null;
   backing: Backing | null;
-  /** "Undo last mark" is possible right now. */
-  canUndo: boolean;
-  /** The last Correct / Wrong on this question (for the undo button label). */
-  lastMark: { by: ParticipantTag; correct: boolean } | null;
-  /** The final order, on the podium only (same as the Host's podium stage), so the quizmaster can announce it. */
+  /** The final order, on the podium only (same as the Host's podium stage). */
   podium: PodiumSummary | null;
   /** The quiz this room is playing (a frozen copy, taken when the room was opened). */
   quizTitle: string;
@@ -756,17 +863,16 @@ export interface QuizRules {
   /** Round 1 questions played (the first N of the Round 1 list; the rest are spares). */
   round1Questions: number;
   round1ReadSeconds: number;
+  /** Also the wild card round's read and answer times. */
   round1AnswerSeconds: number;
-  /** How many make the cut into the buzzer round. */
-  finalists: number;
-  /** Buzzer questions that count (the first N of the buzzer list; the rest are spares for voids and sudden death). */
-  buzzerQuestions: number;
-  buzzerReadSeconds: number;
-  buzzWindowSeconds: number;
-  /** The countdown while a finalist says their answer out loud (never marks anything). */
-  spokenAnswerSeconds: number;
-  /** Buzz window after a wrong answer, for the others. */
-  reopenSeconds: number;
+  /** Safe at the cut (9 at the event). */
+  safe: number;
+  /** Wild card questions (the first N of the Wild card list; the rest are spares for voids and sudden death). */
+  wildCardQuestions: number;
+  /** Blackout questions (the first N of the Blackout list; the rest are spares for voids). */
+  blackoutQuestions: number;
+  blackoutReadSeconds: number;
+  blackoutAnswerSeconds: number;
 }
 
 /** One question in the library. Always 4 options; shuffled once per question when played. */
@@ -781,7 +887,7 @@ export interface LibraryQuestion {
   image: string | null;
   /** This question's read time, overriding the quiz's (null = use the quiz's). */
   readSeconds: number | null;
-  /** Round 1: answer time. Buzzer round: buzz window. null = use the quiz's. */
+  /** This question's answer time, overriding the quiz's (null = use the quiz's). */
   openSeconds: number | null;
 }
 
@@ -791,8 +897,10 @@ export interface Quiz {
   rules: QuizRules;
   /** Played top to bottom; the first rules.round1Questions count. */
   round1: LibraryQuestion[];
-  /** Played top to bottom; the first rules.buzzerQuestions count, the rest are spares. */
-  buzzer: LibraryQuestion[];
+  /** Wild card round, top to bottom; the first rules.wildCardQuestions count, the rest are spares. */
+  wildcard: LibraryQuestion[];
+  /** Blackout, top to bottom; the first rules.blackoutQuestions count, the rest are spares. */
+  blackout: LibraryQuestion[];
   /** ms since epoch. */
   updatedAt: number;
 }
@@ -801,7 +909,8 @@ export interface QuizSummary {
   id: string;
   title: string;
   round1: number;
-  buzzer: number;
+  wildcard: number;
+  blackout: number;
   updatedAt: number;
   /** Problems that stop it being played (empty = ready). */
   problems: string[];
@@ -842,20 +951,11 @@ export const QUIZ_LIMITS = {
   questionsPerList: 200,
   /** Uploaded image size after the editor shrinks it. */
   imageBytes: 2_500_000,
-  finalists: { min: 2, max: 12 },
+  safe: { min: 2, max: 20 },
   readSeconds: { min: 1, max: 60 },
-  /** Answer time, buzz window, spoken answer, reopen. */
+  /** Answer time. */
   openSeconds: { min: 3, max: 120 },
 } as const;
-
-/** The result of the quiz: what the Host's podium shows. */
-export interface PodiumSummary {
-  basis: "buzzer" | "round1";
-  /** Final order, winner first. */
-  entries: PodiumEntry[];
-  /** Audience members who backed the winner. */
-  calledIt: number;
-}
 
 // ============================================================================
 // Socket.IO events
@@ -918,11 +1018,13 @@ export interface ClientToServerEvents {
    * Rejected only if it isn't a colour/head ("invalid") or the quiz started ("too-late").
    */
   "participant:bot": (payload: BotLook, ack: (result: BotResult) => void) => void;
-  /** Round 1. First tap wins; later taps are ignored. */
+  /**
+   * Every round. First tap wins; later taps are ignored, and so is an answer from
+   * anyone who can't answer the current question (finalists in the wild card
+   * round, caught runners, the audience).
+   */
   "participant:answer": (payload: { questionId: string; optionId: string }) => void;
-  /** Buzzer round. First buzz of the window wins the turn. */
-  "participant:buzz": (payload: { questionId: string }) => void;
-  /** Audience backs a finalist (can change until the buzzer round starts). */
+  /** Audience backs a finalist (can change until Blackout starts). */
   "participant:back": (payload: { finalistId: string }) => void;
   /** The quiz page was hidden/shown (switched app or tab). Flag for Admin only. */
   "participant:visibility": (payload: { hidden: boolean }) => void;

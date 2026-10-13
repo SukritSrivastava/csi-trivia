@@ -15,7 +15,15 @@ import { usePageVisibility } from "@/lib/usePageVisibility";
 import { useWakeLock } from "@/lib/useWakeLock";
 import type { ParticipantScreen, ParticipantView } from "@/shared/protocol";
 import { useParticipantStore } from "@/stores/participantStore";
-import { BackFinalistScreen, BuzzerScreen, BuzzerWatchScreen } from "./BuzzerScreens";
+import {
+  BackFinalistScreen,
+  BlackoutWatchScreen,
+  RunnerResultScreen,
+  RunnerStatusScreen,
+  SafeWatchScreen,
+  WildCardStatusScreen,
+  WildCardWinnerScreen,
+} from "./FinalScreens";
 import { JoinScreen } from "./JoinScreen";
 import { LobbyScreen } from "./LobbyScreen";
 import { Banner, PhoneHeader } from "./parts";
@@ -60,24 +68,30 @@ export function PlayApp() {
 function questionLabel(s: ParticipantScreen): string | null {
   switch (s.kind) {
     case "eyesUp":
-    case "answer":
+    case "answer": {
+      if (s.round === 2) return s.suddenDeath ? "Wild card · sudden death" : `Wild card Q${s.questionNumber} of ${s.questionCount}`;
+      if (s.round === 3) return `Blackout Q${s.questionNumber} of ${s.questionCount}`;
       return `Q${s.questionNumber} of ${s.questionCount}`;
-    case "buzzer":
-    case "buzzerWatch":
-      if (!s.questionNumber) return "The buzzer round";
-      return s.suddenDeath ? `Sudden death · Q${s.questionNumber}` : `Buzzer Q${s.questionNumber} of ${s.questionCount}`;
+    }
+    case "safeWatch":
+    case "wcStatus":
+      return "The wild card round";
+    case "runnerStatus":
+    case "blackoutWatch":
+      return s.questionNumber ? `Blackout Q${s.questionNumber} of ${s.questionCount}` : "Blackout";
     default:
       return null;
   }
 }
 
 /** Screens that follow a question keep its "Q2 of 3" in the header. */
-const AFTER_QUESTION = new Set<ParticipantScreen["kind"]>(["lockedIn", "timesUp", "result", "voided"]);
+const AFTER_QUESTION = new Set<ParticipantScreen["kind"]>(["lockedIn", "timesUp", "result", "voided", "runnerResult"]);
 
 /** Changing this key plays the screen transition. */
 function screenKey(s: ParticipantScreen): string {
   if (s.kind === "answer") return `answer:${s.questionId}`;
-  if (s.kind === "eyesUp") return `eyes:${s.questionNumber}`;
+  if (s.kind === "eyesUp") return `eyes:${s.round}:${s.questionNumber}`;
+  if (s.kind === "runnerStatus") return `runner:${s.alive}:${s.questionNumber}`;
   return s.kind;
 }
 
@@ -85,15 +99,20 @@ function Playing({ view, offline }: { view: ParticipantView; offline: boolean })
   const s = view.screen;
   const lastQuestion = useRef<string | null>(null);
   const label = questionLabel(s);
-  if (label && s.kind !== "buzzer" && s.kind !== "buzzerWatch") lastQuestion.current = label;
+  if (label && (s.kind === "eyesUp" || s.kind === "answer")) lastQuestion.current = label;
   const header =
     label ??
     (AFTER_QUESTION.has(s.kind) ? lastQuestion.current : null) ??
     (s.kind === "lobby" ? `Room ${view.roomCode} · ${view.me.name}` : `${view.me.name} · room ${view.roomCode}`);
   const key = screenKey(s);
 
-  // Confetti for making the top 6, winning, and calling the winner.
-  const celebration = s.kind === "cut" && s.madeIt ? "small" : s.kind === "podium" && s.place === 1 ? "big" : s.kind === "podium" && s.calledIt ? "small" : null;
+  // Confetti for being safe at the cut, winning the wild card, winning, and calling the winner.
+  const celebration =
+    (s.kind === "cut" && s.outcome === "safe") || (s.kind === "wcWinner" && s.you === "won") || (s.kind === "podium" && s.calledIt)
+      ? "small"
+      : s.kind === "podium" && s.place === 1
+        ? "big"
+        : null;
   useEffect(() => {
     if (!celebration) return;
     const t = window.setTimeout(() => void celebrate(celebration, [view.me.color, "#6cf0b0", "#ffb627", "#e7fff4"]), 350);
@@ -104,7 +123,7 @@ function Playing({ view, offline }: { view: ParticipantView; offline: boolean })
 
   return (
     <>
-      <PhoneHeader label={header} me={view.me} timer={view.timer} showBot={s.kind !== "buzzer"} />
+      <PhoneHeader label={header} me={view.me} timer={view.timer} />
       {offline && <Banner testId="reconnecting">RECONNECTING…</Banner>}
       {view.paused && !offline && <Banner testId="paused">PAUSED BY THE QUIZMASTER</Banner>}
       <AnimatePresence mode="wait" initial={false}>
@@ -133,10 +152,18 @@ function Screen({ view }: { view: ParticipantView }) {
       return <AnswerScreen screen={s} />;
     case "backFinalist":
       return <BackFinalistScreen screen={s} />;
-    case "buzzer":
-      return <BuzzerScreen view={view} screen={s} />;
-    case "buzzerWatch":
-      return <BuzzerWatchScreen view={view} screen={s} />;
+    case "safeWatch":
+      return <SafeWatchScreen view={view} screen={s} />;
+    case "wcStatus":
+      return <WildCardStatusScreen view={view} screen={s} />;
+    case "wcWinner":
+      return <WildCardWinnerScreen view={view} screen={s} />;
+    case "runnerResult":
+      return <RunnerResultScreen view={view} screen={s} />;
+    case "runnerStatus":
+      return <RunnerStatusScreen view={view} screen={s} />;
+    case "blackoutWatch":
+      return <BlackoutWatchScreen view={view} screen={s} />;
     case "podium":
       return <PodiumScreen view={view} screen={s} />;
     default:

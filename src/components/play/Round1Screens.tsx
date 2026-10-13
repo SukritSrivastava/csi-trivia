@@ -52,7 +52,7 @@ export function PodiumScreen({ view, screen: s }: { view: ParticipantView; scree
   if (s.place === 1)
     return (
       <Moment me={me} mood="right" big="YOU WON!" testId="podium-won">
-        {s.basis === "buzzer" ? "Champion of the buzzer round." : "Top of the leaderboard."}
+        {s.basis === "blackout" ? "Last bot running: you escaped the dark." : "Top of the leaderboard."}
       </Moment>
     );
   if (s.place === 2 || s.place === 3)
@@ -65,7 +65,7 @@ export function PodiumScreen({ view, screen: s }: { view: ParticipantView; scree
   if (s.place)
     return (
       <Moment me={me} mood="idle" big={ordinal(s.place).toUpperCase()}>
-        You finished {ordinal(s.place)} {s.basis === "buzzer" ? "in the final" : `of ${s.of}`}.{winnerLine}
+        You finished {ordinal(s.place)} {s.basis === "blackout" ? "in Blackout" : `of ${s.of}`}.{winnerLine}
       </Moment>
     );
   if (s.calledIt)
@@ -91,7 +91,7 @@ export function SimpleScreen({ view, screen: s }: { view: ParticipantView; scree
         <Moment me={me} mood="idle" big="ROUND 1">
           {s.settings.round1Questions} questions. Read each one on the projector, then answer here.
           <br />
-          The top {s.settings.finalistCount} go to the buzzer round.
+          The top {s.settings.safeCount} are safe for Blackout; everyone else gets a wild card shot.
         </Moment>
       );
     case "nextQuestion":
@@ -125,11 +125,11 @@ export function SimpleScreen({ view, screen: s }: { view: ParticipantView; scree
     case "result":
       return s.outcome === "correct" ? (
         <Moment me={me} mood="right" big="CORRECT" testId="result-correct">
-          Your bot survives. For now.
+          {s.tally ? `${s.tally.right} of ${s.tally.asked} right.` : "Your bot survives. For now."}
         </Moment>
       ) : (
         <Moment me={me} mood="wrong" big={s.outcome === "missed" ? "MISSED" : "WRONG"} bad testId="result-wrong">
-          It was {s.correctText}.
+          It was {s.correctText}.{s.tally ? ` ${s.tally.right} of ${s.tally.asked} right.` : ""}
         </Moment>
       );
     case "voided":
@@ -139,25 +139,20 @@ export function SimpleScreen({ view, screen: s }: { view: ParticipantView; scree
         </Moment>
       );
     case "cut":
-      return s.madeIt ? (
-        <Moment me={me} mood="right" big={`TOP ${s.finalistCount}`} testId="cut-in">
-          You finished <b className="font-term text-[1.6em] font-normal text-amber">{ordinal(s.rank)}</b> of {s.of}. You&apos;re in the buzzer round!
+      return s.outcome === "safe" ? (
+        <Moment me={me} mood="right" big="SAFE" testId="cut-in">
+          You finished <b className="font-term text-[1.6em] font-normal text-amber">{ordinal(s.rank)}</b> of {s.of}. You&apos;re through to Blackout!
         </Moment>
       ) : (
-        <Moment me={me} mood="out" big="POWERED DOWN" bad testId="cut-out">
-          You finished <b className="font-term text-[1.6em] font-normal text-amber">{ordinal(s.rank)}</b> of {s.of}. Stay on: you&apos;ll back a finalist next.
+        <Moment me={me} mood="idle" big="WILD CARD" testId="cut-out">
+          You finished <b className="font-term text-[1.6em] font-normal text-amber">{ordinal(s.rank)}</b> of {s.of}. You&apos;re in the wild card round: one
+          seat left.
         </Moment>
       );
     case "audience":
       return (
         <Moment me={me} mood="idle" big="WATCHING">
           You&apos;re in the audience. You&apos;ll back a finalist soon.
-        </Moment>
-      );
-    case "finalist":
-      return (
-        <Moment me={me} mood="right" big="FINALIST">
-          Seat {s.seat} of {s.finalistCount}. Get ready to buzz.
         </Moment>
       );
     case "removed":

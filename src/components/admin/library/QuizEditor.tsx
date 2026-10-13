@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Edits one quiz: title, the Round 1 list, the buzzer list, and its settings.
+ * Edits one quiz: title, the Round 1, Wild card and Blackout lists, and its settings.
  * Saves by itself 1.5 s after the last change (and when you go back). A room
  * that's already open keeps its own frozen copy, so editing never changes a game
  * in progress. Design extension in the Admin look.
@@ -21,7 +21,7 @@ type Tab = ListName | "settings";
 type Sub = { kind: "list" } | { kind: "question"; list: ListName; index: number | null } | { kind: "import"; list: ListName };
 
 const SAVE_AFTER_MS = 1500;
-const LIST_LABEL: Record<ListName, string> = { round1: "Round 1", buzzer: "Buzzer round" };
+const LIST_LABEL: Record<ListName, string> = { round1: "Round 1", wildcard: "Wild card", blackout: "Blackout" };
 
 export function QuizEditor({ id, onClose }: { id: string; onClose: () => void }) {
   const getQuiz = useAdminStore((s) => s.getQuiz);
@@ -94,7 +94,7 @@ export function QuizEditor({ id, onClose }: { id: string; onClose: () => void })
       <QuestionForm
         listLabel={LIST_LABEL[sub.list]}
         number={sub.index === null ? list.length + 1 : sub.index + 1}
-        isBuzzer={sub.list === "buzzer"}
+        list={sub.list}
         rules={quiz.rules}
         initial={sub.index === null ? null : list[sub.index]}
         onCancel={() => setSub({ kind: "list" })}
@@ -128,7 +128,8 @@ export function QuizEditor({ id, onClose }: { id: string; onClose: () => void })
           update((prev) => ({
             ...prev,
             round1: [...prev.round1, ...found.round1].slice(0, QUIZ_LIMITS.questionsPerList),
-            buzzer: [...prev.buzzer, ...found.buzzer].slice(0, QUIZ_LIMITS.questionsPerList),
+            wildcard: [...prev.wildcard, ...found.wildcard].slice(0, QUIZ_LIMITS.questionsPerList),
+            blackout: [...prev.blackout, ...found.blackout].slice(0, QUIZ_LIMITS.questionsPerList),
           }));
           setSub({ kind: "list" });
         }}
@@ -160,7 +161,8 @@ export function QuizEditor({ id, onClose }: { id: string; onClose: () => void })
           {(
             [
               ["round1", "Round 1", quiz.round1.length],
-              ["buzzer", "Buzzer", quiz.buzzer.length],
+              ["wildcard", "Wild card", quiz.wildcard.length],
+              ["blackout", "Blackout", quiz.blackout.length],
               ["settings", "Settings", null],
             ] as const
           ).map(([key, label, count]) => (
@@ -262,7 +264,7 @@ function QuestionList({
   onDelete: (index: number) => void;
 }) {
   const items = quiz[list];
-  const played = list === "round1" ? quiz.rules.round1Questions : quiz.rules.buzzerQuestions;
+  const played = list === "round1" ? quiz.rules.round1Questions : list === "wildcard" ? quiz.rules.wildCardQuestions : quiz.rules.blackoutQuestions;
   const { armed, guard } = useConfirm();
 
   return (

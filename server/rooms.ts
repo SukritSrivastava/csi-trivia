@@ -160,7 +160,7 @@ export class RoomManager {
     entry.room.quizTitle = quiz.title;
     this.rooms.set(code, entry);
     this.attachAdmin(socket, entry);
-    this.log(`[room ${code}] opened with "${quiz.title}" (${quiz.round1.length} + ${quiz.buzzer.length} questions)`);
+    this.log(`[room ${code}] opened with "${quiz.title}" (${quiz.round1.length} + ${quiz.wildcard.length} + ${quiz.blackout.length} questions)`);
     return code;
   }
 

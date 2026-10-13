@@ -39,9 +39,8 @@ when its room is closed.
 |---|---|---|
 | `participant:join { roomCode, name, participantId? }` | the JOIN button; after every reconnect or refresh with the saved `participantId` | Errors: `room-not-found`, `name-taken`, `name-invalid`, `quiz-ended`, `removed`, `room-full`. Typing the same name again also rejoins if that person's phone is disconnected. |
 | `participant:bot { color, head }` | lobby only, each change in "Build your bot" | Any `#rrggbb` (stored as `normalizeBotColor`, so very dark colours are brightened) and any of `BOT_HEADS`. Several people may share a bot; only names are unique. Errors: `invalid`, `too-late` (quiz started). |
-| `participant:answer { questionId, optionId }` | first tap in the Round 1 answer step | First tap wins; later ones and stale `questionId`s are ignored. No ack: the phone shows the tap at once and the next view confirms it. |
-| `participant:buzz { questionId }` | BUZZ in the buzzer round | Only counts while buzzers are open, for a finalist in play who isn't locked out. First buzz wins the turn. |
-| `participant:back { finalistId }` | audience, predictions step | Can change until the buzzer round starts. |
+| `participant:answer { questionId, optionId }` | first tap in any round's answer step | First tap wins; later ones and stale `questionId`s are ignored, and so are answers from anyone who can't answer this question (a safe finalist in the wild card round, a caught runner, the audience). No ack: the phone shows the tap at once and the next view confirms it. |
+| `participant:back { finalistId }` | audience, predictions step | Can change until Start Blackout. |
 | `participant:visibility { hidden }` | the phone's page was hidden or shown | Shown to Admin only (`pageHidden`, `leftPageCount`). |
 
 ### Admin
@@ -59,7 +58,7 @@ when its room is closed.
 `AdminView.stepId` changes every time the step changes. Admin sends back the `stepId` of the view
 its button was drawn from. If the step has moved on, the server does nothing and replies
 `stale-step`. That's what makes a double tap, or two Admin devices pressing Next together, move
-exactly one step, and stops one answer being marked twice. Exceptions (they do the same thing
+exactly one step, and never moves the dark twice (`advanceDarkness`) or reveals the wild card twice. Exceptions (they do the same thing
 however often they arrive): `STEP_INDEPENDENT_ACTIONS` = pause, resume, removeParticipant,
 setRoomCodeVisible, setSound, endQuiz.
 
@@ -71,42 +70,49 @@ accept now, and `hint` is the line under the button. The Admin UI only renders t
 1. **No answer leaks.** Neither a `ParticipantView` nor the `HostView` may contain the correct
    answer (or anything that gives it away) before the reveal. Only `AdminView` has it. Option ids
    are opaque random strings, new for each question run; question ids too.
-2. **One order per question.** The 4 options are shuffled once per question run. In Round 1 the
-   Host (from the answer step) and every phone show that same order, numbered 1–4. In the buzzer
-   round the Host shows A–D in that order.
+2. **One order per question.** The 4 options are shuffled once per question run. In every round
+   the Host (from the answer step) and every phone show that same order, numbered 1–4.
 3. **Server-side timing.** Every timer runs on the server. Answer speed is measured on the server
    when the answer arrives, never taken from a phone. Views carry `serverNow` so phones with wrong
    clocks still count down correctly (`Timer.endsAt`, `remainingMs` while paused).
-4. **The quizmaster drives.** Timers run only in the Round 1 read and answer steps and the buzzer
-   read, buzz-window and spoken-answer countdown. When one ends the room holds and waits for a
-   click. The Round 1 answer step ends early when every connected player has answered. The
-   spoken-answer countdown never marks anything by itself.
-5. **Lockouts.** A finalist marked wrong is locked out for the rest of that question; buzzers reopen
-   for the others (`reopenSeconds`). If nobody in play is left, the question goes to the reveal.
-   In sudden death only the tied finalists are in play.
-6. **Undo.** `undoMark` reverts the last Correct/Wrong on the current question: the point, the
-   lockout and the winner, and goes back to judging the same buzz (`canUndo`, `lastMark`).
-   `voidQuestion` cancels a question with no points either way; `restartQuestion` replays it from
-   its read step with new ids; `restartRound` puts the round's scores back to 0.
-7. **Reconnects.** A participant who drops keeps their seat, score and bot. They rejoin with the
+4. **The quizmaster drives; the server marks.** Timers run only in the read and answer steps
+   (Round 1 and wild card 8 s + 8 s, Blackout 5 s + 8 s). When one ends the room holds and waits
+   for a click. An answer step ends early when everyone connected who can answer has answered.
+   Nothing is judged by hand: Round 1 points, wild card tallies and Blackout moves are all computed
+   from the taps (docs/SPEC.md v3).
+5. **The wild card.** Only `wildcard` players answer. Most right after the planned questions wins;
+   tie → lower total time (wrong / miss = the full time); exact tie → sudden death among only the
+   tied (all wrong → all stay), at most 3, then total time, then Round 1 rank; nobody right → the
+   best Round 1 rank outside the safe seats. Tallies apply at Reveal answer.
+6. **Blackout.** Runners start at `baseGap` + head start (ranks 1–3 +2, 4–9 +1, wild card 0). At
+   Reveal answer: right +3/+2/+1 by third of the answer time, wrong −1 (not below 0), none 0;
+   nobody is caught. At Advance the darkness: the dark moves `darkness[q]`; position ≤ dark → caught.
+   Catch order: later catch ranks higher; same question → further ahead before the dark, lower
+   total time, better Round 1 rank. Over when one (or none) is left, after the last planned question
+   (furthest ahead wins), or when the questions run out. Show winner is always a click.
+7. **Fixing mistakes.** `voidQuestion`: the question doesn't count (Round 1 dropped; wild card and
+   Blackout: the next question takes its number, no moves, the dark stays). `restartQuestion`:
+   undoes everything the question did (points, tallies, moves, the dark, catches) and replays it with
+   new ids. `restartRound` resets the round. The server keeps a snapshot per question for this.
+8. **Reconnects.** A participant who drops keeps their seat, score and bot. They rejoin with the
    saved `participantId` (or by typing the same name while the old socket is gone) and get the
    current view straight away. A Host or Admin that reconnects re-authenticates and gets the
    current view. Rooms live in memory: if the server restarts, every room is gone, `bootId`
    changes, and the screens say "The quiz server restarted, so the quiz has to start again."
-8. **Bots.** On join the server assigns a bot (colour + head). Phones change it with
+9. **Bots.** On join the server assigns a bot (colour + head). Phones change it with
    `participant:bot` in the lobby only. Bots may be shared; names must be unique in a room
    (case-insensitive), so the second "Rahul" is told to add a surname initial.
-9. **Moods come from the server.** `HostView.cast[i].mood` says what every bot's eyes are doing.
+10. **Moods come from the server.** `HostView.cast[i].mood` says what every bot's eyes are doing.
    Screens never work it out. `server/quiz.ts` `botMood()`:
-   - lobby, Round 1 intro, read steps: `idle`
-   - Round 1 answer step: `locked` if answered, else `thinking`; time's up: `locked` or `idle`
-   - after the reveal: `right` or `wrong` (a miss is `wrong`); voided question: `idle`
-   - from the cut on: everyone outside the final is `out`
-   - buzzer round: `thinking` while buzzers are open, `locked` for whoever buzzed, `wrong` once
-     locked out, `right` for a correct answer; not in play (sudden death): `idle`
-   - podium: the winner `right`, the other finalists `idle`, the rest `out`
+   - lobby, intros, read steps: `idle`
+   - answer step: `locked` if answered, else `thinking`; time's up: `locked` or `idle`
+   - after the reveal: `right` or `wrong` (Round 1 and wild card: a miss is `wrong`; Blackout: no
+     answer is `idle`); voided question: `idle`
+   - the cut: safe `right`, wild card players `idle`; wild card revealed: the winner `right`, the rest `out`
+   - Blackout, after the dark moves: caught runners `out`, survivors `idle`
+   - podium: the winner `right`, the others `idle`
    - removed: `out`. `locked` never says whether the answer was right, so the cast can't leak it.
-10. **Only send what changed.** With 100 phones, views are cached per step and sent only to sockets
+11. **Only send what changed.** With 100 phones, views are cached per step and sent only to sockets
     whose view actually changed (`simulate` times this: about 0.5 ms for a full refresh of 100 phones).
 
 ## Checking your work

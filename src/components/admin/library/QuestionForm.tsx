@@ -10,7 +10,7 @@ import { useRef, useState } from "react";
 import { shrinkImage } from "@/lib/image";
 import { assetUrl } from "@/lib/socket";
 import { type LibraryQuestion, QUIZ_LIMITS, type QuizRules } from "@/shared/protocol";
-import { blankQuestion, questionProblems } from "@/shared/quiz";
+import { blankQuestion, type ListName, questionProblems } from "@/shared/quiz";
 import { useAdminStore } from "@/stores/adminStore";
 import { ControlButton, Panel, useConfirm } from "../parts";
 
@@ -19,7 +19,7 @@ const field = "w-full rounded-[0.9rem] border-2 border-line bg-void px-3 py-2.5 
 export function QuestionForm({
   listLabel,
   number,
-  isBuzzer,
+  list,
   rules,
   initial,
   onSave,
@@ -28,7 +28,7 @@ export function QuestionForm({
 }: {
   listLabel: string;
   number: number;
-  isBuzzer: boolean;
+  list: ListName;
   rules: QuizRules;
   initial: LibraryQuestion | null;
   onSave: (q: LibraryQuestion) => void;
@@ -43,9 +43,11 @@ export function QuestionForm({
   const fileInput = useRef<HTMLInputElement>(null);
   const { armed, guard } = useConfirm();
   const problems = questionProblems(q, "This question").map((p) => p.replace(/^This question: /, ""));
-  const defaults = isBuzzer
-    ? { read: rules.buzzerReadSeconds, open: rules.buzzWindowSeconds, openLabel: "Buzz window" }
-    : { read: rules.round1ReadSeconds, open: rules.round1AnswerSeconds, openLabel: "Answer time" };
+  // The wild card round uses Round 1's timings.
+  const defaults =
+    list === "blackout"
+      ? { read: rules.blackoutReadSeconds, open: rules.blackoutAnswerSeconds, openLabel: "Answer time" }
+      : { read: rules.round1ReadSeconds, open: rules.round1AnswerSeconds, openLabel: "Answer time" };
 
   const setOption = (i: number, text: string) =>
     setQ((prev) => {

@@ -131,7 +131,7 @@ async function main() {
     const t1 = Date.now();
     for (const p of [riya, kabir, zoya]) await p.page.getByTestId("screen-lobby").waitFor({ timeout: 20_000 });
     check(true, `Slow 4G: joined ${((Date.now() - t1) / 1000).toFixed(1)} s after tapping JOIN`);
-    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --buzz 0 --url ${GAME}`, { shell: true, stdio: "ignore" });
+    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --url ${GAME}`, { shell: true, stdio: "ignore" });
     await until("everyone joined", (v) => v.counts.joined >= 3 + BOTS, 60_000);
 
     // ---- Two phones race for the same colour and head: both get it (bots may be shared).
@@ -149,14 +149,20 @@ async function main() {
 
     // ---- Two Admin devices press the big button at the same moment: exactly one step.
     const before = admin!.stepId;
-    await Promise.all([adminPhone.page.getByTestId("primary").click(), adminLaptop.page.getByTestId("primary").click()]);
-    await phase("r1Intro");
+    // Both taps land before either screen redraws (a Playwright click waits for the
+    // button to be ready, so the second one could hit the *next* step's button).
+    await Promise.all([adminPhone.page.getByTestId("primary").dispatchEvent("click"), adminLaptop.page.getByTestId("primary").dispatchEvent("click")]);
+    await until("one step", (v) => v.stepId > before, 5000);
+    await sleep(700);
+    check(admin!.phase === "r1Intro", `two simultaneous Start taps stopped at the intro (phase ${admin!.phase})`);
     await sleep(700);
     check(admin!.stepId === before + 1, "two Admin devices pressing Start at once: one step, the other is ignored");
 
     // ---- Question 1: refresh a phone, cut Wi-Fi for 10 s, reload Host and Admin, all mid-question.
     await send({ type: "showQuestion" });
     await phase("r1Read");
+    // Paused while three screens reload (under `next dev` a reload can take ~6 s; the read is only 8 s).
+    await send({ type: "pause" });
     await kabir.ctx.setOffline(true);
     const cutAt = Date.now();
     let t = Date.now();
@@ -170,6 +176,7 @@ async function main() {
     await adminPhone.page.reload();
     await adminPhone.page.getByTestId("step-label").waitFor({ timeout: 15_000 });
     check(true, "Admin reload mid-question: back on the same step, still signed in");
+    await send({ type: "resume" });
     await phase("r1Answer");
     await riya.page.getByTestId("screen-answer").waitFor({ timeout: 10_000 });
     const correct = admin!.question!.correctText;

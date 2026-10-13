@@ -1,18 +1,19 @@
 "use client";
 
 import { Bot, botDelay } from "@/components/ui/Bot";
-import { useCountdown } from "@/lib/useCountdown";
-import type { AdminAction, AdminView, BotMood, FinalistState } from "@/shared/protocol";
-import { ControlButton, Panel } from "./parts";
+import type { AdminAction, AdminView } from "@/shared/protocol";
+import { Panel } from "./parts";
 
 /** Sends a command from the step these panels were drawn from. */
 export type Send = (action: AdminAction) => void;
+
+const ROUND_NAME = { 1: "Round 1", 2: "Wild card", 3: "Blackout" } as const;
 
 // ---------------------------------------------------------------------------
 // Current question, with the answer
 // ---------------------------------------------------------------------------
 
-/** The question as the room sees it, numbered exactly like the Host (1–4 in Round 1, A–D in the buzzer round), the correct one lit. */
+/** The question as the room sees it, numbered 1–4 exactly like the Host, the correct one lit. */
 export function QuestionCard({ view }: { view: AdminView }) {
   const q = view.question;
   const next = view.nextQuestion;
@@ -23,9 +24,9 @@ export function QuestionCard({ view }: { view: AdminView }) {
       {q ? (
         <>
           <p className="text-[14px] text-mint-soft">
-            {q.suddenDeath ? "Sudden death, question " : q.round === 1 ? "Round 1, question " : "Buzzer round, question "}
+            {q.suddenDeath ? "Wild card sudden death, question " : `${ROUND_NAME[q.round]}, question `}
             <span className="font-term text-xl leading-none text-amber">{q.number}</span>
-            {q.count > 0 && (
+            {!q.suddenDeath && q.count > 0 && (
               <>
                 {" of "}
                 <span className="font-term text-xl leading-none text-amber">{q.count}</span>
@@ -35,16 +36,16 @@ export function QuestionCard({ view }: { view: AdminView }) {
           </p>
           <p className="mt-2 text-xl leading-snug text-bright">{q.text}</p>
           <ol className="mt-3 flex flex-col gap-2">
-            {q.options.map((o, i) => (
+            {q.options.map((o) => (
               <li
-                key={o.letter}
+                key={o.number}
                 className={`flex items-center gap-3 rounded-[0.9rem] border-2 px-3 py-2 ${
                   o.correct ? "border-mint bg-mint/[0.12] text-bright" : "border-line text-mint-soft"
                 }`}
                 data-correct={o.correct || undefined}
               >
                 <span className={`w-6 shrink-0 text-center font-term text-[2rem] leading-none ${o.correct ? "text-mint [text-shadow:0_0_8px_var(--color-mint)]" : "text-amber"}`}>
-                  {q.round === 1 ? i + 1 : o.letter}
+                  {o.number}
                 </span>
                 <span className="min-w-0 flex-1 text-[16px] leading-snug">{o.text}</span>
                 {o.correct && <span className="shrink-0 font-term text-xl leading-none text-mint">ANSWER</span>}
@@ -58,7 +59,7 @@ export function QuestionCard({ view }: { view: AdminView }) {
       {next && (
         <p className="mt-3 border-t border-line pt-3 text-[14px] leading-snug text-fog" data-testid="next-question">
           <span className="text-mint-soft">Next up · </span>
-          {next.suddenDeath ? "sudden death " : next.round === 1 ? "round 1 " : "buzzer "}
+          {next.suddenDeath ? "sudden death " : `${ROUND_NAME[next.round].toLowerCase()} `}
           <span className="font-term text-lg leading-none text-amber">#{next.number}</span>
           {": "}
           <span className="text-mint-soft">{next.text}</span>
@@ -86,8 +87,6 @@ function Count({ n, of, label, testId }: { n: number; of?: number | null; label:
 
 export function Counts({ view }: { view: AdminView }) {
   const c = view.counts;
-  const r2 = view.round2;
-  const buzzed = r2 ? r2.wrong.length + (r2.buzzedBy ? 1 : 0) : null;
   return (
     <Panel>
       <div className="grid grid-cols-3 gap-3">
@@ -95,10 +94,12 @@ export function Counts({ view }: { view: AdminView }) {
         <Count n={c.connected} label="online" />
         {c.expected != null ? (
           <Count n={c.answered ?? 0} of={c.expected} label="answered" testId="count-answered" />
-        ) : buzzed != null ? (
-          <Count n={buzzed} label="buzzed" testId="count-buzzed" />
-        ) : view.backing ? (
+        ) : view.blackout ? (
+          <Count n={view.blackout.alive} of={view.blackout.runners.length} label="still running" testId="count-running" />
+        ) : view.backing && view.phase === "predictions" ? (
           <Count n={view.backing.backers} of={view.backing.audience} label="backing" />
+        ) : view.wildCard && !view.wildCard.winner ? (
+          <Count n={view.wildCard.players} label="in the wild card" />
         ) : (
           <Count n={c.playing} label="playing" />
         )}
@@ -108,14 +109,75 @@ export function Counts({ view }: { view: AdminView }) {
 }
 
 // ---------------------------------------------------------------------------
-// Round 2: the finalists, the judge
+// The wild card round
 // ---------------------------------------------------------------------------
 
-function finalistMood(f: FinalistState, view: AdminView): BotMood {
-  if (!f.inPlay) return "out";
-  if (f.lockedOut) return "wrong";
-  if (view.round2?.buzzedBy?.id === f.id) return "locked";
-  return "idle";
+/** Live standings (Admin sees them all, always), sudden death, the winner. */
+export function WildCardPanel({ view }: { view: AdminView }) {
+  const w = view.wildCard;
+  const inRound = view.phase.startsWith("wc");
+  if (!w || !inRound) return null;
+  return (
+    <Panel title="Wild card" testId="wild-card">
+      {w.suddenDeath && (
+        <p className="mb-2 text-[15px] text-amber">
+          Sudden death {w.suddenDeath.number} of {w.suddenDeath.max}: {w.suddenDeath.alive.map((t) => t.name).join(", ")}
+        </p>
+      )}
+      {w.winner && (
+        <p className="mb-2 text-[15px] text-mint">
+          Winner: {w.winner.name}
+          {w.fallback ? " (nobody got one right: the next best from Round 1)" : ""}
+        </p>
+      )}
+      <ol className="flex flex-col divide-y divide-line">
+        {w.standings.slice(0, 12).map((s) => (
+          <li key={s.id} className="flex items-center gap-3 py-1.5">
+            <span className="w-7 font-term text-xl leading-none text-amber">{s.rank}</span>
+            <Bot color={s.color} head={s.head} size="26px" delay={botDelay(s.id)} />
+            <span className="min-w-0 flex-1 truncate text-[15px] text-ghost">{s.name}</span>
+            <span className="font-term text-xl leading-none text-ghost">{s.correct} right</span>
+            <span className="w-14 text-right font-sans text-[13px] text-fog tabular-nums">{(s.timeMs / 1000).toFixed(1)}s</span>
+          </li>
+        ))}
+      </ol>
+      {w.standings.length > 12 && <p className="mt-1 text-[13px] text-fog">and {w.standings.length - 12} more</p>}
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Blackout
+// ---------------------------------------------------------------------------
+
+/** Every runner: position, distance from the dark, the last move, caught or not. */
+export function BlackoutPanel({ view }: { view: AdminView }) {
+  const bo = view.blackout;
+  if (!bo || view.podium) return null;
+  const revealed = view.phase === "boReveal" || view.phase === "boDark";
+  return (
+    <Panel title={`Blackout · the dark at step ${bo.dark}`} testId="blackout">
+      <ol className="flex flex-col divide-y divide-line">
+        {[...bo.runners]
+          .sort((a, b) => Number(b.alive) - Number(a.alive) || b.position - a.position || (a.place ?? 99) - (b.place ?? 99))
+          .map((r) => (
+            <li key={r.id} className={`flex items-center gap-3 py-1.5 ${r.alive ? "" : "opacity-50"}`} data-testid="runner-row">
+              <Bot color={r.color} head={r.head} mood={r.mood} size="26px" delay={botDelay(r.id)} />
+              <span className="min-w-0 flex-1 truncate text-[15px] text-ghost">
+                {r.name}
+                {r.wildCard && <span className="ml-1 text-[12px] text-fog">wild card</span>}
+              </span>
+              <span className="font-sans text-[13px] text-fog tabular-nums">step {r.position}</span>
+              <span className={`w-10 text-right font-term text-xl leading-none ${r.delta && r.delta > 0 ? "text-mint" : r.delta && r.delta < 0 ? "text-wrong" : "text-fog"}`}>
+                {revealed && r.alive && r.delta !== null ? (r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? "−1" : "0") : ""}
+              </span>
+              <span className="w-16 text-right font-term text-xl leading-none text-amber">{r.alive ? `+${r.gap}` : r.place ? `#${r.place}` : "out"}</span>
+            </li>
+          ))}
+      </ol>
+      {bo.over && bo.winner && <p className="mt-2 text-[15px] text-mint">Over: {bo.winner.name} escapes.</p>}
+    </Panel>
+  );
 }
 
 /** The podium as the Host shows it, so the quizmaster can announce it. */
@@ -123,6 +185,8 @@ export function Podium({ view }: { view: AdminView }) {
   const podium = view.podium;
   if (!podium) return null;
   const [winner, ...rest] = podium.entries;
+  const detail = (e: (typeof podium.entries)[number]) =>
+    podium.basis === "blackout" && e.position !== null ? (e.caughtOnQuestion ? `caught Q${e.caughtOnQuestion}` : `step ${e.position}`) : `${e.round1Score} pts`;
   return (
     <Panel title="Final result" testId="podium">
       {winner ? (
@@ -133,9 +197,7 @@ export function Podium({ view }: { view: AdminView }) {
             <p className="truncate text-[1.75rem] leading-tight" style={{ color: winner.color }}>
               {winner.name}
             </p>
-            <p className="text-[14px] text-fog">
-              <span className="font-term text-xl leading-none text-amber">{winner.points}</span> {podium.basis === "buzzer" ? (winner.points === 1 ? "buzzer point" : "buzzer points") : "points in round 1"}
-            </p>
+            <p className="text-[14px] text-fog">{podium.basis === "blackout" ? "escaped the dark" : detail(winner)}</p>
           </div>
         </div>
       ) : (
@@ -143,137 +205,44 @@ export function Podium({ view }: { view: AdminView }) {
       )}
       {rest.length > 0 && (
         <ol className="mt-3 flex flex-col divide-y divide-line border-t border-line">
-          {rest.slice(0, 9).map((e) => (
+          {rest.slice(0, 11).map((e) => (
             <li key={e.id} className="flex items-center gap-3 py-2">
               <span className="w-7 font-term text-2xl leading-none text-amber">{e.place}</span>
               <Bot color={e.color} head={e.head} size="28px" delay={botDelay(e.id)} />
               <span className="min-w-0 flex-1 truncate text-[16px] text-ghost">{e.name}</span>
-              <span className="font-term text-2xl leading-none text-ghost">{e.points}</span>
+              <span className="font-sans text-[13px] text-fog">{detail(e)}</span>
             </li>
           ))}
         </ol>
       )}
-      {podium.basis === "buzzer" && (
+      {podium.basis === "blackout" && view.backing && (
         <p className="mt-3 text-[15px] text-mint-soft">
           <span className="font-term text-2xl leading-none text-amber">{podium.calledIt}</span> of{" "}
-          <span className="font-term text-2xl leading-none text-amber">{view.backing?.audience ?? 0}</span> audience called it.
+          <span className="font-term text-2xl leading-none text-amber">{view.backing.backers}</span> backers called it.
         </p>
       )}
     </Panel>
   );
 }
 
-/** The finalists as bots with live points; locked-out ones show "wrong". */
+/** The finalists (after the cut, before Blackout starts): seat, Round 1 rank, backing. */
 export function Finalists({ view }: { view: AdminView }) {
-  if (!view.finalists.length || view.podium) return null;
+  if (!view.finalists.length || view.podium || view.blackout || view.phase.startsWith("wc")) return null;
   const backing = view.backing;
   return (
     <Panel title="Finalists" testId="finalists">
-      <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-6">
+      <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-5">
         {view.finalists.map((f) => (
-          <li key={f.id} className={`flex min-w-0 flex-col items-center gap-1 text-center ${f.inPlay ? "" : "opacity-45"}`}>
-            <Bot color={f.color} head={f.head} mood={finalistMood(f, view)} size="40px" delay={botDelay(f.id)} />
+          <li key={f.id} className="flex min-w-0 flex-col items-center gap-1 text-center">
+            <Bot color={f.color} head={f.head} size="40px" delay={botDelay(f.id)} />
             <span className="w-full truncate text-[14px] text-ghost">{f.name}</span>
-            <span className="font-term text-[1.75rem] leading-none text-amber">{f.points}</span>
             <span className="text-[13px] leading-none text-fog">
-              {f.lockedOut ? <span className="text-wrong">locked out</span> : !f.connected ? <span className="text-wrong">offline</span> : backing ? `${backing.counts[f.id] ?? 0} backing` : " "}
+              {!f.connected ? <span className="text-wrong">offline</span> : f.wildCard ? "wild card" : `#${f.round1Rank}`}
+              {backing && view.phase === "predictions" ? ` · ${backing.counts[f.id] ?? 0} backing` : ""}
             </span>
           </li>
         ))}
       </ul>
     </Panel>
-  );
-}
-
-/** Takes over the middle when a finalist buzzes: who, the answer, their countdown, Correct / Wrong. */
-export function JudgePanel({ view, clockOffset, send, pending }: { view: AdminView; clockOffset: number; send: Send; pending: boolean }) {
-  const r2 = view.round2;
-  const by = r2?.buzzedBy;
-  const countdown = useCountdown(view.timer, clockOffset);
-  if (!r2 || !by || view.phase !== "r2Answering") return null;
-  const q = view.question;
-
-  return (
-    <section className="rounded-xl border-2 border-mint bg-panel p-4 shadow-[0_0_24px_rgb(108_240_176/0.18)]" data-testid="judge">
-      <div className="flex items-center gap-4">
-        <Bot color={by.color} head={by.head} mood="locked" size="72px" delay={botDelay(by.id)} />
-        <div className="min-w-0 flex-1">
-          <p className="text-[14px] text-mint-soft">Answering out loud</p>
-          <p className="truncate text-[1.75rem] leading-tight" style={{ color: by.color }}>
-            {by.name}
-          </p>
-        </div>
-        <div className="text-right">
-          <span className={`font-term text-[3rem] leading-none tabular-nums ${r2.answerTimeUp || (countdown?.seconds ?? 0) <= 3 ? "text-wrong" : "text-ghost"}`}>
-            {r2.answerTimeUp ? "0" : (countdown?.seconds ?? "")}
-          </span>
-          {r2.answerTimeUp && <p className="text-[13px] text-wrong">time&apos;s up</p>}
-        </div>
-      </div>
-
-      {q && (
-        <p className="mt-3 flex items-center gap-3 rounded-[0.9rem] border-2 border-mint bg-mint/[0.12] px-3 py-2 text-bright">
-          <span className="font-term text-[2rem] leading-none text-mint">{q.correctLetter}</span>
-          <span className="text-[17px] leading-snug">{q.correctText}</span>
-        </p>
-      )}
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <button
-          type="button"
-          className="min-h-20 rounded-[0.9rem] border-2 border-mint bg-mint font-term text-[2.4rem] leading-none text-void transition-transform active:scale-[0.98] disabled:opacity-40"
-          onClick={() => send({ type: "markCorrect" })}
-          disabled={pending || !view.allowed.includes("markCorrect")}
-          data-testid="judge-correct"
-        >
-          CORRECT
-        </button>
-        <button
-          type="button"
-          className="min-h-20 rounded-[0.9rem] border-2 border-wrong bg-wrong/[0.07] font-term text-[2.4rem] leading-none text-wrong transition-[transform,background-color,color] active:scale-[0.98] active:bg-wrong active:text-void disabled:opacity-40"
-          onClick={() => send({ type: "markWrong" })}
-          disabled={pending || !view.allowed.includes("markWrong")}
-          data-testid="judge-wrong"
-        >
-          WRONG
-        </button>
-      </div>
-    </section>
-  );
-}
-
-/** "Undo Wrong for Riya": visible until the next step. */
-export function UndoMark({ view, send, pending }: { view: AdminView; send: Send; pending: boolean }) {
-  if (!view.canUndo || !view.lastMark || !view.allowed.includes("undoMark")) return null;
-  return (
-    <ControlButton onClick={() => send({ type: "undoMark" })} disabled={pending} testId="undo" className="w-full">
-      Undo {view.lastMark.correct ? "Correct" : "Wrong"} for {view.lastMark.by.name}
-    </ControlButton>
-  );
-}
-
-/** Between buzzer steps: who buzzed and how it went, so the quizmaster can narrate. */
-export function BuzzSummary({ view }: { view: AdminView }) {
-  const r2 = view.round2;
-  if (!r2 || view.phase === "r2Answering") return null;
-  const o = r2.outcome;
-  let line: string | null = null;
-  if (view.phase === "r2Reveal" && o) {
-    line =
-      o.kind === "correct"
-        ? `${o.by.name} got it. +1 point.`
-        : o.kind === "voided"
-          ? "Question cancelled."
-          : o.reason === "allWrong"
-            ? "Everyone in play was wrong. Nobody scores."
-            : "Nobody buzzed in time. Nobody scores.";
-  } else if (r2.wrong.length) {
-    line = `Wrong so far: ${r2.wrong.map((w) => w.name).join(", ")}.`;
-  }
-  if (!line) return null;
-  return (
-    <p className="rounded-[0.9rem] border border-line bg-panel px-4 py-3 text-[15px] text-mint-soft" data-testid="buzz-summary">
-      {line}
-    </p>
   );
 }

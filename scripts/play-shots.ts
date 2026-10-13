@@ -1,15 +1,17 @@
 /**
- * Plays a whole demo game against `npm run dev` with four real Participant tabs
- * (phones of different sizes) and screenshots every phone state. Admin is driven
- * over a socket. Also checks a refresh mid-question and mid-buzzer-round, a name
- * clash, a removal, and puts the app's phones next to the four reference phones
- * from public/finaldesign.html (compare.png).
+ * Plays a whole demo game against `npm run dev` with real Participant tabs
+ * (phones of different sizes) and screenshots every phone state: Round 1, the
+ * cut, the wild card round (a tab wins it), predictions, Blackout and the podium.
+ * Admin is driven over a socket. Also checks a refresh mid-question and
+ * mid-Blackout, a name clash, a removal, a late joiner, and puts the app's
+ * phones next to the four reference phones from public/finaldesign.html (compare.png).
  *
  *   $env:DATABASE_URL="off"; npm run dev          (another terminal)
  *   npm run play-shots [-- --bots 20 --out screenshots/play]
  *
- * Riya and Kabir always answer right (fast), Meera always wrong, Dev never
- * answers, so the cut has phones on both sides. Crowd bots never buzz.
+ * Round 1: Riya and Kabir always right (fast), Meera always wrong, Dev never
+ * answers, so the cut has phones on both sides. Wild card: Meera all right.
+ * Blackout: Riya and Kabir right, Meera wrong.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -74,6 +76,8 @@ async function main() {
     // Wait for the new step's view, so the next command carries the right stepId.
     await until("the next step", (v) => v.stepId !== step, 1500).catch(() => {});
   };
+  /** The big button's action right now (a function, so TypeScript doesn't narrow it across awaits). */
+  const primaryType = () => admin?.primary?.action.type;
 
   const pageErrors: string[] = [];
   const browser: Browser = await chromium.launch();
@@ -89,7 +93,7 @@ async function main() {
   const kabir = await makePhone("Kabir", 390, 844);
   const meera = await makePhone("Meera", 360, 640);
   const dev = await makePhone("Dev", 430, 932);
-  const phones = [riya, kabir, meera, dev];
+  const phones: Phone[] = [riya, kabir, meera, dev];
 
   const shot = async (state: string, which: Phone[] = phones, wait = 450) => {
     await sleep(wait);
@@ -124,7 +128,7 @@ async function main() {
     await joinAs(kabir, "Kabir");
     await joinAs(meera, "Meera");
     for (const p of phones) await screen(p, "lobby");
-    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --buzz 0 --url ${GAME}`, { shell: true, stdio: "ignore" });
+    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --url ${GAME}`, { shell: true, stdio: "ignore" });
     await until("everyone joined", (v) => v.counts.joined >= 4 + BOTS, 60_000);
     await shot("02-build-your-bot", phones, 900);
 
@@ -220,9 +224,9 @@ async function main() {
 
     await send({ type: "endRound1" });
     await phase("cut");
-    const finalists = admin!.finalists.map((f) => f.name);
-    check(finalists.includes("Riya") && finalists.includes("Kabir"), `Riya and Kabir made the top ${finalists.length}`);
-    check(!finalists.includes("Meera"), "Meera is out");
+    const safe = admin!.finalists.map((f) => f.name);
+    check(safe.includes("Riya") && safe.includes("Kabir"), `Riya and Kabir are safe (top ${safe.length})`);
+    check(!safe.includes("Meera"), "Meera is in the wild card round");
     await screen(riya, "cut");
     await riya.page.getByTestId("cut-in").waitFor();
     await meera.page.getByTestId("cut-out").waitFor();
@@ -233,62 +237,106 @@ async function main() {
     await screen(dev, "removed");
     await shot("16-removed", [dev]);
 
+    // Zoe arrives late: she watches as audience.
+    const zoe = await makePhone("Zoe", 375, 667);
+    await zoe.page.locator('input[name="name"]').fill("Zoe");
+    await zoe.page.getByTestId("join").click();
+    await screen(zoe, "audience");
+    check(true, "joining after the cut: audience");
+
+    // The wild card round: Meera answers right (and fast) every time.
+    await send({ type: "startWildCard" });
+    await screen(riya, "safeWatch");
+    await screen(meera, "wcStatus");
+    await shot("17-wildcard-intro", [riya, meera]);
+    let wq = 0;
+    while (wq === 0 || primaryType() === "nextQuestion" || primaryType() === "showStandings") {
+      if (primaryType() === "showStandings" && admin!.allowed.includes("revealWildCard")) break;
+      if (primaryType() === "showStandings") await send({ type: "showStandings" });
+      wq += 1;
+      await send({ type: wq === 1 ? "showQuestion" : "nextQuestion" });
+      await phase("wcAnswer");
+      await screen(meera, "answer");
+      if (wq === 1) await shot("18-wildcard-answer", [meera, riya], 300);
+      await meera.page.getByTestId("option").filter({ hasText: admin!.question!.correctText }).click();
+      await phase("wcTimesUp", 30_000);
+      await send({ type: "revealAnswer" });
+      await screen(meera, "result");
+      if (wq === 1) await shot("19-wildcard-result", [meera], 600);
+    }
+    check((await meera.page.locator("main").textContent())?.includes(`${wq} of ${wq} right`), `the wild card tally shows "${wq} of ${wq} right"`);
+    await send({ type: "showStandings" });
+    await send({ type: "revealWildCard" });
+    await screen(meera, "wcWinner");
+    const meeraWon = admin!.finalists.some((f) => f.name === "Meera");
+    check(meeraWon, "Meera won the wild card (all right, fastest)");
+    await shot("20-wildcard-winner", [meera], 900);
+
     await send({ type: "openPredictions" });
-    await screen(meera, "backFinalist");
-    await shot("17-back-a-finalist", [meera]);
-    await meera.page.getByTestId("back").filter({ hasText: "Riya" }).click();
-    await meera.page.getByTestId("back").filter({ hasText: "Riya" }).and(meera.page.locator('[aria-pressed="true"]')).waitFor();
-    await shot("18-backed", [meera, riya]);
+    await screen(zoe, "backFinalist");
+    await shot("21-back-a-finalist", [zoe]);
+    await zoe.page.getByTestId("back").filter({ hasText: "Riya" }).click();
+    await zoe.page.getByTestId("back").filter({ hasText: "Riya" }).and(zoe.page.locator('[aria-pressed="true"]')).waitFor();
+    await shot("22-backed", [zoe, riya]);
 
-    await send({ type: "startBuzzerRound" });
-    await screen(riya, "buzzer");
-    await screen(meera, "buzzerWatch");
-    await shot("19-buzzer-intro", [riya, meera]);
-    await send({ type: "showQuestion" });
-    await phase("r2Read");
-    await shot("20-buzzers-locked", [riya, meera], 300);
-    check(await riya.page.getByTestId("buzz").isDisabled(), "BUZZ is dim while the question is read");
-    await phase("r2BuzzOpen");
-    await riya.page.locator('[data-testid="buzz"][data-live="true"]').waitFor();
-    const buzzBox = await riya.page.getByTestId("buzz").boundingBox();
-    check(buzzBox && buzzBox.width >= 375 * 0.6, `BUZZ is ${Math.round(buzzBox?.width ?? 0)}px wide (60%+ of the screen)`);
-    await shot("21-buzzers-open", [riya, kabir, meera], 300);
-    await riya.page.getByTestId("buzz").click();
-    await phase("r2Answering");
-    await shot("22-buzzed", [riya, kabir, meera], 700);
-    check((await kabir.page.getByTestId("buzzer-line").textContent())?.includes("Riya buzzed"), "the other finalists see who buzzed");
-    await send({ type: "markWrong" });
-    await phase("r2BuzzOpen");
-    await shot("23-locked-out", [riya], 500);
-    check((await riya.page.getByTestId("buzzer-line").textContent())?.includes("Locked out"), "a wrong answer locks you out for the question");
-    await kabir.page.locator('[data-testid="buzz"][data-live="true"]').waitFor();
-    await kabir.page.getByTestId("buzz").click();
-    await phase("r2Answering");
-    await send({ type: "markCorrect" });
-    await phase("r2Reveal");
-    await send({ type: "undoMark" });
-    await phase("r2Answering");
-    check(true, "undo a mark goes back to judging");
-    await send({ type: "markCorrect" });
-    await phase("r2Reveal");
-    await shot("24-buzzer-reveal", [riya, kabir, meera], 900);
-
-    // Riya refreshes in the middle of the buzzer round.
-    const pointsBefore = await kabir.page.getByTestId("my-points").textContent();
-    await kabir.page.reload();
-    await screen(kabir, "buzzer");
-    check((await kabir.page.getByTestId("my-points").textContent()) === pointsBefore, `refresh mid-buzzer-round: same points (${pointsBefore})`);
-    await shot("25-refresh-buzzer-round", [kabir]);
-
-    await send({ type: "showScores" });
-    await send({ type: "endQuiz" });
+    // Blackout: Riya and Kabir right, Meera wrong (so she steps back and gets caught).
+    await send({ type: "startBlackout" });
+    await screen(riya, "runnerStatus");
+    await screen(zoe, "blackoutWatch");
+    await shot("23-blackout-ready", [riya, meera, zoe]);
+    let bq = 0;
+    let sawBack = false;
+    let caughtShot = false;
+    while (bq === 0 || primaryType() === "nextQuestion") {
+      bq += 1;
+      await send({ type: bq === 1 ? "showQuestion" : "nextQuestion" });
+      await phase("boRead");
+      if (bq === 1) await shot("24-blackout-eyes-up", [riya], 400);
+      await phase("boAnswer");
+      const alive = new Set(admin!.blackout!.runners.filter((r) => r.alive).map((r) => r.name));
+      const correctB = admin!.question!.correctText;
+      if (alive.has("Riya")) {
+        await screen(riya, "answer");
+        if (bq === 1) await shot("25-blackout-answer", [riya], 200);
+        await riya.page.getByTestId("option").filter({ hasText: correctB }).click();
+      }
+      if (alive.has("Kabir")) await kabir.page.getByTestId("option").filter({ hasText: correctB }).click();
+      if (alive.has("Meera")) await meera.page.getByTestId("option").filter({ hasNotText: correctB }).first().click();
+      await phase("boTimesUp", 30_000);
+      await send({ type: "revealAnswer" });
+      if (alive.has("Meera")) {
+        await screen(meera, "runnerResult");
+        const back = admin!.blackout!.runners.find((r) => r.name === "Meera")!.delta === -1;
+        if (back && !sawBack) {
+          sawBack = true;
+          await shot("26-blackout-wrong", [meera, riya], 600);
+        }
+      }
+      if (bq === 2) {
+        // Kabir refreshes in the middle of Blackout.
+        const before = admin!.blackout!.runners.find((r) => r.name === "Kabir")!.position;
+        await kabir.page.reload();
+        await screen(kabir, "runnerResult");
+        check((await kabir.page.locator("main").textContent())?.includes("ahead of the dark"), `refresh mid-Blackout: back on the result (step ${before})`);
+      }
+      await send({ type: "advanceDarkness" });
+      await sleep(400);
+      if (!caughtShot && admin!.blackout!.runners.some((r) => r.name === "Meera" && !r.alive)) {
+        caughtShot = true;
+        await screen(meera, "runnerStatus");
+        await shot("27-blackout-caught", [meera, zoe], 600);
+      }
+    }
+    check(sawBack, "a wrong answer moved Meera back");
+    check(caughtShot, "the dark caught Meera");
+    await send({ type: "showWinner" });
     await phase("podium");
-    for (const p of [riya, kabir, meera]) await screen(p, "podium");
-    await shot("26-podium", [riya, kabir, meera], 1500);
+    for (const p of [riya, kabir, meera, zoe]) await screen(p, "podium");
+    await shot("28-podium", [riya, kabir, meera, zoe], 1500);
 
     await new Promise((r) => watcher.emit("admin:closeRoom", { roomCode: room }, r));
     await riya.page.getByTestId("join-form").waitFor();
-    await shot("27-quiz-closed", [riya]);
+    await shot("29-quiz-closed", [riya]);
 
     // The four reference phones from public/finaldesign.html, next to ours.
     const refPage = await (await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 4 })).newPage();

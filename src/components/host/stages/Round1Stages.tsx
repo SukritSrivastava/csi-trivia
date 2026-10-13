@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Round 1 on the projector. The read and answer steps are the two frames of
+ * Question screens on the projector (Round 1, and the wild card and Blackout
+ * questions too). The read and answer steps are the two frames of
  * public/finaldesign.html: the question starts centred (read), then glides to
  * the left with its tilt while the 4 options fly in on the right (answer).
  * Reveal: wrong options dim to 30%, the right number turns mint, the banner
@@ -42,7 +43,7 @@ export function Round1Intro({ view }: { view: HostView }) {
       <Heading size="7rem">Round 1</Heading>
       <motion.p className="host-hint !text-[3rem] text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
         Everyone plays <span className="font-term text-[4rem] leading-none text-amber">{s.round1Questions}</span> questions. The top{" "}
-        <span className="font-term text-[4rem] leading-none text-amber">{s.finalistCount}</span> go to the buzzer round.
+        <span className="font-term text-[4rem] leading-none text-amber">{s.safeCount}</span> are safe for Blackout; everyone else gets a wild card shot.
       </motion.p>
       <motion.p className="host-count" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}>
         <b>{s.round1ReadSeconds}</b>s to read · <b>{s.round1AnswerSeconds}</b>s to answer · faster right answers score more
@@ -51,12 +52,25 @@ export function Round1Intro({ view }: { view: HostView }) {
   );
 }
 
-/** r1Read → r1Answer → r1TimesUp → r1Reveal, one screen so the question can travel. */
-export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<"r1Read" | "r1Answer" | "r1TimesUp" | "r1Reveal"> }) {
+type QuestionPhase = "r1Read" | "r1Answer" | "r1TimesUp" | "r1Reveal" | "wcRead" | "wcAnswer" | "wcTimesUp" | "wcReveal" | "boRead" | "boAnswer" | "boTimesUp";
+
+/** Read → answer → time's up (→ reveal), one screen so the question can travel. Any round. */
+export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<QuestionPhase> }) {
   const q = stage.question;
-  const reading = stage.phase === "r1Read";
-  const correct = stage.phase === "r1Reveal" && !stage.voided ? stage.correctText : null;
-  const counting = stage.phase === "r1Answer" || stage.phase === "r1TimesUp";
+  const step = stage.phase.slice(2) as "Read" | "Answer" | "TimesUp" | "Reveal";
+  const reading = step === "Read";
+  const revealed = step === "Reveal" && "voided" in stage;
+  const correct = revealed && !stage.voided ? stage.correctText : null;
+  const counting = step === "Answer" || step === "TimesUp";
+  const counts = "wildCard" in stage ? { answered: stage.wildCard.answered ?? 0, expected: stage.wildCard.expected ?? 0 } : "answered" in stage ? stage : null;
+  const roundLabel =
+    q.round === 2
+      ? q.suddenDeath
+        ? `Wild card · sudden death`
+        : `Wild card · question ${q.number} of ${q.count}`
+      : q.round === 3
+        ? `Blackout · question ${q.number} of ${q.count}`
+        : null;
 
   return (
     <>
@@ -66,10 +80,15 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<"r
         transition={{ layout: { duration: 0.75, ease: [0.65, 0, 0.35, 1] } }}
         className={
           reading
-            ? "absolute top-[18%] bottom-[34%] left-[12%] z-10 flex w-[76%] items-center justify-center gap-[4rem]"
+            ? "absolute top-[18%] bottom-[34%] left-[12%] z-10 flex w-[76%] flex-wrap items-center justify-center gap-[4rem]"
             : "absolute top-[34%] left-[5%] z-10 flex w-[42%] flex-col items-start gap-[2.4rem]"
         }
       >
+        {roundLabel && (
+          <motion.p layout="position" className="host-hint !text-[2.2rem] text-amber">
+            {roundLabel}
+          </motion.p>
+        )}
         <motion.h2 layout="position" className={reading ? "host-q host-q-center" : "host-q"} style={{ rotate: reading ? -2 : -3 }}>
           {q.text}
         </motion.h2>
@@ -107,19 +126,19 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<"r
         </ol>
       )}
 
-      {(reading || stage.phase === "r1Answer") && <Clock view={view} />}
-      {counting && (
+      {(reading || step === "Answer") && <Clock view={view} />}
+      {counting && counts && (
         <p className="host-count absolute bottom-[12%] left-[28%] z-10" aria-live="polite">
-          <b>{stage.answered}</b>{" "}
-          / {stage.expected} answered
+          <b>{counts.answered}</b>{" "}
+          / {counts.expected} answered
         </p>
       )}
-      {stage.phase === "r1TimesUp" && (
+      {step === "TimesUp" && (
         <motion.p className="host-banner absolute right-0 bottom-[3%] left-[40%] z-10 text-center" initial={{ opacity: 0, scale: 1.3 }} animate={{ opacity: 1, scale: 1 }}>
           &gt; time&apos;s up
         </motion.p>
       )}
-      {stage.phase === "r1Reveal" && (
+      {revealed && (
         <TypeOut
           className="host-banner absolute inset-x-0 bottom-[12%] z-10 text-center"
           text={stage.voided ? "> question cancelled" : `> answer: ${(stage.correctText ?? "").toLowerCase()}`}
@@ -137,7 +156,7 @@ export function ResultsStage({ view, stage }: { view: HostView; stage: Stage<"r1
       <p className="host-q host-q-center !text-[3.4rem]">{stage.question.text}</p>
       <ol className="flex w-full flex-col gap-[2rem]">
         {stage.options.map((o: OptionResult, i) => (
-          <li key={o.letter} className="flex items-center gap-[1.8rem] font-type text-[2.8rem] text-bright">
+          <li key={o.number} className="flex items-center gap-[1.8rem] font-type text-[2.8rem] text-bright">
             <span className="opt-num !text-[5.4rem]" style={o.correct ? { color: "var(--color-mint)", textShadow: "0 0 1.2rem var(--color-mint)" } : undefined}>
               {i + 1}
             </span>

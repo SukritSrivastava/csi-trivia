@@ -25,12 +25,19 @@ C) A bug report
 D) A software licence
 Answer: B
 
-# Buzzer
+# Wild card
 Which company makes Claude?
 * Anthropic
 OpenAI
 Google
-Meta`;
+Meta
+
+# Blackout
+What lets an agent remember earlier steps?
+* Memory
+A bigger screen
+A faster Wi-Fi
+More tabs`;
 
 export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onAdd: (found: ImportResult) => void; onCancel: () => void }) {
   const [mode, setMode] = useState<Mode>("text");
@@ -61,7 +68,7 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
         setResult(importRows(parseCsv(await file.text()), into));
       }
     } catch (e) {
-      setResult({ round1: [], buzzer: [], problems: [`Couldn't read ${file.name}: ${e instanceof Error ? e.message : "unknown error"}. Old .xls files: save as .xlsx or CSV first.`] });
+      setResult({ round1: [], wildcard: [], blackout: [], problems: [`Couldn't read ${file.name}: ${e instanceof Error ? e.message : "unknown error"}. Old .xls files: save as .xlsx or CSV first.`] });
     } finally {
       setBusy(false);
       if (fileInput.current) fileInput.current.value = "";
@@ -75,7 +82,7 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
     setFileName(null);
   };
 
-  const count = result ? result.round1.length + result.buzzer.length : 0;
+  const count = result ? result.round1.length + result.wildcard.length + result.blackout.length : 0;
   const tab = (m: Mode, label: string) => (
     <button
       type="button"
@@ -116,7 +123,8 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
           className="min-h-11 rounded-[0.8rem] border-2 border-line bg-void px-3 text-[16px] text-ghost outline-none focus:border-mint"
         >
           <option value="round1">Round 1</option>
-          <option value="buzzer">Buzzer round</option>
+          <option value="wildcard">Wild card</option>
+          <option value="blackout">Blackout</option>
         </select>
       </label>
 
@@ -124,8 +132,8 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
         <Panel title="Paste your questions">
           <p className="mb-2 text-[14px] leading-snug text-fog">
             One question, then its 4 answers, each on its own line. Mark the right answer with <span className="text-mint">*</span> (or add a line{" "}
-            <span className="text-mint">Answer: B</span>). Leave a blank line between questions. A line <span className="text-mint"># Buzzer</span> puts the questions after
-            it in the buzzer round.
+            <span className="text-mint">Answer: B</span>). Leave a blank line between questions. A line <span className="text-mint"># Wild card</span> or{" "}
+            <span className="text-mint"># Blackout</span> puts the questions after it in that list.
           </p>
           <textarea
             value={input}
@@ -145,7 +153,7 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
         <Panel title="Upload a spreadsheet">
           <p className="mb-3 text-[14px] leading-snug text-fog">
             Excel (.xlsx) or CSV. First row: <span className="text-mint">question, A, B, C, D, correct</span> and optionally{" "}
-            <span className="text-mint">round</span> (1 or buzzer), <span className="text-mint">read seconds</span>,{" "}
+            <span className="text-mint">round</span> (1, wild card or blackout), <span className="text-mint">read seconds</span>,{" "}
             <span className="text-mint">answer seconds</span>. &quot;correct&quot; is A–D (or 1–4). Google Sheets: File → Download → .xlsx or .csv.
           </p>
           <div className="grid grid-cols-2 gap-2">
@@ -182,8 +190,9 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
       {result && (
         <Panel title="Preview" testId="import-preview">
           <p className="text-[16px] text-ghost">
-            Found <span className="font-term text-2xl leading-none text-amber">{result.round1.length}</span> for Round 1 and{" "}
-            <span className="font-term text-2xl leading-none text-amber">{result.buzzer.length}</span> for the buzzer round.
+            Found <span className="font-term text-2xl leading-none text-amber">{result.round1.length}</span> for Round 1,{" "}
+            <span className="font-term text-2xl leading-none text-amber">{result.wildcard.length}</span> for the wild card and{" "}
+            <span className="font-term text-2xl leading-none text-amber">{result.blackout.length}</span> for Blackout.
           </p>
           {result.problems.length > 0 && (
             <ul className="mt-2 list-disc pl-5 text-[14px] text-wrong" role="alert">
@@ -194,7 +203,9 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
             </ul>
           )}
           <ol className="mt-3 flex flex-col gap-1.5">
-            {[...result.round1.map((q) => ["R1", q] as const), ...result.buzzer.map((q) => ["B", q] as const)].slice(0, 8).map(([tag, q]) => (
+            {[...result.round1.map((q) => ["R1", q] as const), ...result.wildcard.map((q) => ["WC", q] as const), ...result.blackout.map((q) => ["BO", q] as const)]
+              .slice(0, 8)
+              .map(([tag, q]) => (
               <li key={q.id} className="text-[14px] leading-snug">
                 <span className="mr-2 font-term text-lg leading-none text-amber">{tag}</span>
                 <span className="text-ghost">{q.text}</span> <span className="text-mint">✓ {q.options[q.correct]}</span>

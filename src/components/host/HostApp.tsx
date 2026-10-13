@@ -19,10 +19,11 @@ import { HostGate } from "./HostGate";
 import { Cast } from "./parts";
 import { SOUNDS, type SoundName, soundUnlocked, unlockSound } from "./sound";
 import { CutStage } from "./stages/CutStage";
-import { BuzzerStage, PredictionsStage, Round2IntroStage, ScoresStage, SuddenDeathStage } from "./stages/FinalStages";
+import { BlackoutDarkStage, BlackoutIntroStage, BlackoutRevealStage } from "./stages/BlackoutStages";
 import { LobbyStage } from "./stages/LobbyStage";
 import { PodiumStage } from "./stages/PodiumStage";
 import { LeaderboardStage, QuestionStage, ResultsStage, Round1Intro } from "./stages/Round1Stages";
+import { PredictionsStage, WildCardIntroStage, WildCardStandingsStage, WildCardWinnerStage } from "./stages/WildCardStages";
 
 const MUTE_KEY = "hermes:host-muted";
 
@@ -64,11 +65,18 @@ function scrimFor(stage: HostStage): "split" | "center" | "full" {
     case "r1Answer":
     case "r1TimesUp":
     case "r1Reveal":
+    case "wcAnswer":
+    case "wcTimesUp":
+    case "wcReveal":
+    case "boAnswer":
+    case "boTimesUp":
       return "split";
     case "lobby":
     case "r1Intro":
     case "r1Read":
-    case "suddenDeath":
+    case "wcRead":
+    case "boRead":
+    case "wcWinner":
       return "center";
     default:
       return "full";
@@ -82,18 +90,24 @@ function stageKey(stage: HostStage): string {
     case "r1Answer":
     case "r1TimesUp":
     case "r1Reveal":
+    case "wcRead":
+    case "wcAnswer":
+    case "wcTimesUp":
+    case "wcReveal":
+    case "boRead":
+    case "boAnswer":
+    case "boTimesUp":
       return `q-${stage.question.id}`;
     case "r1Results":
       return `res-${stage.question.id}`;
     case "r1Leaderboard":
       return `lb-${stage.question.id}`;
-    case "r2Read":
-    case "r2BuzzOpen":
-    case "r2Answering":
-    case "r2Reveal":
-      return `b-${stage.round2.question.id}`;
-    case "r2Scores":
-      return `sc-${stage.questionNumber}-${stage.suddenDeath}`;
+    case "wcStandings":
+      return `st-${stage.wildCard.questionNumber}`;
+    case "boReveal":
+    case "boDark":
+      // One screen per question: the moves, then the dark on the same track.
+      return `track-${stage.question.id}`;
     default:
       return stage.phase;
   }
@@ -110,6 +124,13 @@ function StageView({ view }: { view: HostView }) {
     case "r1Answer":
     case "r1TimesUp":
     case "r1Reveal":
+    case "wcRead":
+    case "wcAnswer":
+    case "wcTimesUp":
+    case "wcReveal":
+    case "boRead":
+    case "boAnswer":
+    case "boTimesUp":
       return <QuestionStage view={view} stage={s} />;
     case "r1Results":
       return <ResultsStage view={view} stage={s} />;
@@ -117,19 +138,20 @@ function StageView({ view }: { view: HostView }) {
       return <LeaderboardStage view={view} stage={s} />;
     case "cut":
       return <CutStage view={view} stage={s} />;
+    case "wcIntro":
+      return <WildCardIntroStage view={view} stage={s} />;
+    case "wcStandings":
+      return <WildCardStandingsStage view={view} stage={s} />;
+    case "wcWinner":
+      return <WildCardWinnerStage view={view} stage={s} />;
     case "predictions":
       return <PredictionsStage view={view} stage={s} />;
-    case "r2Intro":
-      return <Round2IntroStage view={view} stage={s} />;
-    case "r2Read":
-    case "r2BuzzOpen":
-    case "r2Answering":
-    case "r2Reveal":
-      return <BuzzerStage view={view} stage={s} />;
-    case "r2Scores":
-      return <ScoresStage view={view} stage={s} />;
-    case "suddenDeath":
-      return <SuddenDeathStage view={view} stage={s} />;
+    case "boIntro":
+      return <BlackoutIntroStage view={view} stage={s} />;
+    case "boReveal":
+      return <BlackoutRevealStage view={view} stage={s} />;
+    case "boDark":
+      return <BlackoutDarkStage view={view} stage={s} />;
     case "podium":
       return <PodiumStage view={view} stage={s} />;
   }
@@ -215,7 +237,7 @@ function HostScreen({ view }: { view: HostView }) {
       aria-label="Projector"
       data-phase={stage.phase}
     >
-      <Corridor scrim={scrimFor(stage)} alarmSeconds={stage.phase === "r2BuzzOpen" || stage.phase === "suddenDeath" ? 1.1 : undefined} />
+      <Corridor scrim={scrimFor(stage)} alarmSeconds={stage.phase === "boAnswer" || stage.phase === "boDark" ? 1.1 : undefined} />
       {stage.phase !== "lobby" && <Cast cast={view.cast} />}
 
       <AnimatePresence mode="wait">
@@ -310,14 +332,9 @@ function useGameSounds(view: HostView, on: boolean) {
     const entered = now.phase !== was.phase;
 
     if (now.phase === "lobby" && was.phase === "lobby" && view.cast.length > before.cast.length) play("join");
-    if (entered && now.phase === "r1Reveal" && !now.voided) play("reveal");
-    if (entered && now.phase === "r2Answering") play("buzz");
-    if (now.phase === "r2BuzzOpen" && was.phase === "r2Answering" && now.round2.wrong.length > 0) play("wrong");
-    if (entered && now.phase === "r2Reveal") {
-      if (now.round2.outcome?.kind === "correct") play("correct");
-      else if (now.round2.outcome?.kind === "nobody") play("wrong");
-    }
-    if (entered && now.phase === "cut") window.setTimeout(() => SOUNDS.powerDown(), 1400);
+    if (entered && (now.phase === "r1Reveal" || now.phase === "wcReveal" || now.phase === "boReveal") && !now.voided) play("reveal");
+    if (entered && now.phase === "wcWinner") play("correct");
+    if (entered && now.phase === "boDark") window.setTimeout(() => (now.blackout.caughtThisQuestion.length ? SOUNDS.powerDown() : SOUNDS.correct()), 900);
     if (entered && now.phase === "podium") window.setTimeout(() => SOUNDS.win(), 1400);
   }, [view, on]);
 }

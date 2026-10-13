@@ -17,7 +17,7 @@ const PHASE_WORDS: Record<string, string> = {
   cut: "end of round 1",
   predictions: "predictions",
 };
-const phaseWord = (p: string) => PHASE_WORDS[p] ?? (p.startsWith("r1") ? "round 1" : "buzzer round");
+const phaseWord = (p: string) => PHASE_WORDS[p] ?? (p.startsWith("r1") ? "round 1" : p.startsWith("wc") ? "wild card round" : "Blackout");
 
 export function AdminHome() {
   const [editing, setEditing] = useState<string | null>(null);
@@ -184,7 +184,8 @@ function QuizCard({ quiz, onEdit, onChanged }: { quiz: QuizSummary; onEdit: () =
           <p className="text-[18px] leading-snug text-bright">{quiz.title || "Untitled quiz"}</p>
           <p className="mt-0.5 text-[14px] text-mint-soft">
             <span className="font-term text-lg leading-none text-amber">{quiz.round1}</span> round 1 ·{" "}
-            <span className="font-term text-lg leading-none text-amber">{quiz.buzzer}</span> buzzer
+            <span className="font-term text-lg leading-none text-amber">{quiz.wildcard}</span> wild card ·{" "}
+            <span className="font-term text-lg leading-none text-amber">{quiz.blackout}</span> Blackout
           </p>
           <p className={`mt-0.5 text-[14px] ${ready ? "text-mint" : "text-wrong"}`}>
             {ready ? "Ready to play" : `${quiz.problems.length} thing${quiz.problems.length === 1 ? "" : "s"} to fix: ${quiz.problems[0]}`}

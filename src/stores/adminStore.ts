@@ -23,8 +23,8 @@ import type { ConnectionStatus } from "./hostStore";
 /** A second tap of the same command within this window is ignored (double taps). */
 const DOUBLE_TAP_MS = 600;
 /**
- * The big button and the judge buttons: a double tap on these is ignored even
- * if the button's command changed between the taps (the next step arrived).
+ * The big button's commands: a double tap on these is ignored even if the
+ * button's command changed between the taps (the next step arrived).
  */
 const THUMB_ACTIONS: readonly AdminActionType[] = [
   "startQuiz",
@@ -34,13 +34,13 @@ const THUMB_ACTIONS: readonly AdminActionType[] = [
   "showLeaderboard",
   "nextQuestion",
   "endRound1",
+  "startWildCard",
+  "showStandings",
+  "revealWildCard",
   "openPredictions",
-  "startBuzzerRound",
-  "showScores",
-  "startSuddenDeath",
+  "startBlackout",
+  "advanceDarkness",
   "showWinner",
-  "markCorrect",
-  "markWrong",
 ];
 const COMMAND_TIMEOUT_MS = 5000;
 const LIBRARY_TIMEOUT_MS = 10_000;

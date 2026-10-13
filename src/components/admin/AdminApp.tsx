@@ -14,7 +14,7 @@ import type { AdminAction, AdminView } from "@/shared/protocol";
 import { useAdminStore } from "@/stores/adminStore";
 import { Controls } from "./Controls";
 import { Dock } from "./Dock";
-import { BuzzSummary, Counts, Finalists, JudgePanel, Podium, QuestionCard, UndoMark, type Send } from "./GamePanels";
+import { BlackoutPanel, Counts, Finalists, Podium, QuestionCard, type Send, WildCardPanel } from "./GamePanels";
 import { AdminHome } from "./library/AdminHome";
 import { ControlButton, Panel } from "./parts";
 import { ParticipantsPanel } from "./ParticipantsPanel";
@@ -65,22 +65,15 @@ function Panelled({ view }: { view: AdminView }) {
   const send: Send = useCallback((action: AdminAction) => void storeSend(action, stepId), [storeSend, stepId]);
   useShortcuts(view, send, pending);
 
-  // Someone buzzed: bring the judge panel up, whatever tab is open.
-  const judging = view.phase === "r2Answering";
-  useEffect(() => {
-    if (judging) setTab("game");
-  }, [judging]);
-
   const game = (
     <div className="flex flex-col gap-3">
-      <JudgePanel view={view} clockOffset={clockOffset} send={send} pending={pending} />
-      <UndoMark view={view} send={send} pending={pending} />
       {!wide && <TimerControls view={view} send={send} pending={pending} />}
-      <BuzzSummary view={view} />
       <Podium view={view} />
       {view.phase === "lobby" && <JoinInfo view={view} />}
       <Counts view={view} />
+      <BlackoutPanel view={view} />
       <QuestionCard view={view} />
+      <WildCardPanel view={view} />
       <Finalists view={view} />
     </div>
   );

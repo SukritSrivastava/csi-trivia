@@ -5,7 +5,7 @@
 > skills, agent roles, plugins and the frontend↔backend API. If you change anything it
 > describes, update this file in the same change (see §10 "Keeping this file true").
 >
-> Last updated: 12 Oct 2026 · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
+> Last updated: 14 Oct 2026 (SPEC v3) · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
 
 ---
 
@@ -13,14 +13,17 @@
 
 **Hermes Quiz** is a Jackbox-style live quiz for **60–100 people in one hall**, run by the
 **Computer Society of India (CSI) student chapter at KJSCE, Mumbai**, right after a workshop
-on the **Hermes AI agent**. The **event is within a week of 11 Oct 2026**.
+on the **Hermes AI agent**. The **event is Thursday 16 Oct 2026**.
 
 - One laptop drives the **projector** (`/host`). Everyone answers on their **phone** (`/play`).
   A **quizmaster** runs every step from **Admin** (`/admin`, PIN), usually on a phone.
 - **Round 1:** everyone answers multiple-choice questions (8 s to read, 8 s to answer, faster
-  correct answers score more). **Top 6** go through. The rest become the **audience** and back
-  a finalist. **Round 2:** a **6-player buzzer round**, answers said out loud, the quizmaster
-  marks Correct or Wrong. Then the **podium**.
+  correct answers score more). **Top 9 are safe.** Everyone else plays the **wild card round**
+  (5 questions, most right wins) for the **10th seat**; the rest become the **audience** and back
+  a finalist. **Blackout:** the 10 finalists' bots race a darkness down the corridor: right answers
+  move them forward (+3/+2/+1 by speed), wrong ones back, and the dark catches whoever it reaches.
+  Last bot running wins. **Every answer is a phone tap marked by the server** (no judging).
+  Then the **podium**. Rules: `docs/SPEC.md` v3 (14 Oct).
 - **Look:** "Server Corridor, Lights Low", inspired by Jackbox's *Murder Trivia 2*. A dark
   server-room corridor, typewriter type, terminal digits, and every player is a **robot** whose
   eyes react to their answers. The approved reference is **`public/finaldesign.html`**.
@@ -29,16 +32,18 @@ on the **Hermes AI agent**. The **event is within a week of 11 Oct 2026**.
   **`src/shared/protocol.ts`**, and saves results to Supabase. It's what's deployed on Render.
   (Lelouch's first prototype is kept in `archive/ws-backend-v1/`.)
 
-**Where we are:** all 5 phases are done (13 Oct): the design system and bots, Admin (`/admin`),
-the phones (`/play`), the Host (`/host`) and event-proofing (drills, a 100-player rehearsal,
-`docs/RUN-SHEET.md`, `docs/BACKEND-NOTES.md`). Left: the real Hermes questions and a run-through in the hall.
+**Where we are (14 Oct):** SPEC v3 (three rounds: Round 1, wild card, Blackout) replaced the buzzer
+round. The engine, contract, server and tests are done (`docs/BUILD-PHASES.md` v5 Phase 1); the screens
+work for the new flow in a plain form (the existing Host, phone and Admin screens, extended) and are
+polished in Phases 2–3. The live deployment still runs the v2 buzzer-round version until Sukrit says "push".
 
 ### Read these, in this order
 1. **This file.**
-2. `docs/SPEC.md` (v2.1): every game rule, step by step. Rules there override anything else.
+2. `docs/SPEC.md` (v3, 14 Oct): every game rule, step by step. Rules there override anything else.
 3. `src/shared/protocol.ts`: the contract (every view, event and payload, fully commented).
 4. `public/finaldesign.html`: the approved design (open http://localhost:3000/finaldesign.html).
-5. `docs/BUILD-PHASES.md` (v4): the 5 build prompts. Do the next unfinished phase only.
+5. `docs/BUILD-PHASES.md`: the build prompts (v4 in the repo: the first 5 phases, all done; the v5
+   three-phase plan for the new game was pasted in chat on 14 Oct). Do the next unfinished phase only.
 6. `CLAUDE.md`, `AGENTS.md`, `README.md`: short notes that point back here.
 
 ### Run it (Windows PowerShell)
@@ -63,10 +68,10 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | C2 | **The server is the source of truth.** Screens send actions and draw the view they receive. They never compute game state, scores, timers, ranks or bot moods. | 100 phones must agree; nobody can cheat by editing the page. |
 | C3 | **No answer leaks.** Phones and the Host never receive the correct answer before the reveal. Only Admin gets it. Option ids and question ids are opaque random strings, new for every question run. | The projector laptop may be screen-shared; phones can be inspected. |
 | C4 | **Contract first.** Every event and view type lives in `src/shared/protocol.ts`. To change the API: edit it there → implement in `server/` → follow the TypeScript errors → update §8 of this file → tell the backend teammate. | Two people build against one contract. |
-| C5 | **The quizmaster drives the flow.** Timers run only for Round 1 read/answer and Round 2 read / buzz window / spoken-answer countdown. When a timer ends, the room **holds** for the next click. The spoken-answer countdown **never** marks an answer. | SPEC v2. |
+| C5 | **The quizmaster drives the flow.** Timers run only for the read and answer steps (Round 1 and wild card 8 s + 8 s; Blackout 5 s + 8 s). When a timer ends, the room **holds** for the next click. Nothing is judged by hand: every answer is a tap marked by the server. | SPEC v3. |
 | C6 | **Every Admin command carries `stepId`.** The server ignores a command from an old step (except `STEP_INDEPENDENT_ACTIONS`). | A double tap or two Admin phones must never skip two steps. |
 | C7 | **The look is approved and final.** Match `public/finaldesign.html` exactly. Use the tokens/classes in `src/app/globals.css` and the components in `src/components/ui/`. No new colours or fonts. Extend only in the same visual language and say so. | Sukrit approved it: "do not change anything". |
-| C8 | **One answer order.** In Round 1 the options are shuffled once per question; the Host (from the answer step) and every phone show that same order, numbered **1–4**. | Decided 11 Oct 2026 to match the design. |
+| C8 | **One answer order.** In every round the options are shuffled once per question; the Host (from the answer step) and every phone show that same order, numbered **1–4**. | Decided 11 Oct 2026 to match the design. |
 | C9 | **Answer times are measured on the server**, never trusted from a phone. | Fair scoring. |
 | C10 | **Sukrit is on Windows (PowerShell).** No bash-only commands in scripts or docs. | |
 | C11 | `npm run typecheck`, `npm run build`, `npm run simulate`, `npm run smoke` **must all pass** at the end of every change. | |
@@ -79,7 +84,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 - **Projector:** laptop over HDMI, text must read from the back of the hall; dark themes wash out
   on cheap projectors, hence the dark pools (scrims) behind text. Sizes in `rem` on the Host.
 - **Phones:** iPhone Safari and Android Chrome, 360–430 px wide. Inputs ≥ 16 px (no iOS zoom).
-- **Deadline:** event within a week of 11 Oct 2026. Prefer simple, robust choices over clever ones.
+- **Deadline:** the event is Thursday 16 Oct 2026. Prefer simple, robust choices over clever ones.
 - **Admin PIN:** default `1234` for testing; set a longer `ADMIN_PIN` on the night.
 - **Questions:** MCQ only, exactly 4 options, in `data/questions.json`. Images (Host only) in
   `public/questions/`. Real Hermes questions still to be written (§4).
@@ -96,6 +101,12 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 11 Oct | One 1–4 answer order on the Host and every phone in Round 1 (no per-phone shuffle). |
 | 11 Oct | Host cast: up to 12 bots in a named row; 13+ as a dense wall of smaller bots without names. |
 | 12 Oct | **Quiz library in Admin:** quizzes are made in Admin (type, paste text, CSV/Excel, JSON), saved in Supabase; two lists (Round 1, buzzer + spares), always 4 options, shuffled, played in the order arranged; every count and timer per quiz, timers overridable per question; optional picture per question (projector only); a room plays a frozen copy (no live edits). **Admin opens rooms**; the **Host needs the same PIN** and shows the newest open room. |
+| 14 Oct | **SPEC v3: three rounds, no buzzer round.** Round 1 → the cut (top 9 safe) → wild card round (everyone else, 5 questions, most right wins; tie → lower total time with wrong/miss = the full time; exact tie → up to 3 sudden-death questions; nobody right → 10th place) → predictions → **Blackout** (10 finalists) → podium. Nothing is judged by hand. |
+| 14 Oct | **Blackout rules:** start at BASE_GAP + head start (ranks 1–3 +2, 4–9 +1, wild card 0); right +3/+2/+1 by third of the answer time, wrong −1, none 0; **two clicks per question** after time's up: Reveal answer (runners move, nobody caught) then **Advance the darkness** (the dark moves `DARKNESS_STEPS[q]`, anyone at or behind it is caught). Catch order: later catch higher; same question → further ahead before the dark, lower time, better Round 1 rank. One left → winner; all caught at once → best by catch order; survivors after Q12 → furthest ahead. Tuned by `npm run tune-blackout` (event: BASE_GAP 4, `[1,1,2,2,2,2,2,3,3,3,3,3]`). |
+| 14 Oct | On the Host the bots run toward the camera in the corridor as the rack lights die behind them (Phase 2; Phase 1 has a plain lane track). |
+| 14 Oct | The game server in `server/` (the prompt called it "mock-server") **is the real server on the night**. Event preset: 20 Round 1 questions, 9 safe, 5 wild card (+3 sudden death), 12 Blackout (+3 spares), 8 s/8 s, Blackout 5 s/8 s. |
+| 14 Oct | Quiz library: three lists per quiz (Round 1, Wild card, Blackout); quizzes saved before v3 are upgraded on read (buzzer list → Wild card, Blackout empty, rules from the preset except Round 1's own). Bots stay shared (12 Oct decision), even though the v5 prompt repeated the old unique-bot rule. |
+| 14 Oct | If time runs short, **sound is the first thing to cut**. |
 | 12 Oct | **Backend = option 1 (§8.9):** the game server in `server/` is the real backend; the teammate's Postgres/Supabase tables (`archive/ws-backend-v1/db.js`) are wired in via `server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
 
 ---
@@ -139,39 +150,49 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 
 ### 2.3 The game flow (phases, from `protocol.ts`)
 ```
-lobby → r1Intro → [ r1Read (8s) → r1Answer (8s) → r1TimesUp → r1Reveal → r1Results? → r1Leaderboard? ] × N
-      → cut → predictions? → r2Intro
-      → [ r2Read (5s) → r2BuzzOpen (15s) → r2Answering (10s, say it aloud) → Correct → r2Reveal
-                                                            └ Wrong → r2BuzzOpen (10s reopen) or r2Reveal
-          → r2Scores? ] × 10
-      → suddenDeath (only on a tie for 1st) → podium
+lobby → r1Intro → [ r1Read (8s) → r1Answer (8s) → r1TimesUp → r1Reveal → r1Results? → r1Leaderboard? ] × 20
+      → cut (top 9 safe; fewer than 10 played → everyone safe, no wild card round)
+      → wcIntro → [ wcRead (8s) → wcAnswer (8s) → wcTimesUp → wcReveal → wcStandings? ] × 5 (+ up to 3 sudden death)
+      → wcWinner (the 10th finalist) → predictions?
+      → boIntro → [ boRead (5s) → boAnswer (8s) → boTimesUp → boReveal (runners move) → boDark (the dark moves, catches) ] × ≤12
+      → podium (Show winner)
 (?) = optional step the quizmaster may skip. Timed steps advance by themselves; every other step is a click.
 ```
-Scoring (Round 1): correct = **500 → 1000** points, linearly faster = more
-(`round(500 + 500 × (1 − elapsed/limit))`); wrong or no answer = 0. Ties: lower total answer
-time ranks higher (a miss counts as the full time). Round 2: +1 per correct buzz, no penalty.
-Full rules and edge cases: `docs/SPEC.md`.
+Scoring: **Round 1** correct = `round(500 + 500 × (1 − elapsed/limit))`, wrong or none = 0; ties →
+lower total answer time (a miss = the full time). **Wild card**: number right; ties → lower total time
+(wrong/miss = the full time); exact tie → sudden death. **Blackout**: right +3/+2/+1 by third of the
+answer time, wrong −1, none 0; the dark advances by `DARKNESS_STEPS[q]` and catches anyone at or behind it.
+Full rules and edge cases: `docs/SPEC.md` v3.
 
 ### 2.4 Folder map
 ```
 README.md                   the front door: what it is, live links, run it, repo map
 docs/PROJECT-RULES.md       ← this file (the full handoff)
 AGENTS.md / CLAUDE.md       short pointers + the must-follow rules (read by AI tools; stay at the root)
-data/questions.json         the questions (MCQ, 4 options, correct = index, round 1/2/null)
-docs/SPEC.md                game rules v2.1 (source of truth for rules)
-docs/BUILD-PHASES.md        the 5 build prompts (v4)
+data/questions.json         the questions (MCQ, 4 options, correct = index, round 1/2/3/null); seeds the Demo quiz
+docs/SPEC.md                game rules v3 (source of truth for rules)
+docs/BUILD-PHASES.md        the build prompts (v4, done; the v5 three-phase plan came in chat on 14 Oct)
+docs/RUN-SHEET.md           the quizmaster's checklist and script for the night
+docs/BACKEND-NOTES.md       every event and view, what the server must enforce
 docs/DEPLOY.md              live addresses; Supabase + Render + Vercel, step by step
 render.yaml                 Render Blueprint for the game server
 server/index.ts             starts the game server (npm run dev:game / start:game): env, preset, database
-server/config.ts            presets: every timing and count
+server/config.ts            presets: every timing and count, Blackout BASE_GAP / DARKNESS_STEPS / head starts
 server/quiz.ts              all the rules (QuizRoom), no socket code
 server/rooms.ts             Socket.IO glue: roles, PIN, rooms, sending views
 server/server.ts            the Socket.IO server; validates incoming payloads
 server/db.ts                saves results to Postgres/Supabase when DATABASE_URL is set
-server/questions.ts         loads and checks data/questions.json
-server/simulate.ts          npm run simulate: 23 rule checks with a fake clock, 100-player games
+server/questions.ts         loads and checks data/questions.json; pickRound (tagged, then untagged unused)
+server/library.ts           the quiz library (Supabase or data/library/), quizToGame, the Demo quiz
+server/simulate.ts          npm run simulate: 33 rule checks with a fake clock, 100-player games (50 seeds with GAME_PRESET=event)
 scripts/smoke.ts            npm run smoke: whole demo game over real Socket.IO
-scripts/bots.ts             npm run bots: N fake participants
+scripts/bots.ts             npm run bots: N fake participants, every round, per-bot accuracy (--accuracy, --slow, --pin)
+scripts/tune-blackout.ts    npm run tune-blackout: 20,000 simulated chases per candidate → BASE_GAP and DARKNESS_STEPS
+scripts/check-questions.ts  npm run check-questions: enough questions for each round, images readable on the dark Host
+scripts/play-shots.ts       npm run play-shots: phones play a whole game, screenshots of every phone state
+scripts/host-shots.ts       npm run host-shots: every projector state at 1920×1080 and 1366×768
+scripts/drills.ts           npm run drills: failure drills (refresh, Wi-Fi, locked phone, Slow 4G, two Admins, restart)
+scripts/rehearsal.ts        npm run rehearsal: 100 bots + 4 phones + Host + Admin, fps and memory
 scripts/db-check.ts         npm run db-check: a game over sockets with an in-memory Postgres; checks the saved rows
 scripts/admin-run.ts        npm run admin-run: Playwright runs a whole game from Admin + screenshots
 scripts/deploy.ts           npm run deploy: Render + Vercel
@@ -181,8 +202,8 @@ public/questions/           question images (Host only)
 src/shared/protocol.ts      THE CONTRACT
 src/app/                    routes: / (home), /host, /play, /admin; globals.css; layout.tsx (fonts)
 src/components/ui/          Bot (+botDelay), BotBuilder, Corridor, TimerRing  ← the design system
-src/components/host/        the projector (HostApp, parts, stages/, sound)
-src/components/play/        the phones (PlayApp, JoinScreen, LobbyScreen, Round1Screens, BuzzerScreens, parts)
+src/components/host/        the projector (HostApp, parts, stages/: Lobby, Round1, Cut, WildCard, Blackout, Podium; sound)
+src/components/play/        the phones (PlayApp, JoinScreen, LobbyScreen, Round1Screens, FinalScreens: wild card + Blackout, parts)
 src/components/admin/       the quizmaster's panel and the quiz library
 src/stores/                 Zustand: hostStore, participantStore, adminStore
 src/lib/                    socket, session, useCountdown, useWakeLock, usePageVisibility, confetti, format, adminLabels
@@ -209,7 +230,7 @@ src/lib/                    socket, session, useCountdown, useWakeLock, usePageV
 
 Classes: `host-q`, `host-q-center`, `host-opts`, `host-opt`, `opt-num`, `host-count`, `host-hint`,
 `host-banner`, `host-watermark`, `host-name`, `phone-bg`, `phone-opt`, `phone-go`, `phone-result`,
-`phone-buzz`, `clock`, `bot` (+`data-head`, `data-mood`), `corridor-*`. (The old marigold tokens were deleted in Phase 5.)
+`phone-buzz` (unused since v3; the buzzer round is gone), `clock`, `bot` (+`data-head`, `data-mood`), `corridor-*`. (The old marigold tokens were deleted in Phase 5.)
 
 Components (`src/components/ui/`):
 - `<Bot color head mood size delay label />`: a robot. `mood` ∈ idle/thinking/locked/right/wrong/out.
@@ -242,7 +263,8 @@ question centred, hint under it. At 1920 px, 1% of the width ≈ 1.2rem (`html:h
 | Game server = backend | `server/` (Socket.IO, tsx) + **pg** to Supabase Postgres (`server/db.ts`, the teammate's schema, on when `DATABASE_URL` is set) | decided 12 Oct, see §8.9 |
 | Hosting | Website on **Vercel**, game server on **Render** (`render.yaml`, `npm run start:game`), results in **Supabase** Postgres | live since 12 Oct; addresses and updating in `docs/DEPLOY.md` |
 
-npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `typecheck`, `simulate`, `smoke`, `bots`.
+npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `preview`, `typecheck`, `simulate`, `smoke`, `bots`,
+`tune-blackout`, `check-questions`, `play-shots`, `host-shots`, `admin-run`, `drills`, `rehearsal`, `washout`, `db-check`, `deploy`.
 
 Environment variables (`.env.local`, see `.env.example`):
 | Var | Default | Used by |
@@ -253,7 +275,7 @@ Environment variables (`.env.local`, see `.env.example`):
 | `GAME_PORT` / `WEB_PORT` | `PORT` (Render) else `3001` / `3000` | server (web port only for printed links) |
 | `PUBLIC_WEB_URL` | `http://<LAN-IP>:3000` | server: builds the join link |
 | `CORS_ORIGIN` | any | server: comma-separated allowed origins |
-| `DATABASE_URL` | unset (memory only) | server: Postgres/Supabase; saves rooms, players, every Round 1 answer |
+| `DATABASE_URL` | unset (memory only) | server: Postgres/Supabase; saves rooms, players (score, rank, wild card correct, Blackout place/position), every Round 1 answer |
 
 ---
 
@@ -262,27 +284,19 @@ Environment variables (`.env.local`, see `.env.example`):
 Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. Phases are in `docs/BUILD-PHASES.md`.
 
 ### Done
-- ✅ SPEC v2 → v2.1 (rules, bots, one answer order, the Look).
-- ✅ Phase 1: contract (`protocol.ts`), game server (`quiz.ts`, `rooms.ts`), presets, `simulate` (23 checks pass), `smoke`, `bots`.
-- ✅ Design approved: `public/finaldesign.html` (Direction E v2).
-- 🟡 Design system in code: `globals.css`, fonts, `Bot`, `BotBuilder`, `Corridor`, `TimerRing`, home page. (Written without `npm install`; Prompt 1 verifies.)
-- 🟡 Bots in the contract and game server: `participant:bot`, `BotPicker`, `HostView.cast` moods; one 1–4 order; `result.correctText`. (`simulate` passes; `smoke`/`build` not yet run.)
-- 🟡 Temporary `/host`, `/play`, `/admin` restyled in the final look, `/host` with the projector stage (`TempStage`).
+- ✅ v4 Phases 1–5 (12–13 Oct): design foundation, Admin, phones, Host, event-proofing. Deployed 13 Oct (v2 buzzer-round game).
+- ✅ **v5 Phase 1, the engine (14 Oct):** SPEC v3; contract (`protocol.ts`: `wc*` and `bo*` phases, `McqQuestion`, `WildCardState`, `BlackoutState`, `Runner`, new phone screens, new Admin actions); `server/quiz.ts` (wild card with sudden death and the fallback, Blackout with catches and catch order, seat hand-over, void/restart/restart round/end quiz in every round); `npm run tune-blackout`; `simulate` (33 checks, 50 event seeds), `smoke` (whole three-round game over sockets), `bots` (every round, accuracy); quiz library with three lists (old quizzes upgraded); `/health` JSON; the existing Host / phone / Admin screens extended to the new flow (plain stages for the wild card and Blackout); play-shots, host-shots, admin-run (68 checks) and drills pass.
 
 ### Next
-1. 🟡 **Prompt 1, design foundation check** (partly, 12 Oct: git on `frontend` from the bundle, leftovers removed, `npm install`, all four checks green, Playwright installed; still to do: the extra smoke tests for bots/moods/1–4 order and `bots.ts` picking a free bot): git setup (`.git-setup/setup.ps1` exists; read it first), delete the leftovers (§2.4), `npm install`, make typecheck/build/simulate/smoke pass, extend `smoke` (bots, moods, 1–4 order), `bots.ts` picks a free bot, screenshots vs `finaldesign.html`.
-2. 🟡 **Prompt 2, Admin screen**: built 12 Oct (`src/components/admin/`), verified with `npm run admin-run` (41 checks, demo + event preset with 80 bots); waiting for Sukrit's approval.
-3. ⬜ **Prompt 3, Participant screens** (join, bot builder, answers 1–4, results with bot, buzzer, podium).
-4. 🟡 **Prompt 4, Host screens**: built 12 Oct (`src/components/host/`), verified with `npm run host-shots` (30 and 100 players, every state at 1920×1080 + 1366×768, sound on, no page errors, ~30 fps headless with 100 bots) and admin-run (52). Waiting for Sukrit's approval. Not pushed/deployed (phase rule).
-5. ⬜ **Prompt 5, event-proofing** (failure drills, 100-bot scale test, design QA, run sheet, backend notes, deploy notes).
+1. ⬜ **v5 Phase 2:** the Host (projector) for the wild card round and Blackout in the approved look (the bots running toward the camera, rack lights dying behind them).
+2. ⬜ **v5 Phase 3:** the phone and Admin screens for the new rounds, polished.
+3. ⬜ **Write 48 questions** (20 Round 1, 5 + 3 wild card, 12 + 3 Blackout + spares) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
+4. ⬜ **Push and deploy** (only when Sukrit says "push"); the live site runs the v2 buzzer game until then.
 
 ### Not in a phase yet
-- 🟡 **Backend alignment:** decided 12 Oct (option 1, §8.9). `server/` is the backend, saving to the teammate's Supabase tables via `DATABASE_URL` (`npm run db-check` tests it with an in-memory Postgres). Still to do: set `DATABASE_URL` on the deployed Render server; merged into `main` on 12 Oct (branches: `main`, `frontend`, `backend`). Live test against the real Supabase passed 12 Oct.
-- 🟡 **Quiz library** (12 Oct): Admin → Quizzes (create/edit/import/settings/open room), Host PIN. Verified: simulate (25), smoke, db-check, admin-run (52 checks incl. the editor on a phone and the projector PIN). Waiting for Sukrit's approval.
-- ⬜ Write the **real Hermes questions** in Admin → Quizzes (round 1 count, 10+ buzzer questions plus spares). `data/questions.json` only seeds the "Demo quiz" now.
-- ✅ **Deployed 12 Oct:** website https://hermes-quiz-nine.vercel.app (Vercel), game server https://hermes-quiz-game.onrender.com (Render, from `main`), results in Supabase. Live end-to-end test passed (41 checks, rows in Supabase). Details and how to update: `docs/DEPLOY.md`. Open: link the Vercel project to GitHub (needs the Vercel GitHub app on the repo owner's account) so the website redeploys on push.
 - ⬜ CSI club logo in a corner (optional, "later").
 - ⬜ Rehearsal in the actual hall with the real projector (brightness, hall lights, sound).
+- ⬜ After the event: revoke the Render / Vercel keys in `.env.local`, reset the Supabase password.
 
 ---
 
@@ -394,9 +408,8 @@ exactly this**; `server/` is the working reference.
 | *(HTTP)* `POST /api/images` | image bytes (JPEG/PNG/WebP, ≤ 2.5 MB), header `x-admin-pin` | `{ url: "/images/<id>" }` | Question pictures. `GET /images/<id>` serves them (cached forever). |
 | `participant:join` | `{ roomCode, name, participantId? }` | `JoinResult` = `{ ok:true, participantId, roomCode, status }` or `{ ok:false, error: JoinError }` | Phone joins or rejoins (with saved id, or same name if the old phone dropped). |
 | `participant:bot` | `BotLook` `{ color, head }` | `BotResult` = `{ ok:true }` or `{ ok:false, error: "invalid"\|"too-late" }` | Phone changes its bot (any colour, any head, may match others). **Lobby only.** |
-| `participant:answer` | `{ questionId, optionId }` | none | Round 1 answer step. First tap wins; later ones ignored. |
-| `participant:buzz` | `{ questionId }` | none | Finalist, buzz window. First buzz wins the turn. |
-| `participant:back` | `{ finalistId }` | none | Audience backs a finalist (changeable until the buzzer round starts). |
+| `participant:answer` | `{ questionId, optionId }` | none | Any round's answer step. First tap wins; ignored from anyone who can't answer this question (finalists in the wild card round, caught runners, the audience). |
+| `participant:back` | `{ finalistId }` | none | Audience backs a finalist (changeable until Start Blackout). |
 | `participant:visibility` | `{ hidden: boolean }` | none | Page hidden/shown. Admin-only flag ("left page"). |
 | `admin:auth` | `{ roomCode, pin }` | `{ ok:true, roomCode }` or `{ ok:false, error:"room-not-found"\|"wrong-pin" }` | After 5 wrong PINs the socket is refused (reload to retry). |
 | `admin:command` | `{ stepId, action: AdminAction }` | `CommandResult` = `{ ok:true }` or `{ ok:false, reason:"stale-step"\|"not-allowed"\|"not-signed-in"\|"invalid" }` | Every quizmaster action (§8.5). |
@@ -413,31 +426,40 @@ initial"), `name-invalid` (empty or over 20 chars after trimming), `quiz-ended`,
 | `participant:state` | `ParticipantView` (private, per phone) | each participant socket |
 | `admin:state` | `AdminView` (includes the correct answer) | every signed-in Admin socket |
 | `room:closed` | `{ reason }` | everyone in a room that's gone (new room, abandoned 30 min after the Host left with no Admin) |
+| `server:hello` | `{ bootId }` | every new connection; a new `bootId` means the server restarted (rooms lost) |
 
 Send a view **whenever it changes, only to the sockets whose view changed** (the server throttles
 phone updates to 150 ms). Every view carries `serverNow` (ms).
 
 ### 8.4 The three views (shape summary)
-**`HostView`**: `roomCode`, `joinUrl`, `roomCodeVisible`, `soundOn`, `settings: QuizSettings`,
-`participants: ParticipantTag[]` (join order, not removed), **`cast: CastMember[]`** (each with
-`mood`), `counts: Counts`, `timer: Timer|null`, `paused`, `serverNow`, `nextImage` (to preload),
-`stage: HostStage` (a union keyed by `phase`; e.g. `r1Answer` has `question: Round1Question`
-with **`options` 1–4** plus `answered`/`expected`; `r1Reveal` has `correctText`; `r2*` has
-`round2: Round2State`; `podium` has `entries`, `calledIt`).
+**`HostView`**: `roomCode`, `joinUrl`, `roomCodeVisible`, `soundOn`, `settings: QuizSettings`
+(`safeCount`, `wildCardQuestions`, `blackoutQuestions`, timings), `participants`, **`cast: CastMember[]`**
+(each with `mood`; everyone, then in the wild card round only its players, in Blackout the runners),
+`counts` (+ `wildcard`), `timer`, `paused`, `serverNow`, `nextImage`, `stage: HostStage` keyed by
+`phase`: question steps carry `question: McqQuestion` (`round` 1/2/3, `number`, `count`,
+`suddenDeath`, **`options` 1–4** from the answer step); reveals add `correctText` / `correctIndex` /
+`voided`; `cut` has `standings` (rank, score, timeMs, finalist), `safeCount`, `wildCardCount`,
+`wildCardSkipped`; `wc*` stages carry `wildCard: WildCardState` (standings only on `wcStandings` /
+`wcWinner`); `bo*` stages carry `blackout: BlackoutState` (`dark`, `darkFrom`, `runners` with position,
+from, delta (after the reveal only), gap, alive, caughtOnQuestion, place, headStart, mood),
+`caughtThisQuestion`, `alive`, `over`, `winner`; `podium` has `basis` (blackout / wildcard / round1),
+`entries`, `calledIt`.
 
-**`ParticipantView`**: `roomCode`, `me: ParticipantTag & { status }`, `timer`, `paused`,
-`serverNow`, `screen: ParticipantScreen` (a union keyed by `kind`): `lobby` (with
-), `r1Intro`, `nextQuestion`, `eyesUp`, `answer`
-(`questionId`, options in the Host's 1–4 order, **never a correct flag**), `lockedIn`, `timesUp`,
-`result` (`outcome`, **`correctText`**, sent only after the reveal), `voided`, `cut` (`madeIt`,
-`rank`; the only time a rank shows), `audience`, `backFinalist`, `finalist`, `buzzer` (finalist:
-`canBuzz`, `lockedOut`, `points`, `myResult`), `buzzerWatch` (audience), `podium`, `removed`.
+**`ParticipantView`**: `roomCode`, `me` (+ `status`: playing / finalist / wildcard / audience /
+removed), `timer`, `paused`, `serverNow`, `screen` keyed by `kind`: `lobby`, `r1Intro`,
+`nextQuestion`, `eyesUp` / `answer` / `lockedIn` / `timesUp` (all with `round`), `result` (Round 1
+and wild card: `outcome`, **`correctText`** after the reveal only, wild card `tally`), `voided`,
+`cut` (`outcome` safe / wildcard, `rank`: the only time a rank shows), `safeWatch`, `wcStatus`
+(`right`, `asked`, `suddenDeath` in / out), `wcWinner` (`you` won / lost), `audience`,
+`backFinalist`, `runnerResult` (`outcome`, `delta`, `position`, `gap`, `correctText` when wrong or
+missed), `runnerStatus` (alive, gap, headStart, caughtNow, place), `blackoutWatch` (audience: backed,
+runners with gap, alive count), `podium`, `removed`.
 
-**`AdminView`**: `phase`, **`stepId`**, `stepLabel`, **`primary`** (`{ action, label }` or null),
-`hint`, **`allowed: AdminActionType[]`**, `timer`, `paused`, `question: AdminQuestion` (**with
-the answer**), `nextQuestion`, `counts` (+ `answered`/`expected`), `participants: AdminParticipant[]`
-(connected, status, score, rank, points, answered, `leftPageCount`, `pageHidden`, `backingId`),
-`round2`, `finalists`, `backing`, `canUndo`, `lastMark`, `roomCodeVisible`, `soundOn`, **`podium`** (`PodiumSummary`: `basis`, `entries`, `calledIt`; podium only).
+**`AdminView`**: `phase`, **`stepId`**, `stepLabel`, **`primary`**, `hint`, **`allowed`**, `timer`,
+`paused`, `question: AdminQuestion` (**with the answer**, numbered 1–4), `nextQuestion`, `counts`
+(+ `answered`/`expected`), `participants` (score, rank, `wildCorrect`, `wildTimeMs`, `isWildCard`,
+`blackout` {position, gap, caughtOnQuestion, place}, answered, flags, backing), `finalists:
+FinalistInfo[]`, `wildCard` (full standings), `blackout`, `backing`, `podium`, `quizTitle`.
 
 Shared types: `ParticipantTag { id, name, color, head }`, `CastMember = ParticipantTag & { mood }`,
 `BotMood = "idle"|"thinking"|"locked"|"right"|"wrong"|"out"`, `BotHead` (8), `PARTICIPANT_COLORS` (12),
@@ -446,8 +468,7 @@ Shared types: `ParticipantTag { id, name, color, head }`, `CastMember = Particip
 ### 8.5 Admin commands (`AdminAction.type`)
 | Group | Actions |
 |---|---|
-| Flow (the big button sends one) | `startQuiz`, `showQuestion`, `revealAnswer`, `showResults`, `showLeaderboard`, `nextQuestion`, `endRound1`, `openPredictions`, `startBuzzerRound`, `showScores`, `startSuddenDeath`, `showWinner` |
-| Judging | `markCorrect`, `markWrong`, `undoMark` |
+| Flow (the big button sends one) | `startQuiz`, `showQuestion`, `revealAnswer`, `showResults`, `showLeaderboard`, `nextQuestion`, `endRound1`, `startWildCard`, `showStandings`, `revealWildCard`, `openPredictions`, `startBlackout`, `advanceDarkness`, `showWinner` |
 | Timers | `pause`, `resume`, `addTime` (+5 s), `skipTimer` |
 | Fixes | `voidQuestion`, `restartQuestion`, `restartRound` |
 | Room | `removeParticipant {participantId}`, `setRoomCodeVisible {visible}`, `setSound {on}`, `endQuiz` |
@@ -462,11 +483,12 @@ Destructive (UI asks for a second tap): `voidQuestion`, `restartQuestion`, `rest
   `normalizeBotColor` (lowercase, lightness clamped to `BOT_LIGHTNESS` 45–92 % so it shows on the dark
   screens); head in `BOT_HEADS`. **Nothing is ever taken:** several people may share a colour and head
   (decided 12 Oct for 100 people). Names stay unique (`name-taken`).
-- **Moods** (`HostView.cast`): lobby/intro/read → `idle`; Round 1 answer step → `thinking` (not
-  answered) / `locked` (answered); time's up → `locked` / `idle`; reveal/results/leaderboard →
-  `right` / `wrong` (miss = wrong; voided → idle); from the cut on, non-finalists → `out`; buzzer
-  round: buzz open → `thinking`, the buzzer → `locked`, locked out → `wrong`, correct on reveal →
-  `right`; podium: winner `right`. `locked` never reveals correctness.
+- **Moods** (`HostView.cast` and the moods inside stage data): lobby/intro/read → `idle`; answer
+  step → `thinking` (not answered) / `locked` (answered); time's up → `locked` / `idle`; reveal →
+  `right` / `wrong` (Round 1 and wild card: a miss is wrong; Blackout: no answer → `idle`; voided →
+  idle). The cut: safe `right`, wild card players `idle`. Wild card revealed: the winner `right`, the
+  rest `out`. Blackout: after the dark moves, caught runners `out`, survivors `idle`. Podium: the
+  winner `right`. `locked` never reveals correctness.
 
 ### 8.7 A Round 1 question, end to end
 ```
@@ -490,7 +512,7 @@ Admin  → revealAnswer → Host r1Reveal {correctText} · phones {kind:"result"
   "timer":null, "paused":false, "serverNow":1791735000000,
   "screen":{"kind":"lobby","joined":12} }
 // admin:command
-{ "stepId": 12, "action": { "type": "markWrong" } }
+{ "stepId": 12, "action": { "type": "advanceDarkness" } }
 ```
 
 ### 8.9 The first backend prototype (resolved 12 Oct: the backend is `server/`)
@@ -524,6 +546,7 @@ Whichever is chosen: record it in §1.3 and §4.
 | Date | Change | Screens must |
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
+| 14 Oct 2026 | **v3: three rounds.** Phases `r2*`/`suddenDeath` → `wcIntro…wcWinner`, `boIntro…boDark`. `Round1Question`/`BuzzerQuestion` → `McqQuestion` (with `round`, `suddenDeath`); `OptionResult.letter` → `number`; `Reveal` (`correctText`, `correctIndex`, `voided`). New `WildCardState`, `WildCardStanding`, `BlackoutState`, `Runner`, `RunnerLite`, `FinalistInfo` (replaces `FinalistState`), `PodiumBasis`; `PodiumEntry` gets `round1Score`, `position`, `caughtOnQuestion`, `wildCard` (no `points`). `ParticipantStatus` + `wildcard`; `Counts.wildcard`; `QuizSettings` (`safeCount`, `wildCardQuestions`, `wildCardSuddenDeathMax`, `blackoutQuestions`, Blackout timings). Phone screens: `cut` (`outcome`), `safeWatch`, `wcStatus`, `wcWinner`, `runnerResult`, `runnerStatus`, `blackoutWatch`; question screens carry `round`; removed `finalist`, `buzzer`, `buzzerWatch`. `AdminAction`: − `markCorrect`, `markWrong`, `undoMark`, `startBuzzerRound`, `showScores`, `startSuddenDeath`; + `startWildCard`, `showStandings`, `revealWildCard`, `startBlackout`, `advanceDarkness`. `AdminQuestion` numbered 1–4 (`correctNumber`). `AdminParticipant` − `points`, + `wildCorrect`, `wildTimeMs`, `isWildCard`, `blackout`. `AdminView` − `round2`, `canUndo`, `lastMark`; + `wildCard`, `blackout`. Removed `participant:buzz`. Library: `Quiz.wildcard` + `Quiz.blackout` (was `buzzer`), `QuizRules` (`safe`, `wildCardQuestions`, `blackoutQuestions`, Blackout timings), `QuizSummary` counts. `/health` returns JSON. | Draw the new stages and screens; Admin shows the wild card standings and the runners |
 | 12 Oct 2026 | `AdminView.podium` (`PodiumSummary`, or null before the podium) (same data as the Host podium stage) | Admin shows the winner; the real backend must send it on the podium |
 | 12 Oct 2026 (evening) | **Bots for 100:** removed `BotPicker` and the lobby's `botPicker`; `BotError` no longer has `"taken"`; `participant:bot` takes any `#rrggbb`; new `normalizeBotColor`, `hexToHsl`, `hslToHex`, `BOT_LIGHTNESS`. | `BotBuilder` has no `picker` prop; colour swatches + wheel; nothing greyed out |
 | 12 Oct 2026 (later) | **Quiz library.** Removed `host:create`/`host:resume`; added `host:auth` (PIN), `admin:login`, `admin:rooms`, `admin:openRoom`, `admin:closeRoom`, `library:list/get/create/duplicate/save/delete`, HTTP `POST /api/images` + `GET /images/<id>`; types `Quiz`, `QuizRules`, `LibraryQuestion`, `QuizSummary`, `OpenRoomSummary`, `QUIZ_LIMITS`; `AdminView.quizTitle`. Rules/imports shared in `src/shared/quiz.ts`. Server: `server/library.ts` (Supabase tables `quizzes`, `quiz_images`), per-question `readMs`/`openMs`. | Admin opens rooms from a quiz; the Host asks for the PIN; question images via `assetUrl()` |
@@ -537,14 +560,17 @@ Whichever is chosen: record it in §1.3 and §4.
 | Host | the projector screen (`/host`), no controls |
 | Participant / phone | a player's phone (`/play`) |
 | Admin / quizmaster | the person running the quiz (`/admin`, PIN) |
-| Finalist | one of the top 6 after Round 1 |
+| Finalist | the top 9 after Round 1 (safe) plus the wild card winner: the 10 Blackout runners |
+| Wild card | the round for everyone outside the top 9; most right answers wins the 10th seat |
+| Blackout | the final: runners move on right answers, the dark advances and catches them; last one running wins |
+| Runner / the dark / gap | a finalist in Blackout / the darkness's position / steps a runner is ahead of it |
 | Audience | everyone not in the final; backs a finalist |
-| The cut | end of Round 1: the ranked list with a line under 6th |
+| The cut | end of Round 1: the ranked list with a line under 9th |
 | Bot | a participant's robot avatar (colour + head) |
 | Mood | what a bot's eyes are doing (`BotMood`) |
 | Step / stepId | the current position in the flow; changes every step |
-| Void | cancel a question: nobody gains or loses points |
-| Preset | `demo` (3 questions, top 3) or `event` (all questions, top 6) |
+| Void | cancel a question: it doesn't count (Blackout: no moves, the dark stays) |
+| Preset | `demo` (3 questions, top 3 safe, short Blackout) or `event` (20 / top 9 / 5 / 12) |
 
 ---
 

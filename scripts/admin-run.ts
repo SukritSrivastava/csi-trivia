@@ -9,9 +9,9 @@
  *
  * Along the way it checks: a fast double tap advances one step only, pause /
  * resume (button and P key), +5s, skip timer, void, restart question, remove
- * (two taps), a wrong buzz then a correct one, undo (U key), end quiz now.
- * Five scripted players (Riya, Kabir, Zoya, Aadi, Meera) always answer right
- * at once, so they make the final; `npm run bots` fills the room (no buzzing).
+ * (two taps), the wild card round, Blackout (a fast double Space moves the dark
+ * once), end quiz now. Five scripted players (Riya, Kabir, Zoya, Aadi, Meera)
+ * always answer right at once; `npm run bots` fills the room.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -80,7 +80,7 @@ class Player {
     this.socket = await connect();
     this.socket.on("participant:state", (v) => {
       this.view = v;
-      // Round 1: answer the right one straight away (the watching admin knows it).
+      // Every round: answer the right one straight away (the watching admin knows it).
       if (v.screen.kind === "answer" && !this.answered.has(v.screen.questionId) && adminView?.question) {
         const correct = adminView.question.correctText;
         const option = v.screen.options.find((o) => o.text === correct);
@@ -98,10 +98,6 @@ class Player {
     this.id = res.participantId;
   }
 
-  buzz() {
-    const s = this.view?.screen;
-    if (s?.kind === "buzzer" && s.questionId) this.socket.emit("participant:buzz", { questionId: s.questionId });
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +169,7 @@ async function main() {
 
   let bots: ChildProcess | null = null;
   if (BOTS > 0) {
-    bots = spawn(`npx tsx scripts/bots.ts --room ${roomCode} --count ${BOTS} --buzz 0 --url ${GAME}`, { shell: true, stdio: "ignore" });
+    bots = spawn(`npx tsx scripts/bots.ts --room ${roomCode} --count ${BOTS} --url ${GAME}`, { shell: true, stdio: "ignore" });
   }
 
   const browser = await chromium.launch();
@@ -290,50 +286,56 @@ async function main() {
     await waitPhase("cut");
     await shot(devices, "05-end-of-round-1");
 
+    // ---- The wild card round, from the phone
+    const safeNames = adminView!.finalists.map((f) => f.name);
+    check(safeNames.length === 3, `the cut: ${safeNames.length} safe (${safeNames.join(", ")})`);
+    await primary(phone, "Start wild card round");
+    await waitPhase("wcIntro");
+    await primary(phone, "Show question");
+    await waitPhase("wcTimesUp", 30_000);
+    await primary(phone, "Reveal answer");
+    await waitPhase("wcReveal");
+    await primary(phone, "Show standings");
+    await phone.page.getByTestId("wild-card").waitFor();
+    await shot(devices, "06-wildcard-standings");
+    check(true, "the wild card standings panel shows on Admin");
+    for (let guard = 0; guard < 10 && !adminView!.allowed.includes("revealWildCard"); guard++) {
+      await primary(phone);
+      await waitFor("wild card question done", (v) => v.phase === "wcReveal" || v.phase === "wcTimesUp", 30_000);
+      if (adminView!.phase === "wcTimesUp") await primary(phone, "Reveal answer");
+      await waitPhase("wcReveal");
+      if (!adminView!.allowed.includes("revealWildCard")) await primary(phone, "Show standings");
+    }
+    if (adminView!.phase === "wcReveal") await primary(phone, "Show standings");
+    await primary(phone, "Reveal wild card");
+    await waitPhase("wcWinner");
+    check(adminView!.finalists.length === 4, "the wild card makes 4 finalists in the demo");
+
     await primary(phone, "Open predictions");
     await waitPhase("predictions");
     await sleep(600);
-    await shot(devices, "06-predictions");
+    await shot(devices, "07-predictions");
 
-    // ---- buzzer round: wrong buzz, then a correct one, undo, correct again
-    await primary(phone, "Start buzzer round");
+    // ---- Blackout: reveal, then a fast double Space on the laptop moves the dark once
+    await primary(phone, "Start Blackout");
+    await waitPhase("boIntro");
+    await phone.page.getByTestId("blackout").waitFor();
+    check((await phone.page.getByTestId("runner-row").count()) === 4, "Admin lists every runner");
     await primary(phone, "Show question");
-    await waitPhase("r2BuzzOpen");
-    await shot(devices, "07-buzzers-open");
-
-    const finalists = adminView!.finalists.map((f) => players.find((p) => p.id === f.id)).filter((p): p is Player => !!p);
-    check(finalists.length >= 2, `scripted players made the final (${finalists.map((f) => f.name).join(", ")})`);
-    finalists[0].buzz();
-    await waitPhase("r2Answering");
-    await phone.page.getByTestId("judge").waitFor();
-    await shot(devices, "08-judging");
-
-    await laptop.page.keyboard.press("w");
-    await waitFor("reopened", (v) => v.phase === "r2BuzzOpen" && v.round2!.wrong.length === 1);
-    check(true, `W marked ${finalists[0].name} wrong; buzzers reopened`);
-    await phone.page.getByTestId("undo").waitFor();
-    check(true, "Undo last mark is visible after Wrong");
-
-    finalists[1].buzz();
-    await waitPhase("r2Answering");
-    await phone.page.getByTestId("judge-correct").click();
-    await waitPhase("r2Reveal");
-    check(adminView!.finalists.find((f) => f.id === finalists[1].id)!.points === 1, `Correct gave ${finalists[1].name} +1`);
-    await laptop.page.keyboard.press("u");
-    await waitPhase("r2Answering");
-    check(adminView!.finalists.find((f) => f.id === finalists[1].id)!.points === 0, "U undid the mark (point back, judging again)");
-    await sleep(700); // same button on the same device: not a double tap
-    await phone.page.getByTestId("judge-correct").click();
-    await waitPhase("r2Reveal");
-    await shot(devices, "09-buzzer-reveal");
-
-    // Fast double tap on the laptop's Space key: one step only
+    await waitPhase("boTimesUp", 30_000);
+    await primary(phone, "Reveal answer");
+    await waitPhase("boReveal");
+    await shot(devices, "08-blackout-reveal");
     const revealStep = adminView!.stepId;
+    const darkBefore = adminView!.blackout!.dark;
+    await sleep(700);
     await laptop.page.keyboard.press(" ");
     await laptop.page.keyboard.press(" ");
-    await waitFor("scores", (v) => v.phase === "r2Scores");
+    await waitPhase("boDark");
     await sleep(800);
     check(adminView!.stepId === revealStep + 1, "Space pressed twice fast moved exactly one step");
+    check(adminView!.blackout!.dark > darkBefore && adminView!.blackout!.dark - darkBefore <= 3, `the dark moved once (${darkBefore} → ${adminView!.blackout!.dark})`);
+    await shot(devices, "09-blackout-dark");
 
     // ---- End quiz now (two taps) â†’ podium
     await tab(phone, "controls");
@@ -382,15 +384,16 @@ async function main() {
     await phone.page.getByTestId("import-questions").click();
     await phone.page.getByText("Fill in the example").click();
     await phone.page.getByTestId("import-preview").waitFor();
-    check((await phone.page.getByTestId("import-add").textContent())?.includes("3 QUESTIONS"), "pasted text: 3 questions found (2 Round 1, 1 buzzer)");
+    check((await phone.page.getByTestId("import-add").textContent())?.includes("4 QUESTIONS"), "pasted text: 4 questions found (2 Round 1, 1 wild card, 1 Blackout)");
     await shot([phone], "15-import");
     await phone.page.getByTestId("import-add").click();
     check((await phone.page.getByTestId("question-card").count()) === 3, "Round 1 list now has 3 questions");
 
     await phone.page.getByTestId("editor-tab-settings").click();
     await phone.page.getByTestId("ready").waitFor();
-    check((await phone.page.getByTestId("ready").textContent())?.includes("buzzer round is set to"), "Settings says what's missing (buzzer count > list)");
-    await phone.page.getByRole("button", { name: "Questions that count: less" }).click();
+    check((await phone.page.getByTestId("ready").textContent())?.includes("Wild card is set to"), "Settings says what's missing (wild card count > list)");
+    await phone.page.getByTestId("rule-wildCardQuestions").fill("1");
+    await phone.page.getByTestId("rule-blackoutQuestions").fill("1");
     await phone.page.getByTestId("ready").getByText("Yes.").waitFor();
     await shot([phone], "16-settings");
     await phone.page.getByTestId("save-state").filter({ hasText: "Saved" }).waitFor({ timeout: 10_000 });

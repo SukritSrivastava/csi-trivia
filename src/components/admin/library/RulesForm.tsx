@@ -91,38 +91,48 @@ export function RulesForm({ quiz, onChange }: { quiz: Quiz; onChange: (rules: Qu
 
       <Panel title="The cut">
         <Stepper
-          label="Finalists"
-          hint="The top players after Round 1 who play the buzzer round. Everyone else backs one of them."
-          value={r.finalists}
-          min={QUIZ_LIMITS.finalists.min}
-          max={QUIZ_LIMITS.finalists.max}
-          onChange={set("finalists")}
-          testId="rule-finalists"
+          label="Safe after Round 1"
+          hint="The top players go straight to Blackout. Everyone else plays the wild card round for one more seat."
+          value={r.safe}
+          min={QUIZ_LIMITS.safe.min}
+          max={QUIZ_LIMITS.safe.max}
+          onChange={set("safe")}
+          testId="rule-safe"
         />
       </Panel>
 
-      <Panel title="Buzzer round (finalists)">
+      <Panel title="Wild card round (everyone outside the top)">
+        <Stepper
+          label="Questions that count"
+          hint={`Of the ${quiz.wildcard.length} in the Wild card list; the rest are spares for voids and sudden death. Same timings as Round 1.`}
+          value={r.wildCardQuestions}
+          min={1}
+          max={Math.max(1, quiz.wildcard.length)}
+          onChange={set("wildCardQuestions")}
+          testId="rule-wildCardQuestions"
+        />
+      </Panel>
+
+      <Panel title="Blackout (the finalists)">
         <div className="divide-y divide-line">
           <Stepper
-            label="Questions that count"
-            hint={`Of the ${quiz.buzzer.length} in the buzzer list; the rest are spares for voids and sudden death.`}
-            value={r.buzzerQuestions}
+            label="Questions"
+            hint={`Of the ${quiz.blackout.length} in the Blackout list; the rest are spares for voids.`}
+            value={r.blackoutQuestions}
             min={1}
-            max={Math.max(1, quiz.buzzer.length)}
-            onChange={set("buzzerQuestions")}
-            testId="rule-buzzerQuestions"
+            max={Math.max(1, quiz.blackout.length)}
+            onChange={set("blackoutQuestions")}
+            testId="rule-blackoutQuestions"
           />
-          <Stepper label="Time to read" hint="Buzzers locked while the room reads." value={r.buzzerReadSeconds} min={read.min} max={read.max} unit="seconds" onChange={set("buzzerReadSeconds")} />
-          <Stepper label="Buzz window" hint="How long buzzers stay open." value={r.buzzWindowSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("buzzWindowSeconds")} />
-          <Stepper label="Time to say the answer" hint="Countdown after a buzz. It never marks the answer; you do." value={r.spokenAnswerSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("spokenAnswerSeconds")} />
-          <Stepper label="Reopen window" hint="Buzzers for the others after a wrong answer." value={r.reopenSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("reopenSeconds")} />
+          <Stepper label="Time to read" hint="Question on the projector, answers not yet on phones." value={r.blackoutReadSeconds} min={read.min} max={read.max} unit="seconds" onChange={set("blackoutReadSeconds")} />
+          <Stepper label="Time to answer" hint="Right in the first third: +3, middle: +2, last: +1. Wrong: −1." value={r.blackoutAnswerSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("blackoutAnswerSeconds")} />
         </div>
       </Panel>
 
       <Panel title="Download">
         <div className="grid grid-cols-2 gap-2">
           <ControlButton onClick={() => downloadText(`${fileName}.csv`, quizToCsv(quiz), "text/csv")}>Quiz as spreadsheet (CSV)</ControlButton>
-          <ControlButton onClick={() => downloadText(`${fileName}.json`, JSON.stringify({ title: quiz.title, rules: quiz.rules, round1: quiz.round1, buzzer: quiz.buzzer }, null, 2), "application/json")}>
+          <ControlButton onClick={() => downloadText(`${fileName}.json`, JSON.stringify({ title: quiz.title, rules: quiz.rules, round1: quiz.round1, wildcard: quiz.wildcard, blackout: quiz.blackout }, null, 2), "application/json")}>
             Quiz as JSON
           </ControlButton>
         </div>

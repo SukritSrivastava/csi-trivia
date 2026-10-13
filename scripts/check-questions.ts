@@ -15,9 +15,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
 import { loadConfig } from "../server/config";
-import { pickRound1, pickRound2, QUESTIONS_FILE, loadQuestions } from "../server/questions";
+import { loadQuestions, pickRound, QUESTIONS_FILE } from "../server/questions";
 import type { Quiz } from "../src/shared/protocol";
-import { quizProblems } from "../src/shared/quiz";
+import { cleanQuiz, quizProblems } from "../src/shared/quiz";
+import { defaultRules } from "../server/library";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -168,30 +169,32 @@ try {
 }
 
 if (questions.length) {
-  const r1Pool = questions.filter((q) => q.round === 1 || q.round === null);
-  const tagged2 = questions.filter((q) => q.round === 2);
-  const round1 = pickRound1(questions, config.round1.questions);
-  const r1Unique = new Set(round1.map((q) => q.id)).size;
-  if (r1Pool.length === 0) errors.push('No Round 1 questions: tag some with "round": 1 or null.');
-  else if (r1Unique < round1.length) warnings.push(`Round 1 plays ${round1.length} questions but only ${r1Unique} exist, so some repeat. Add ${round1.length - r1Unique} more.`);
-
-  // Buzzer round: the planned questions plus a few spares (voids, sudden death).
-  const spares = 3;
-  const round2 = pickRound2(questions, config.round2.questions + spares, round1);
-  const fresh = new Set(round2.map((q) => q.id).filter((id) => !round1.some((r) => r.id === id))).size;
-  if (fresh < config.round2.questions) {
-    const need = config.round2.questions - fresh;
-    (config.name === "event" ? errors : warnings).push(
-      `The buzzer round needs ${config.round2.questions} questions nobody has seen; there are ${fresh}. Add ${need} more tagged "round": 2.`,
-    );
-  } else if (fresh < config.round2.questions + spares) {
-    warnings.push(`Only ${fresh - config.round2.questions} spare buzzer question(s) for a void or sudden death. ${spares} are recommended.`);
+  // The same picking the game server does: each round takes the questions tagged
+  // for it, then untagged ones nobody has used. No reuse here: the event preset never repeats one.
+  const used = new Set<string>();
+  const rounds = [
+    { round: 1 as const, name: "Round 1", planned: config.round1.questions, spares: 0, tag: 1 },
+    { round: 2 as const, name: "The wild card round", planned: config.wildCard.questions, spares: config.wildCard.suddenDeathMax, tag: 2 },
+    { round: 3 as const, name: "Blackout", planned: config.blackout.questions, spares: config.blackout.spares, tag: 3 },
+  ];
+  const lines: string[] = [];
+  for (const r of rounds) {
+    const got = pickRound(questions, r.round, r.planned + r.spares, used, false);
+    if (got.length < r.planned) {
+      // Event: a hard stop (the server refuses to open a room). Demo: it reuses questions, so a warning.
+      (config.name === "event" ? errors : warnings).push(
+        `${r.name} needs ${r.planned} questions; there are ${got.length}. Add ${r.planned - got.length} more tagged "round": ${r.tag} (or untagged ones).`,
+      );
+    } else if (got.length < r.planned + r.spares) {
+      warnings.push(`${r.name}: only ${got.length - r.planned} spare question(s) for voids${r.round === 2 ? " and sudden death" : ""}; ${r.spares} recommended.`);
+    }
+    lines.push(`  ${r.name} plays ${r.planned} (${got.length} available)`);
   }
-
-  console.log(`  ${questions.length} questions: ${tagged2.length} tagged buzzer round, ${questions.filter((q) => q.round === 1).length} tagged Round 1, ${questions.filter((q) => q.round === null).length} either`);
+  const tagged = (n: 1 | 2 | 3 | null) => questions.filter((q) => q.round === n).length;
+  console.log(`  ${questions.length} questions: ${tagged(1)} tagged Round 1, ${tagged(2)} wild card, ${tagged(3)} Blackout, ${tagged(null)} any round`);
   console.log(`  ${questions.filter((q) => q.image).length} with an image`);
-  console.log(`  Round 1 plays ${round1.length} (${config.round1.readMs / 1000}s read + ${config.round1.answerMs / 1000}s answer each)`);
-  console.log(`  Buzzer round plays ${config.round2.questions} for the top ${config.finalists}; ${fresh} fresh buzzer questions available`);
+  for (const l of lines) console.log(l);
+  console.log(`  Top ${config.safe} safe at the cut; the wild card makes ${config.safe + 1} Blackout runners`);
 }
 
 // ---------------------------------------------------------------------------
@@ -202,11 +205,16 @@ const libDir = path.join(process.cwd(), "data", "library", "quizzes");
 if (existsSync(libDir)) {
   for (const name of readdirSync(libDir).filter((n) => n.endsWith(".json"))) {
     try {
-      const quiz = JSON.parse(readFileSync(path.join(libDir, name), "utf8")) as Quiz;
+      const raw = JSON.parse(readFileSync(path.join(libDir, name), "utf8"));
+      // Saved before v3? Upgraded the way the server reads it (buzzer list → Wild card).
+      const quiz = (cleanQuiz(raw, defaultRules(config), true) ?? raw) as Quiz;
       const problems = quizProblems(quiz);
       for (const p of problems) warnings.push(`Library quiz "${quiz.title}": ${p}`);
-      [...quiz.round1, ...quiz.buzzer].forEach((q, i) => q.image && checkImage(q.image, `Library quiz "${quiz.title}", question ${i + 1}`));
-      console.log(`  Library: "${quiz.title}" (${quiz.round1.length} Round 1 + ${quiz.buzzer.length} buzzer)${problems.length ? ", not ready" : ", ready to play"}`);
+      const lists = { round1: quiz.round1 ?? [], wildcard: quiz.wildcard ?? (quiz as unknown as { buzzer?: Quiz["round1"] }).buzzer ?? [], blackout: quiz.blackout ?? [] };
+      [...lists.round1, ...lists.wildcard, ...lists.blackout].forEach((q, i) => q.image && checkImage(q.image, `Library quiz "${quiz.title}", question ${i + 1}`));
+      console.log(
+        `  Library: "${quiz.title}" (${lists.round1.length} Round 1 + ${lists.wildcard.length} wild card + ${lists.blackout.length} Blackout)${problems.length ? ", not ready" : ", ready to play"}`,
+      );
     } catch {
       warnings.push(`Library file ${name} isn't valid JSON.`);
     }

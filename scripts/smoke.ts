@@ -3,8 +3,9 @@
  *
  * Starts its own game server on a spare port (demo preset, timers sped
  * up), then plays a whole demo quiz the way the browsers would: a Host, an
- * Admin and 4 Participants, driven only through Admin commands. Checks the key
- * views along the way, including a phone that reconnects mid-question.
+ * Admin and 5 Participants, driven only through Admin commands: Round 1, the
+ * cut, the wild card round, predictions, Blackout and the podium. Checks the
+ * key views along the way, including a phone that reconnects mid-question.
  * Runs on its own; `npm run dev` doesn't need to be running.
  */
 import assert from "node:assert/strict";
@@ -70,8 +71,7 @@ class Latest<T> {
 
 /** Screens shown before an answer is revealed: these must never contain it. */
 function beforeReveal(screen: ParticipantScreen) {
-  if (["eyesUp", "answer", "lockedIn", "timesUp", "nextQuestion"].includes(screen.kind)) return true;
-  return (screen.kind === "buzzer" || screen.kind === "buzzerWatch") && ["read", "buzzOpen", "answering"].includes(screen.step);
+  return ["eyesUp", "answer", "lockedIn", "timesUp", "nextQuestion", "safeWatch", "wcStatus", "runnerStatus", "blackoutWatch"].includes(screen.kind);
 }
 
 let leakChecks = 0;
@@ -156,16 +156,17 @@ async function main() {
     const mk = (text: string): LibraryQuestion => ({ id: newId(), text, options: [`${text} A`, `${text} B`, `${text} C`, `${text} D`], correct: 2, image: null, readSeconds: null, openSeconds: 7 });
     const saved = await ask<SaveQuizResult>("library:save", {
       ...made.quiz,
-      rules: { ...made.quiz.rules, round1Questions: 1, finalists: 2, buzzerQuestions: 1 },
+      rules: { ...made.quiz.rules, round1Questions: 1, safe: 2, wildCardQuestions: 1, blackoutQuestions: 1 },
       round1: [mk("First"), mk("Spare")],
-      buzzer: [mk("Buzz")],
+      wildcard: [mk("Wild")],
+      blackout: [mk("Dark")],
     });
     assert.ok(saved.ok && saved.quiz.round1.length === 2 && saved.quiz.round1[0].openSeconds === 7);
     assert.ok((await ask<QuizSummary[]>("library:list")).find((q) => q.id === made.quiz.id)?.problems.length === 0, "now it's ready");
     const smokeRoom = await ask<OpenRoomResult>("admin:openRoom", { quizId: made.quiz.id });
     assert.ok(smokeRoom.ok);
     await admin.until(
-      (v) => v.quizTitle === "Smoke quiz" && v.settings.finalistCount === 2 && v.settings.round1Questions === 1 && v.settings.round2Questions === 1,
+      (v) => v.quizTitle === "Smoke quiz" && v.settings.safeCount === 2 && v.settings.round1Questions === 1 && v.settings.wildCardQuestions === 1 && v.settings.blackoutQuestions === 1,
       "the room plays the quiz's own settings",
     );
     assert.deepEqual(await ask("library:delete", { id: made.quiz.id }), { ok: true });
@@ -215,7 +216,7 @@ async function main() {
       admin.until((v) => v.phase === p && extra(v), `admin phase ${p}`);
 
     // ---- 4 participants join
-    const names = ["Riya", "Aadi", "Kabir", "Zoya"];
+    const names = ["Riya", "Aadi", "Kabir", "Zoya", "Dev"];
     const phones: Phone[] = [];
     for (const name of names) {
       const phone = new Phone(await open(), name);
@@ -232,9 +233,15 @@ async function main() {
       "duplicate join",
     );
     assert.deepEqual(dupe, { ok: false, error: "name-taken" });
-    await Promise.all(phones.map((p) => p.until((s) => s.kind === "lobby" && s.joined === 4, "lobby, 4 joined")));
-    await host.until((v) => v.participants.length === 4, "4 names on the Host");
-    step("4 participants joined; a duplicate name was refused");
+    await Promise.all(phones.map((p) => p.until((s) => s.kind === "lobby" && s.joined === 5, "lobby, 5 joined")));
+    await host.until((v) => v.participants.length === 5, "5 names on the Host");
+    // Bots in the lobby: any colour, shared bots are fine; locked once the quiz starts.
+    const bot = (phone: Phone, look: { color: string; head: string }) =>
+      within(new Promise((r) => phone.socket.emit("participant:bot", look as never, r)), "participant:bot");
+    assert.deepEqual(await bot(phones[0], { color: "#4cc9f0", head: "antenna" }), { ok: true });
+    assert.deepEqual(await bot(phones[1], { color: "#4cc9f0", head: "antenna" }), { ok: true }, "the same bot twice is fine");
+    assert.deepEqual(await bot(phones[1], { color: "nope", head: "antenna" }), { ok: false, error: "invalid" });
+    step("5 participants joined; a duplicate name was refused; bots: shared ok, invalid refused");
 
     // ---- Bad input never crashes the server
     adminSocket.emit("admin:command", { stepId: 1, action: { type: "explode" } } as never, (r) =>
@@ -246,8 +253,9 @@ async function main() {
     );
 
     // ---- Round 1
-    const [riya, aadi, kabir, zoya] = phones;
+    const [riya, aadi, kabir, zoya, dev] = phones;
     await command({ type: "startQuiz" });
+    assert.deepEqual(await bot(phones[2], { color: "#ff5fa2", head: "horns" }), { ok: false, error: "too-late" }, "bots lock at Start quiz");
     await phase("r1Intro");
     await Promise.all(phones.map((p) => p.until("r1Intro")));
     step("Start quiz → Round 1 intro on every phone");
@@ -317,18 +325,19 @@ async function main() {
       await answer(aadi, q !== 2);
       await answer(kabir, false);
       await answer(zoya, true);
+      await answer(dev, false);
       await phase("r1TimesUp");
       await command({ type: "revealAnswer" });
       await phase("r1Reveal");
       const outcomes = await Promise.all(phones.map((p) => p.until("result")));
       const got = outcomes.map((v) => (v.screen.kind === "result" ? v.screen.outcome : ""));
-      assert.deepEqual(got, ["correct", q !== 2 ? "correct" : "wrong", "wrong", "correct"]);
+      assert.deepEqual(got, ["correct", q !== 2 ? "correct" : "wrong", "wrong", "correct", "wrong"]);
       if (q === 1) {
         await command({ type: "showResults" });
         await host.until((v) => v.stage.phase === "r1Results", "results chart");
         await command({ type: "showLeaderboard" });
         const board = await host.until((v) => v.stage.phase === "r1Leaderboard", "leaderboard");
-        assert.ok(board.stage.phase === "r1Leaderboard" && board.stage.rows.length === 4);
+        assert.ok(board.stage.phase === "r1Leaderboard" && board.stage.rows.length === 5);
       }
     }
     const zoyaScore = admin.value!.participants.find((p) => p.id === zoya.id)!.score;
@@ -338,94 +347,132 @@ async function main() {
     await command({ type: "endRound1" });
     const cut = await host.until((v) => v.stage.phase === "cut", "the cut");
     if (cut.stage.phase !== "cut") throw new Error("expected the cut");
-    const finalistIds = cut.stage.standings.filter((s) => s.finalist).map((s) => s.id);
-    assert.equal(finalistIds.length, 3, "demo preset: top 3");
-    assert.equal(cut.stage.standings[3].id, kabir.id, "Kabir (all wrong) misses the cut");
+    const safeIds = cut.stage.standings.filter((s) => s.finalist).map((s) => s.id);
+    assert.equal(safeIds.length, 3, "demo preset: top 3 safe");
+    assert.deepEqual([...safeIds].sort(), [riya.id, aadi.id, zoya.id].sort());
+    assert.deepEqual([cut.stage.wildCardCount, cut.stage.wildCardSkipped], [2, false]);
     const kabirCut = await kabir.until("cut");
-    assert.ok(kabirCut.screen.kind === "cut" && !kabirCut.screen.madeIt && kabirCut.screen.rank === 4);
-    step(`The cut: ${cut.stage.standings.map((s) => `${s.rank}. ${s.name}${s.finalist ? " ✔" : ""}`).join(", ")}`);
+    assert.ok(kabirCut.screen.kind === "cut" && kabirCut.screen.outcome === "wildcard");
+    const riyaCut = await riya.until("cut");
+    assert.ok(riyaCut.screen.kind === "cut" && riyaCut.screen.outcome === "safe" && riyaCut.screen.rank === 1);
+    step(`The cut: ${cut.stage.standings.map((s) => `${s.rank}. ${s.name}${s.finalist ? " (safe)" : ""}`).join(", ")}`);
 
-    // ---- Predictions
+    // ---- Wild card round: Kabir gets them all right, Dev all wrong. A safe finalist's answer is ignored.
+    await command({ type: "startWildCard" });
+    await phase("wcIntro");
+    await riya.until("safeWatch");
+    for (let q = 1; q <= 3; q++) {
+      await command({ type: q === 1 ? "showQuestion" : "nextQuestion" });
+      await phase("wcRead");
+      await kabir.until("eyesUp");
+      await phase("wcAnswer");
+      const ks = (await kabir.until("answer")).screen;
+      if (q === 1 && ks.kind === "answer") {
+        riya.socket.emit("participant:answer", { questionId: ks.questionId, optionId: ks.options[0].id });
+      }
+      await answer(kabir, true);
+      await answer(dev, false);
+      await phase("wcTimesUp");
+      await command({ type: "revealAnswer" });
+      const r = (await kabir.until("result")).screen;
+      assert.ok(r.kind === "result" && r.round === 2 && r.outcome === "correct" && r.tally?.right === q, `Kabir: ${q} of ${q} right`);
+    }
+    assert.equal(admin.value!.participants.find((p) => p.id === riya.id)!.wildCorrect, null, "the safe finalist never played the wild card");
+    await command({ type: "showStandings" });
+    await host.until((v) => v.stage.phase === "wcStandings" && v.stage.wildCard.standings[0]?.id === kabir.id, "standings on the Host");
+    await command({ type: "revealWildCard" });
+    await host.until((v) => v.stage.phase === "wcWinner" && v.stage.wildCard.winner?.id === kabir.id, "the wild card on the Host");
+    const kw = await kabir.until("wcWinner");
+    assert.ok(kw.screen.kind === "wcWinner" && kw.screen.you === "won");
+    const dw = await dev.until("wcWinner");
+    assert.ok(dw.screen.kind === "wcWinner" && dw.screen.you === "lost");
+    step("Wild card round: 3 questions, a safe finalist's answer ignored, Kabir won the last seat");
+
+    // ---- Predictions: Dev (audience) backs Riya, after changing his mind
     await command({ type: "openPredictions" });
-    await kabir.until("backFinalist");
-    const [f1, f2] = finalistIds;
-    kabir.socket.emit("participant:back", { finalistId: f2 });
-    kabir.socket.emit("participant:back", { finalistId: f1 }); // changed his mind
-    await host.until((v) => v.stage.phase === "predictions" && v.stage.backing.counts[f1] === 1, "backing on the Host");
-    step("Predictions: Kabir backed a finalist (and changed his mind)");
+    await dev.until("backFinalist");
+    dev.socket.emit("participant:back", { finalistId: aadi.id });
+    dev.socket.emit("participant:back", { finalistId: riya.id });
+    await host.until((v) => v.stage.phase === "predictions" && v.stage.backing.counts[riya.id] === 1 && v.stage.finalists.length === 4, "backing on the Host");
+    step("Predictions: Dev backed a finalist (and changed his mind)");
 
-    // ---- Buzzer round
-    const byId = (id: string) => phones.find((p) => p.id === id)!;
-    const buzz = (id: string) => {
-      const s = byId(id).screen;
-      byId(id).socket.emit("participant:buzz", { questionId: s.kind === "buzzer" ? s.questionId ?? "" : "" });
-    };
-    const buzzersOpen = (ids: string[]) =>
-      Promise.all(ids.map((id) => byId(id).until((s) => s.kind === "buzzer" && s.canBuzz, "BUZZ button live")));
-
-    await command({ type: "startBuzzerRound" });
-    await phase("r2Intro");
-    await command({ type: "showQuestion" });
-    const read = await host.until((v) => v.stage.phase === "r2Read", "buzzer question on Host");
-    assert.ok(read.stage.phase === "r2Read" && read.stage.round2.question.options.length === 4 && read.stage.round2.correct === null);
-    await phase("r2BuzzOpen");
-    await buzzersOpen(finalistIds);
-    buzz(f1);
-    buzz(f2);
-    await phase("r2Answering", (v) => v.round2?.buzzedBy?.id === f1);
-    const judgingStep = admin.value!.stepId;
-    await command({ type: "markWrong" });
-    await phase("r2BuzzOpen");
-    await byId(f1).until((s) => s.kind === "buzzer" && s.lockedOut, "locked out");
-    buzz(f2);
-    await phase("r2Answering", (v) => v.round2?.buzzedBy?.id === f2);
-    await command({ type: "markCorrect" });
-    await phase("r2Reveal");
-    const stale = await within(
-      new Promise((r) => adminSocket.emit("admin:command", { stepId: judgingStep, action: { type: "markCorrect" } }, r)),
-      "stale command",
+    // ---- Blackout: Riya right every time, Aadi right twice then wrong, Zoya wrong, Kabir silent then wrong.
+    await command({ type: "startBlackout" });
+    const intro = await phase("boIntro");
+    assert.deepEqual(
+      intro.blackout!.runners.map((r) => [r.name, r.headStart]),
+      [
+        ["Riya", 2],
+        ["Zoya", 2],
+        ["Aadi", 2],
+        ["Kabir", 0],
+      ].filter((x) => intro.blackout!.runners.some((r) => r.name === x[0])).sort((a, b) => {
+        const ia = intro.blackout!.runners.findIndex((r) => r.name === a[0]);
+        const ib = intro.blackout!.runners.findIndex((r) => r.name === b[0]);
+        return ia - ib;
+      }),
+      "head starts: the top 3 +2, the wild card 0",
     );
-    assert.deepEqual(stale, { ok: false, reason: "stale-step" });
-    await byId(f2).until((s) => s.kind === "buzzer" && s.myResult === "correct", "f2 sees it was right");
-    step("Buzzer Q1: first buzz wins, Wrong → locked out → reopen, Correct +1; a stale double-mark was ignored");
-
-    await command({ type: "showScores" });
-    await command({ type: "nextQuestion" });
-    await phase("r2Reveal", (v) => v.round2?.outcome?.kind === "nobody");
-    step("Buzzer Q2: nobody buzzed → answer revealed, nobody scores");
-
-    await command({ type: "nextQuestion" });
-    await phase("r2BuzzOpen");
-    await buzzersOpen(finalistIds);
-    buzz(f1);
-    await phase("r2Answering");
-    await command({ type: "markCorrect" });
-    await phase("r2Reveal");
-    await command({ type: "showScores" });
-    const scores = await phase("r2Scores");
-    assert.equal(scores.primary?.label, "Start sudden death", "1–1 tie for first");
-    await command({ type: "startSuddenDeath" });
-    await phase("suddenDeath");
-    await command({ type: "showQuestion" });
-    await phase("r2BuzzOpen");
-    const third = finalistIds[2];
-    await byId(third).until((s) => s.kind === "buzzer" && !s.inPlay, "3rd finalist sits out sudden death");
-    buzz(f1);
-    await phase("r2Answering");
-    await command({ type: "markCorrect" });
-    await phase("r2Reveal", (v) => v.round2?.winner?.id === f1);
-    await command({ type: "showWinner" });
+    await kabir.until((s) => s.kind === "runnerStatus" && s.alive && s.headStart === 0, "Kabir ready, no head start");
+    let sawBack = false;
+    let sawCatch = false;
+    let q = 0;
+    while (admin.value!.phase !== "podium") {
+      q += 1;
+      assert.ok(q <= 6, "Blackout ends within its 6 questions");
+      await command({ type: q === 1 ? "showQuestion" : "nextQuestion" });
+      await phase("boRead");
+      await phase("boAnswer");
+      const alive = new Set(admin.value!.blackout!.runners.filter((r) => r.alive).map((r) => r.id));
+      if (alive.has(riya.id)) await answer(riya, true);
+      if (alive.has(aadi.id)) await answer(aadi, q <= 2);
+      if (alive.has(zoya.id)) await answer(zoya, false);
+      if (alive.has(kabir.id) && q > 1) await answer(kabir, false);
+      await phase("boTimesUp");
+      await command({ type: "revealAnswer" });
+      const reveal = await phase("boReveal");
+      const zr = reveal.blackout!.runners.find((r) => r.id === zoya.id)!;
+      if (zr.alive && zr.delta === -1) {
+        sawBack = true;
+        const zs = (await zoya.until("runnerResult")).screen;
+        assert.ok(zs.kind === "runnerResult" && zs.outcome === "wrong" && zs.delta === -1 && !!zs.correctText);
+      }
+      const darkStep = admin.value!.stepId;
+      await command({ type: "advanceDarkness" });
+      const dark = await phase("boDark");
+      const twice = await within(
+        new Promise((r) => adminSocket.emit("admin:command", { stepId: darkStep, action: { type: "advanceDarkness" } }, r)),
+        "double advance",
+      );
+      assert.deepEqual(twice, { ok: false, reason: "stale-step" }, "the dark never moves twice");
+      if (dark.blackout!.caughtThisQuestion.length) sawCatch = true;
+      if (dark.blackout!.caughtThisQuestion.includes(zoya.id)) {
+        const zs = (await zoya.until((s) => s.kind === "runnerStatus" && !s.alive, "Zoya caught")).screen;
+        assert.ok(zs.kind === "runnerStatus" && zs.caughtNow && zs.place !== null);
+      }
+      if (dark.blackout!.over) {
+        assert.equal(dark.primary?.label, "Show winner");
+        await command({ type: "showWinner" });
+        await phase("podium");
+      }
+    }
+    assert.ok(sawBack, "a wrong answer moved a runner back");
+    assert.ok(sawCatch, "the dark caught someone");
     const podium = await host.until((v) => v.stage.phase === "podium", "podium");
-    assert.ok(podium.stage.phase === "podium" && podium.stage.entries[0].id === f1 && podium.stage.calledIt === 1);
-    const winnerPhone = await byId(f1).until("podium");
-    assert.ok(winnerPhone.screen.kind === "podium" && winnerPhone.screen.place === 1);
-    const fan = await kabir.until("podium");
-    assert.ok(fan.screen.kind === "podium" && fan.screen.calledIt === true);
-    step("Tie → sudden death between the two leaders → winner on the podium; Kabir called it");
+    assert.ok(podium.stage.phase === "podium" && podium.stage.basis === "blackout" && podium.stage.entries[0].id === riya.id && podium.stage.calledIt === 1);
+    const lines = await Promise.all(phones.map((p) => p.until("podium")));
+    const riyaP = lines[0].screen;
+    assert.ok(riyaP.kind === "podium" && riyaP.place === 1);
+    const devP = lines[4].screen;
+    assert.ok(devP.kind === "podium" && devP.calledIt === true && devP.place === null, "Dev called it");
+    step(`Blackout: ${q} questions, a wrong answer moved Zoya back, the dark caught runners, Riya won; Dev called it`);
 
     // ---- Results, Host refresh, toggles
     const results = await within(new Promise<{ csv: string; filename: string } | null>((r) => adminSocket.emit("admin:results", r)), "CSV");
-    assert.ok(results && results.csv.split("\r\n").length === 5, "CSV: header + 4 rows");
+    const rows = results!.csv.split("\r\n");
+    assert.equal(rows.length, 6, "CSV: header + 5 rows");
+    assert.ok(rows[0].includes("Wild card correct") && rows[0].includes("Blackout place") && rows[0].includes("Blackout final position"), "the v3 columns");
+    assert.ok(rows[1].includes("Riya") && rows[1].includes(",winner,"));
     const host2Socket = await open();
     const host2 = new Latest<HostView>();
     host2Socket.on("host:state", (v) => host2.push(v));
@@ -435,7 +482,7 @@ async function main() {
     await command({ type: "setRoomCodeVisible", visible: false });
     await command({ type: "setSound", on: false });
     await host2.until((v) => !v.roomCodeVisible && !v.soundOn, "toggles reach the Host");
-    step("Results CSV, Host refresh resumes the same room, room code and sound toggles");
+    step("Results CSV with the v3 columns, Host refresh resumes the same room, room code and sound toggles");
 
     console.log(`\nSmoke test passed in ${((Date.now() - started) / 1000).toFixed(1)}s (${leakChecks} phone views checked for answer leaks).`);
   } finally {

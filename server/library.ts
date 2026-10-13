@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Quiz, QuizRules } from "../src/shared/protocol";
-import { blankQuestion } from "../src/shared/quiz";
+import { blankQuestion, isLegacyQuiz } from "../src/shared/quiz";
 import type { GameConfig } from "./config";
 import type { Database } from "./db";
 import { loadQuestions, type QuizQuestion } from "./questions";
@@ -154,27 +154,29 @@ export class PostgresLibrary implements LibraryStore {
 // Quiz ↔ game
 // ---------------------------------------------------------------------------
 
-/** The server preset's rules, for a new quiz. */
-export function defaultRules(config: GameConfig, round1Count = 0, buzzerCount = 0): QuizRules {
-  const r1 = config.round1.questions === "all" ? round1Count : config.round1.questions;
+/** The server preset's rules, for a new quiz (or capped to the lists' lengths, when given). */
+export function defaultRules(config: GameConfig, counts?: Partial<Record<"round1" | "wildcard" | "blackout", number>>): QuizRules {
+  const cap = (planned: number, have: number | undefined) => Math.max(1, have ? Math.min(planned, have) : planned);
   return {
-    round1Questions: Math.max(1, round1Count ? Math.min(r1, round1Count) : r1),
+    round1Questions: cap(config.round1.questions, counts?.round1),
     round1ReadSeconds: config.round1.readMs / 1000,
     round1AnswerSeconds: config.round1.answerMs / 1000,
-    finalists: config.finalists,
-    buzzerQuestions: Math.max(1, buzzerCount ? Math.min(config.round2.questions, buzzerCount) : config.round2.questions),
-    buzzerReadSeconds: config.round2.readMs / 1000,
-    buzzWindowSeconds: config.round2.buzzMs / 1000,
-    spokenAnswerSeconds: config.round2.answerMs / 1000,
-    reopenSeconds: config.round2.reopenMs / 1000,
+    safe: config.safe,
+    wildCardQuestions: cap(config.wildCard.questions, counts?.wildcard),
+    blackoutQuestions: cap(config.blackout.questions, counts?.blackout),
+    blackoutReadSeconds: config.blackout.readMs / 1000,
+    blackoutAnswerSeconds: config.blackout.answerMs / 1000,
   };
 }
 
-/** The frozen copy a room plays: its config (from the quiz's rules) and its questions. */
+/**
+ * The frozen copy a room plays: its config (the quiz's rules over the preset;
+ * the Blackout tuning always from the preset) and its questions, tagged 1, 2, 3.
+ */
 export function quizToGame(quiz: Quiz, base: GameConfig): { config: GameConfig; questions: QuizQuestion[] } {
   const r = quiz.rules;
   const ms = (s: number | null) => (s === null ? undefined : s * 1000);
-  const toQuestion = (round: 1 | 2, prefix: string) => (q: Quiz["round1"][number]): QuizQuestion => ({
+  const toQuestion = (round: 1 | 2 | 3, prefix: string) => (q: Quiz["round1"][number]): QuizQuestion => ({
     id: `${prefix}${q.id}`,
     round,
     text: q.text,
@@ -188,16 +190,16 @@ export function quizToGame(quiz: Quiz, base: GameConfig): { config: GameConfig; 
     config: {
       ...base,
       round1: { questions: r.round1Questions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000 },
-      finalists: r.finalists,
-      round2: {
-        questions: r.buzzerQuestions,
-        readMs: r.buzzerReadSeconds * 1000,
-        buzzMs: r.buzzWindowSeconds * 1000,
-        answerMs: r.spokenAnswerSeconds * 1000,
-        reopenMs: r.reopenSeconds * 1000,
-      },
+      safe: r.safe,
+      // The wild card round uses Round 1's timings (docs/SPEC.md v3).
+      wildCard: { ...base.wildCard, questions: r.wildCardQuestions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000 },
+      blackout: { ...base.blackout, questions: r.blackoutQuestions, readMs: r.blackoutReadSeconds * 1000, answerMs: r.blackoutAnswerSeconds * 1000 },
     },
-    questions: [...quiz.round1.map(toQuestion(1, "r1-")), ...quiz.buzzer.map(toQuestion(2, "b-"))],
+    questions: [
+      ...quiz.round1.map(toQuestion(1, "r1-")),
+      ...quiz.wildcard.map(toQuestion(2, "wc-")),
+      ...quiz.blackout.map(toQuestion(3, "bo-")),
+    ],
   };
 }
 
@@ -205,22 +207,33 @@ export const DEMO_QUIZ_ID = "demo";
 
 /**
  * Makes sure the library isn't empty: adds a "Demo quiz" built from
- * data/questions.json (Round 1: questions tagged 1 or untagged; buzzer: tagged 2,
- * or a copy of Round 1 when there are none).
+ * data/questions.json. Each list takes the questions tagged for it, else the
+ * untagged ones, repeated to fill the preset's counts (the demo reuses its 3
+ * questions in every round; each run still gets fresh ids). A Demo quiz saved
+ * before v3 (no Blackout list) is rebuilt.
  */
 export async function ensureDemoQuiz(store: LibraryStore, config: GameConfig, questionsFile?: string) {
-  if ((await store.list()).length > 0) return;
+  const quizzes = await store.list();
+  const demo = quizzes.find((q) => q.id === DEMO_QUIZ_ID);
+  if (quizzes.length > 0 && (!demo || !isLegacyQuiz(demo))) return;
   const all = loadQuestions(questionsFile);
   const toLib = (q: QuizQuestion) => ({ ...blankQuestion(), text: q.text, options: q.options, correct: q.correct, image: q.image });
-  const round1 = all.filter((q) => q.round !== 2).map(toLib);
-  const tagged = all.filter((q) => q.round === 2).map(toLib);
-  const buzzer = tagged.length ? tagged : round1.map((q) => ({ ...q, ...blankQuestion(), text: q.text, options: q.options, correct: q.correct, image: q.image }));
+  const fill = (round: 1 | 2 | 3, count: number) => {
+    const tagged = all.filter((q) => q.round === round);
+    const pool = tagged.length ? tagged : all.filter((q) => q.round === null);
+    const source = pool.length ? pool : all;
+    return Array.from({ length: Math.max(count, tagged.length) }, (_, i) => toLib(source[i % source.length]));
+  };
+  const round1 = fill(1, config.round1.questions);
+  const wildcard = fill(2, config.wildCard.questions + config.wildCard.suddenDeathMax);
+  const blackout = fill(3, config.blackout.questions + config.blackout.spares);
   await store.save({
     id: DEMO_QUIZ_ID,
     title: "Demo quiz",
-    rules: defaultRules(config, round1.length, buzzer.length),
+    rules: defaultRules(config, { round1: round1.length, wildcard: wildcard.length, blackout: blackout.length }),
     round1,
-    buzzer,
+    wildcard,
+    blackout,
     updatedAt: Date.now(),
   });
 }

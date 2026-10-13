@@ -6,13 +6,14 @@ import type { AdminParticipant, AdminView } from "@/shared/protocol";
 import type { Send } from "./GamePanels";
 import { Dot, Panel, useConfirm } from "./parts";
 
-type Filter = "all" | "playing" | "audience" | "finalist" | "left" | "offline";
+type Filter = "all" | "playing" | "audience" | "finalist" | "wildcard" | "left" | "offline";
 
 const FILTERS: { key: Filter; label: string; test: (p: AdminParticipant) => boolean }[] = [
   { key: "all", label: "All", test: () => true },
   { key: "playing", label: "Playing", test: (p) => p.status === "playing" },
   { key: "audience", label: "Audience", test: (p) => p.status === "audience" },
   { key: "finalist", label: "Finalists", test: (p) => p.status === "finalist" },
+  { key: "wildcard", label: "Wild card", test: (p) => p.status === "wildcard" },
   { key: "left", label: "Left page", test: (p) => p.status !== "removed" && (p.leftPageCount > 0 || p.pageHidden) },
   { key: "offline", label: "Offline", test: (p) => p.status !== "removed" && !p.connected },
 ];
@@ -20,6 +21,7 @@ const FILTERS: { key: Filter; label: string; test: (p: AdminParticipant) => bool
 const STATUS_TEXT: Record<AdminParticipant["status"], string> = {
   playing: "playing",
   finalist: "finalist",
+  wildcard: "wild card",
   audience: "audience",
   removed: "removed",
 };
@@ -111,7 +113,8 @@ const Row = memo(
           <p className="font-term text-2xl leading-none text-ghost tabular-nums">{p.score}</p>
           <p className="text-[14px] leading-tight text-fog">
             {p.rank != null ? `#${p.rank}` : " "}
-            {showPoints && p.status === "finalist" ? <span className="text-amber"> · {p.points} pts</span> : null}
+            {showPoints && p.wildCorrect !== null ? <span className="text-amber"> · {p.wildCorrect} right</span> : null}
+            {showPoints && p.blackout ? <span className="text-amber"> · {p.blackout.place ? `out #${p.blackout.place}` : `+${p.blackout.gap}`}</span> : null}
           </p>
         </div>
         {canRemove && (
@@ -141,7 +144,9 @@ const Row = memo(
     a.p.leftPageCount === b.p.leftPageCount &&
     a.p.score === b.p.score &&
     a.p.rank === b.p.rank &&
-    a.p.points === b.p.points &&
+    a.p.wildCorrect === b.p.wildCorrect &&
+    a.p.blackout?.gap === b.p.blackout?.gap &&
+    a.p.blackout?.place === b.p.blackout?.place &&
     a.p.answered === b.p.answered &&
     a.p.joinedLate === b.p.joinedLate,
 );

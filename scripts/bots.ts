@@ -4,22 +4,32 @@
  *   npm run bots -- --room ABCD --count 80
  *
  * Options:
- *   --room ABCD       room code from the Host screen (required)
- *   --count 20        how many bots (default 20)
+ *   --room ABCD          room code from the Host screen (required)
+ *   --count 20           how many bots (default 20)
  *   --url http://localhost:3001   game server (default: this computer)
- *   --prefix Bot      name prefix (default "Bot"), names are "Bot 01", "Bot 02", ...
- *   --buzz 0.6        chance a finalist bot buzzes on a question (default 0.6)
- *   --miss 0.1        chance a bot doesn't answer a Round 1 question (default 0.1)
+ *   --prefix Bot         name prefix (default "Bot"), names are "Bot 01", "Bot 02", ...
+ *   --accuracy 0.4-0.85  each bot's chance of answering right: a range (each bot
+ *                        gets its own) or one number (default 0.4-0.85)
+ *   --slow               answer anywhere in the answer time (default: mostly in
+ *                        the first half, like keen players)
+ *   --miss 0.08          chance a bot doesn't answer at all (default 0.08)
+ *   --pin 1234           the Admin PIN (default: $env:ADMIN_PIN, else 1234). Bots
+ *                        use it to know the right answer, so --accuracy works.
+ *                        Without it they answer at random.
  *
- * Bots join a few at a time, answer at random speeds, buzz at random if they
- * make the final, and back a random finalist. If the game server restarts they
+ * Bots join a few at a time, pick a random bot look in the lobby, answer in all
+ * three rounds whenever they're allowed to (Round 1, the wild card round,
+ * Blackout), and back a random finalist. If the game server restarts they
  * reconnect and rejoin. Stop them with Ctrl+C.
  */
 import { io, type Socket } from "socket.io-client";
 import {
+  type AdminView,
+  BOT_HEADS,
   type ClientToServerEvents,
   JOIN_ERROR_MESSAGES,
   type JoinResult,
+  PARTICIPANT_COLORS,
   type ParticipantView,
   type ServerToClientEvents,
 } from "../src/shared/protocol";
@@ -37,8 +47,10 @@ const room = arg("room")?.toUpperCase();
 const count = Math.max(1, Math.min(200, Number(arg("count", "20"))));
 const url = arg("url", process.env.GAME_URL ?? "http://localhost:3001")!;
 const prefix = arg("prefix", "Bot")!;
-const buzzChance = Number(arg("buzz", "0.6"));
-const missChance = Number(arg("miss", "0.1"));
+const [accLo, accHi] = (arg("accuracy", "0.4-0.85") ?? "0.4-0.85").split("-").map(Number);
+const slow = process.argv.includes("--slow");
+const missChance = Number(arg("miss", "0.08"));
+const pin = arg("pin", process.env.ADMIN_PIN ?? "1234")!;
 
 if (!room) {
   console.error("\n  Usage: npm run bots -- --room ABCD --count 80\n  (the room code is on the Host screen)\n");
@@ -46,13 +58,28 @@ if (!room) {
 }
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
-const pick = <T>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
+
+/** The right answer for the current question, read from an Admin view (null if we can't see it). */
+let correctText: string | null = null;
+let canSeeAnswers = false;
+const watcher: Client = io(url, { transports: ["websocket"], reconnectionDelayMax: 3000 });
+watcher.on("admin:state", (v: AdminView) => {
+  correctText = v.question?.correctText ?? null;
+});
+watcher.on("connect", () => {
+  watcher.emit("admin:auth", { roomCode: room!, pin }, (r) => {
+    canSeeAnswers = r.ok;
+    if (!r.ok) console.log(`  (Admin PIN not accepted: bots will answer at random, ignoring --accuracy. Use --pin.)`);
+  });
+});
 
 class Bot {
   socket: Client;
   participantId: string | null = null;
   view: ParticipantView | null = null;
-  /** Question / buzz-window ids this bot already acted on. */
+  readonly accuracy = Number.isFinite(accHi) ? rand(accLo, accHi) : accLo;
+  /** Question ids this bot already acted on. */
   private handled = new Set<string>();
   private timers = new Set<NodeJS.Timeout>();
 
@@ -100,28 +127,25 @@ class Bot {
     const s = view.screen;
     if (view.paused) return;
 
+    if (s.kind === "lobby" && !this.handled.has("look")) {
+      // Build a bot (bots may be shared; nothing is ever "taken").
+      this.handled.add("look");
+      this.later(rand(300, 3000), () => this.socket.emit("participant:bot", { color: pick(PARTICIPANT_COLORS), head: pick(BOT_HEADS) }, () => {}));
+    }
+
     if (s.kind === "answer" && !this.handled.has(s.questionId)) {
       this.handled.add(s.questionId);
       if (Math.random() < missChance) return;
       const msLeft = view.timer ? view.timer.endsAt - view.serverNow : 6000;
-      this.later(rand(300, Math.max(400, msLeft - 300)), () => {
+      const latest = Math.max(400, msLeft - 300);
+      const at = slow ? rand(300, latest) : 300 + Math.min(latest, rand(0, latest) * rand(0.3, 1));
+      this.later(at, () => {
         const now = this.view?.screen;
         if (now?.kind !== "answer" || now.questionId !== s.questionId) return;
-        this.socket.emit("participant:answer", { questionId: s.questionId, optionId: pick(now.options).id });
-      });
-    }
-
-    if (s.kind === "buzzer" && s.canBuzz && s.questionId) {
-      // One decision per buzz window (a reopened window is a new chance).
-      const key = `${s.questionId}:${s.wrong.length}`;
-      if (this.handled.has(key)) return;
-      this.handled.add(key);
-      if (Math.random() > buzzChance) return;
-      this.later(rand(400, 6000), () => {
-        const now = this.view?.screen;
-        if (now?.kind === "buzzer" && now.canBuzz && now.questionId === s.questionId) {
-          this.socket.emit("participant:buzz", { questionId: s.questionId! });
-        }
+        const right = canSeeAnswers && correctText ? now.options.find((o) => o.text === correctText) : undefined;
+        const wrong = now.options.filter((o) => o !== right);
+        const choice = right ? (Math.random() < this.accuracy ? right : pick(wrong)) : pick(now.options);
+        this.socket.emit("participant:answer", { questionId: s.questionId, optionId: choice.id });
       });
     }
 
@@ -167,6 +191,7 @@ process.on("SIGINT", () => {
   clearInterval(joiner);
   clearInterval(status);
   for (const b of bots) b.stop();
+  watcher.disconnect();
   console.log("\n  Bots stopped.\n");
   process.exit(0);
 });

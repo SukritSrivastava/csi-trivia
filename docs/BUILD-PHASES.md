@@ -1,5 +1,10 @@
 # Frontend build: 5 phases (v4)
 
+> **Status 14 Oct 2026:** all 5 phases below are done (the v2 buzzer-round game, deployed 13 Oct).
+> SPEC v3 (three rounds: Round 1 → wild card → Blackout) came with a new **v5, three-phase plan**
+> pasted in chat on 14 Oct: Phase 1 (the engine, contract, server, tests, tuning) is done; Phases 2
+> and 3 (the screens for the new rounds) are next. This file is kept as the record of the v4 build.
+
 v4 (11 Oct 2026, evening): rewritten for the approved design, **"Server Corridor, Lights Low"**
 (`public/finaldesign.html`), bots with reacting eyes, and one 1–4 answer order on the Host and
 every phone. Rules: docs/SPEC.md (v2.1).

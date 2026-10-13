@@ -54,7 +54,9 @@ async function render() {
   }
   if (status !== "live") throw new Error(`Render deploy ended as "${status}". Check the Render dashboard log.`);
   const health = await fetch(`${url}/health`).then((r) => r.text());
-  if (health !== "ok") throw new Error(`${url}/health said "${health}"`);
+  // Before 14 Oct the server answered "ok"; now { "ok": true, "rooms": …, "uptimeS": … }.
+  const healthy = health === "ok" || (() => { try { return JSON.parse(health).ok === true; } catch { return false; } })();
+  if (!healthy) throw new Error(`${url}/health said "${health}"`);
   console.log(`Render: live at ${url} (/health ok)`);
 }
 

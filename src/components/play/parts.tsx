@@ -3,13 +3,13 @@
 /**
  * Bits every phone screen shares, from the four phones in public/finaldesign.html:
  * the small header ("Q1 of 3 · 5s") with the thin mint timer bar, the big
- * centred moment (bot, big terminal word, a line under it), the finalists as
- * bots with points, and the alarm-red banners.
+ * centred moment (bot, big terminal word, a line under it), and the alarm-red
+ * banners.
  */
 import type { ReactNode } from "react";
-import { Bot, botDelay } from "@/components/ui/Bot";
+import { Bot } from "@/components/ui/Bot";
 import { useCountdown } from "@/lib/useCountdown";
-import type { BotMood, FinalistState, ParticipantTag, Timer } from "@/shared/protocol";
+import type { BotMood, ParticipantTag, Timer } from "@/shared/protocol";
 import { useParticipantStore } from "@/stores/participantStore";
 
 export function PhoneHeader({ label, me, timer, showBot = true }: { label: string; me: ParticipantTag; timer: Timer | null; showBot?: boolean }) {
@@ -70,42 +70,6 @@ export function Moment({
 /** A screen title in the design's "Pick one. First tap locks." style. */
 export function PhoneTitle({ children }: { children: ReactNode }) {
   return <h1 className="text-[clamp(1.6rem,8.4vw,2.2rem)] leading-[1.1] text-balance">{children}</h1>;
-}
-
-/** The finalists as small bots with names and live points (amber). */
-export function FinalistGrid({
-  finalists,
-  backedId,
-  buzzedId,
-  meId,
-}: {
-  finalists: FinalistState[];
-  backedId?: string | null;
-  buzzedId?: string | null;
-  meId?: string;
-}) {
-  return (
-    <ul className="grid grid-cols-3 gap-2" aria-label="Finalists">
-      {finalists.map((f) => {
-        const mood: BotMood = f.lockedOut ? "wrong" : buzzedId === f.id ? "locked" : "idle";
-        const picked = backedId === f.id;
-        return (
-          <li
-            key={f.id}
-            className={`flex min-w-0 flex-col items-center gap-1 rounded-xl border-2 px-1 py-2 ${picked || buzzedId === f.id ? "border-mint bg-mint/[0.07]" : "border-line"} ${
-              f.lockedOut || !f.inPlay ? "opacity-45" : ""
-            }`}
-            data-testid="finalist"
-          >
-            <Bot color={f.color} head={f.head} mood={mood} size="38px" delay={botDelay(f.id)} />
-            <span className="w-full truncate text-center text-sm">{f.id === meId ? "You" : f.name}</span>
-            <span className="font-term text-[1.9rem] leading-none text-amber">{f.points}</span>
-            {picked && <span className="text-xs text-mint">your pick</span>}
-          </li>
-        );
-      })}
-    </ul>
-  );
 }
 
 /** The alarm-red band: reconnecting, paused. */

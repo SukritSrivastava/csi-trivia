@@ -1,14 +1,14 @@
 /**
  * Full rehearsal at event scale. The Host at 1920×1080, Admin at phone size
  * (every step is a real tap on its big button), 4 real Participant tabs and
- * 100 bots, lobby to podium, with a void, an undo and a participant refresh.
+ * 100 bots, lobby to podium, with a void, a restart question and a participant refresh.
  * Measures the Host's frame rate on the busy screens, its memory, and how fast
  * a tap on Admin reaches the Host and the phones.
  *
  *   npm run build; $env:DATABASE_URL="off"; $env:GAME_PRESET="event"; npm run preview   (another terminal)
  *   npm run rehearsal [-- --bots 100 --out screenshots/rehearsal]
  *
- * Uses a copy of the Demo quiz with the event's top 6 (deleted at the end).
+ * Uses a copy of the Demo quiz with the event's top 9 safe (deleted at the end).
  * Headless Chromium draws on the CPU, so its fps is a floor: a real laptop with
  * a GPU does better.
  */
@@ -76,11 +76,11 @@ async function main() {
   });
   await new Promise((r) => watcher.emit("admin:login", { pin: PIN }, r));
 
-  // A copy of the Demo quiz with the event's cut (top 6).
+  // A copy of the Demo quiz with the event's cut (top 9 safe).
   const copy = await new Promise<SaveQuizResult>((r) => watcher.emit("library:duplicate", { id: "demo" }, r));
   if (!copy.ok) throw new Error("Couldn't copy the Demo quiz");
   const quiz = (await new Promise<Quiz | null>((r) => watcher.emit("library:get", { id: copy.quiz.id }, r)))!;
-  await new Promise((r) => watcher.emit("library:save", { ...quiz, title: "Rehearsal (event cut)", rules: { ...quiz.rules, finalists: 6 } }, r));
+  await new Promise((r) => watcher.emit("library:save", { ...quiz, title: "Rehearsal (event cut)", rules: { ...quiz.rules, safe: 9, round1Questions: 3, wildCardQuestions: 3 } }, r));
   const opened = await new Promise<OpenRoomResult>((r) => watcher.emit("admin:openRoom", { quizId: quiz.id }, r));
   if (!opened.ok) throw new Error(`Couldn't open a room: ${opened.error}`);
   const room = opened.roomCode;
@@ -180,7 +180,7 @@ async function main() {
 
   let bots: ChildProcess | null = null;
   try {
-    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --buzz 0 --url ${GAME}`, { shell: true, stdio: "ignore" });
+    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --url ${GAME}`, { shell: true, stdio: "ignore" });
     await until("everyone joined", (v) => v.counts.joined >= 4 + BOTS, 90_000);
     await sleep(2500);
     await sampleHeap("lobby");
@@ -230,46 +230,90 @@ async function main() {
     await sleep(600);
     await measure("the cut");
     await shot("04-cut");
-    check(admin!.finalists.length === 6, `top ${admin!.finalists.length} made the cut`);
+    check(admin!.finalists.length === 9, `top ${admin!.finalists.length} safe at the cut`);
 
-    await tap(); // predictions
-    await until("backers", (v) => v.phase === "predictions");
-    await sleep(2500);
-    await tap(); // buzzer round intro
-    const finalistPhones = phones.filter((p) => admin!.finalists.some((f) => f.name === p.name));
-    check(finalistPhones.length >= 1, `${finalistPhones.map((p) => p.name).join(", ")} on phones made the final`);
+    /** Phones that have answer buttons right now tap (right or wrong, by their plan). */
+    const answerOpenPhones = async () => {
+      const correct = admin!.question?.correctText;
+      for (const p of phones) {
+        if ((await p.page.getByTestId("screen-answer").count()) === 0 || !correct) continue;
+        const opt = p.page.getByTestId("option");
+        await (p.right ? opt.filter({ hasText: correct }) : opt.filter({ hasNotText: correct }).first()).click({ timeout: 3000 }).catch(() => {});
+      }
+    };
 
-    // Buzzer questions: a phone finalist buzzes; the first mark is undone once.
-    let undone = false;
-    const giveUp = Date.now() + 240_000;
-    while (Date.now() < giveUp && now() !== "podium") {
+    // ---- The wild card round (everyone below the line, bots included)
+    await tap("Start wild card round");
+    let measuredWild = false;
+    for (const giveUp = Date.now() + 300_000; Date.now() < giveUp && now() !== "wcWinner"; ) {
       const p = now();
-      if (p === "r2BuzzOpen" && finalistPhones.length) {
-        const fp = finalistPhones.find((f) => !admin!.round2?.wrong.some((w) => w.name === f.name));
-        if (fp) {
-          await fp.page.locator('[data-testid="buzz"][data-live="true"]').click({ timeout: 5000 });
-          await phase("r2Answering", 5000);
-        } else await sleep(300);
+      if (p === "wcRead") {
+        await sleep(200);
         continue;
       }
-      if (p === "r2Answering") {
-        await adminPage.page.getByTestId("judge-correct").click();
-        await phase("r2Reveal", 5000);
-        if (!undone) {
-          await sleep(700);
-          await adminPage.page.getByTestId("undo").click();
-          await phase("r2Answering", 5000);
-          undone = true;
-          check(true, "undo a Correct mark: back to judging");
-          await adminPage.page.getByTestId("judge-correct").click();
-          await phase("r2Reveal", 5000);
+      if (p === "wcAnswer") {
+        await answerOpenPhones();
+        if (!measuredWild) {
+          measuredWild = true;
+          await measure("wild card answer step");
+          await shot("05-wildcard-answer");
         }
-        await sleep(700); // the 600 ms guard covers the judge buttons too
+        await phase("wcTimesUp", 20_000);
         continue;
       }
-      if (p === "r2Read" || p === "r2BuzzOpen") {
-        await sleep(300);
+      if (admin!.allowed.includes("revealWildCard") && admin!.primary?.action.type === "showStandings") {
+        await tap("Show standings");
         continue;
+      }
+      await tap();
+    }
+    await sleep(1500);
+    await shot("06-wildcard-winner");
+    check(admin!.finalists.length === 10, `the wild card makes ${admin!.finalists.length} finalists`);
+
+    await tap("Open predictions");
+    await until("predictions", (v) => v.phase === "predictions");
+    await sleep(2500);
+    await tap("Start Blackout");
+    const runnerPhones = phones.filter((p) => admin!.finalists.some((f) => f.name === p.name));
+    check(runnerPhones.length >= 1, `${runnerPhones.map((p) => p.name).join(", ")} on phones run in Blackout`);
+
+    // ---- Blackout to the end; Restart question once (from Admin's Controls, two taps)
+    let restarted = false;
+    let measuredReveal = false;
+    let measuredDark = false;
+    for (const giveUp = Date.now() + 300_000; Date.now() < giveUp && now() !== "podium"; ) {
+      const p = now();
+      if (p === "boRead") {
+        await sleep(200);
+        continue;
+      }
+      if (p === "boAnswer") {
+        await answerOpenPhones();
+        await phase("boTimesUp", 20_000);
+        continue;
+      }
+      if (p === "boReveal" && !restarted) {
+        restarted = true;
+        await adminPage.page.getByRole("tab", { name: /controls/i }).click();
+        await adminPage.page.getByTestId("ctl-restartQuestion").click();
+        await adminPage.page.getByTestId("ctl-restartQuestion").click();
+        await phase("boRead", 5000);
+        check(true, "restart question in Blackout: moves undone, back to the read step");
+        await adminPage.page.getByRole("tab", { name: /game/i }).click();
+        continue;
+      }
+      if (p === "boReveal" && !measuredReveal) {
+        measuredReveal = true;
+        await sleep(400);
+        await measure("Blackout reveal (runners move)");
+        await shot("07-blackout-reveal");
+      }
+      if (p === "boDark" && !measuredDark) {
+        measuredDark = true;
+        await sleep(300);
+        await measure("Blackout dark moves");
+        await shot("08-blackout-dark");
       }
       await tap();
     }

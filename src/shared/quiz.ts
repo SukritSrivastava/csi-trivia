@@ -39,26 +39,31 @@ export function questionProblems(q: LibraryQuestion, where: string): string[] {
   return p;
 }
 
-export function rulesProblems(r: QuizRules, round1Count: number, buzzerCount: number): string[] {
+/** The three question lists of a quiz. */
+export type ListName = "round1" | "wildcard" | "blackout";
+export const LIST_NAMES: readonly ListName[] = ["round1", "wildcard", "blackout"];
+/** As named in the editor. */
+export const LIST_LABELS: Record<ListName, string> = { round1: "Round 1", wildcard: "Wild card", blackout: "Blackout" };
+
+export function rulesProblems(r: QuizRules, counts: Record<ListName, number>): string[] {
   const p: string[] = [];
   const secs = (v: number, range: { min: number; max: number }, label: string) => {
     if (!inRange(v, range)) p.push(`${label} must be ${range.min}–${range.max} seconds.`);
   };
-  if (!Number.isInteger(r.round1Questions) || r.round1Questions < 1) p.push("Play at least 1 Round 1 question.");
-  else if (r.round1Questions > round1Count) {
-    p.push(`Round 1 is set to ${r.round1Questions} questions but the list has ${round1Count}. Add questions or lower the number.`);
-  }
-  if (!Number.isInteger(r.buzzerQuestions) || r.buzzerQuestions < 1) p.push("Play at least 1 buzzer question.");
-  else if (r.buzzerQuestions > buzzerCount) {
-    p.push(`The buzzer round is set to ${r.buzzerQuestions} questions but the list has ${buzzerCount}. Add questions or lower the number.`);
-  }
-  if (!inRange(r.finalists, L.finalists)) p.push(`Finalists must be ${L.finalists.min}–${L.finalists.max}.`);
+  const enough = (n: number, list: ListName, what: string) => {
+    if (!Number.isInteger(n) || n < 1) p.push(`Play at least 1 ${what} question.`);
+    else if (n > counts[list]) {
+      p.push(`${LIST_LABELS[list]} is set to ${n} questions but the list has ${counts[list]}. Add questions or lower the number.`);
+    }
+  };
+  enough(r.round1Questions, "round1", "Round 1");
+  enough(r.wildCardQuestions, "wildcard", "wild card");
+  enough(r.blackoutQuestions, "blackout", "Blackout");
+  if (!inRange(r.safe, L.safe)) p.push(`Safe at the cut must be ${L.safe.min}–${L.safe.max}.`);
   secs(r.round1ReadSeconds, L.readSeconds, "Round 1 read time");
   secs(r.round1AnswerSeconds, L.openSeconds, "Round 1 answer time");
-  secs(r.buzzerReadSeconds, L.readSeconds, "Buzzer read time");
-  secs(r.buzzWindowSeconds, L.openSeconds, "Buzz window");
-  secs(r.spokenAnswerSeconds, L.openSeconds, "Spoken answer time");
-  secs(r.reopenSeconds, L.openSeconds, "Reopen window");
+  secs(r.blackoutReadSeconds, L.readSeconds, "Blackout read time");
+  secs(r.blackoutAnswerSeconds, L.openSeconds, "Blackout answer time");
   return p;
 }
 
@@ -66,11 +71,11 @@ export function rulesProblems(r: QuizRules, round1Count: number, buzzerCount: nu
 export function quizProblems(quiz: Quiz): string[] {
   const p: string[] = [];
   if (!quiz.title.trim()) p.push("Give the quiz a title.");
-  if (quiz.round1.length === 0) p.push("Add at least one Round 1 question.");
-  if (quiz.buzzer.length === 0) p.push("Add at least one buzzer-round question.");
-  quiz.round1.forEach((q, i) => p.push(...questionProblems(q, `Round 1, question ${i + 1}`)));
-  quiz.buzzer.forEach((q, i) => p.push(...questionProblems(q, `Buzzer round, question ${i + 1}`)));
-  p.push(...rulesProblems(quiz.rules, quiz.round1.length, quiz.buzzer.length));
+  for (const list of LIST_NAMES) {
+    if (quiz[list].length === 0) p.push(`Add at least one ${LIST_LABELS[list]} question.`);
+    quiz[list].forEach((q, i) => p.push(...questionProblems(q, `${LIST_LABELS[list]}, question ${i + 1}`)));
+  }
+  p.push(...rulesProblems(quiz.rules, { round1: quiz.round1.length, wildcard: quiz.wildcard.length, blackout: quiz.blackout.length }));
   return p;
 }
 
@@ -97,20 +102,36 @@ export function cleanQuestion(raw: unknown): LibraryQuestion {
   };
 }
 
-/** A quiz from the network, cleaned up. `fallback` fills missing rules. null if it isn't a quiz at all. */
-export function cleanQuiz(raw: unknown, fallback: QuizRules): Quiz | null {
+/** A quiz saved before v3 (14 Oct 2026): a buzzer list and no Wild card / Blackout lists. */
+export function isLegacyQuiz(raw: unknown): boolean {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return !Array.isArray(r.wildcard) && !Array.isArray(r.blackout) && Array.isArray(r.buzzer);
+}
+
+/**
+ * A quiz from the network or from storage, cleaned up. `fallback` fills missing
+ * rules. null if it isn't a quiz at all.
+ *
+ * Quizzes saved before v3 have a buzzer list and buzzer rules: the buzzer list
+ * becomes the Wild card list, Blackout starts empty, and every rule except Round
+ * 1's own comes from `fallback`. Pass `keepUpdatedAt` when reading from storage.
+ */
+export function cleanQuiz(raw: unknown, fallback: QuizRules, keepUpdatedAt = false): Quiz | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || !/^[\w-]{1,40}$/.test(r.id)) return null;
+  const legacy = isLegacyQuiz(r);
   const rules = (r.rules ?? {}) as Record<string, unknown>;
   const list = (v: unknown) => (Array.isArray(v) ? v.slice(0, L.questionsPerList).map(cleanQuestion) : []);
+  const kept = legacy ? ["round1Questions", "round1ReadSeconds", "round1AnswerSeconds"] : Object.keys(fallback);
   return {
     id: r.id,
     title: text(r.title, L.title),
-    rules: Object.fromEntries(Object.entries(fallback).map(([k, d]) => [k, int(rules[k], d)])) as unknown as QuizRules,
+    rules: Object.fromEntries(Object.entries(fallback).map(([k, d]) => [k, kept.includes(k) ? int(rules[k], d) : d])) as unknown as QuizRules,
     round1: list(r.round1),
-    buzzer: list(r.buzzer),
-    updatedAt: Date.now(),
+    wildcard: list(legacy ? r.buzzer : r.wildcard),
+    blackout: list(r.blackout),
+    updatedAt: keepUpdatedAt && typeof r.updatedAt === "number" ? r.updatedAt : Date.now(),
   };
 }
 
@@ -118,12 +139,11 @@ export function cleanQuiz(raw: unknown, fallback: QuizRules): Quiz | null {
 // Importing
 // ---------------------------------------------------------------------------
 
-export type ListName = "round1" | "buzzer";
-
 export interface ImportResult {
   /** Questions per list. Questions with no round go to the list the import was started from. */
   round1: LibraryQuestion[];
-  buzzer: LibraryQuestion[];
+  wildcard: LibraryQuestion[];
+  blackout: LibraryQuestion[];
   /** Lines/rows that couldn't be read, in plain words. */
   problems: string[];
 }
@@ -132,7 +152,8 @@ function roundOf(value: string, fallback: ListName): ListName {
   const v = value.trim().toLowerCase();
   if (!v) return fallback;
   if (/^(1|r1|round ?1|one|normal|main)$/.test(v)) return "round1";
-  if (/^(2|r2|round ?2|two|buzz|buzzer|buzzer round|final)$/.test(v)) return "buzzer";
+  if (/^(2|r2|round ?2|two|wild|wild ?card|wild ?card round|buzz|buzzer|buzzer round)$/.test(v)) return "wildcard";
+  if (/^(3|r3|round ?3|three|blackout|black ?out|final|chase)$/.test(v)) return "blackout";
   return fallback;
 }
 
@@ -155,11 +176,11 @@ function correctIndex(value: string, options: string[]): number {
  *   Layered Learning Matrix
  *   Long-term Language Memory
  *
- * Answers may start with "A)", "b.", "1)" etc. A line "# Buzzer" (or "# Round 1")
- * puts the questions after it into that list.
+ * Answers may start with "A)", "b.", "1)" etc. A line "# Wild card", "# Blackout"
+ * (or "# Round 1") puts the questions after it into that list.
  */
 export function importText(input: string, target: ListName): ImportResult {
-  const out: ImportResult = { round1: [], buzzer: [], problems: [] };
+  const out: ImportResult = { round1: [], wildcard: [], blackout: [], problems: [] };
   let list = target;
   const blocks: { lines: string[]; list: ListName }[] = [];
   let current: string[] = [];
@@ -260,10 +281,10 @@ const HEADERS: Record<string, string[]> = {
 /**
  * Spreadsheet rows (from CSV or Excel). The first row is the header; columns are
  * matched by name: question, A, B, C, D, correct (A–D, 1–4 or the answer's text),
- * and optionally round (1 / buzzer), read seconds, answer seconds.
+ * and optionally round (1 / wild card / blackout), read seconds, answer seconds.
  */
 export function importRows(rows: unknown[][], target: ListName): ImportResult {
-  const out: ImportResult = { round1: [], buzzer: [], problems: [] };
+  const out: ImportResult = { round1: [], wildcard: [], blackout: [], problems: [] };
   if (rows.length < 2) {
     out.problems.push("The sheet needs a header row and at least one question row.");
     return out;
@@ -300,11 +321,12 @@ export function importRows(rows: unknown[][], target: ListName): ImportResult {
 }
 
 /**
- * JSON: a quiz exported from this editor ({ round1, buzzer }), the repo's
- * data/questions.json ({ questions: [{ text, options, correct, round }] }), or a plain array.
+ * JSON: a quiz exported from this editor ({ round1, wildcard, blackout }; older
+ * exports with { round1, buzzer } too), the repo's data/questions.json
+ * ({ questions: [{ text, options, correct, round }] }), or a plain array.
  */
 export function importJson(input: string, target: ListName): ImportResult {
-  const out: ImportResult = { round1: [], buzzer: [], problems: [] };
+  const out: ImportResult = { round1: [], wildcard: [], blackout: [], problems: [] };
   let data: unknown;
   try {
     data = JSON.parse(input);
@@ -313,9 +335,11 @@ export function importJson(input: string, target: ListName): ImportResult {
     return out;
   }
   const d = data as Record<string, unknown>;
-  if (d && typeof d === "object" && (Array.isArray(d.round1) || Array.isArray(d.buzzer))) {
-    out.round1 = (Array.isArray(d.round1) ? d.round1 : []).map((q) => ({ ...cleanQuestion(q), id: newId() }));
-    out.buzzer = (Array.isArray(d.buzzer) ? d.buzzer : []).map((q) => ({ ...cleanQuestion(q), id: newId() }));
+  if (d && typeof d === "object" && ["round1", "wildcard", "blackout", "buzzer"].some((k) => Array.isArray(d[k]))) {
+    const take = (v: unknown) => (Array.isArray(v) ? v : []).map((q) => ({ ...cleanQuestion(q), id: newId() }));
+    out.round1 = take(d.round1);
+    out.wildcard = take(Array.isArray(d.wildcard) ? d.wildcard : d.buzzer);
+    out.blackout = take(d.blackout);
     return out;
   }
   const list = Array.isArray(data) ? data : Array.isArray(d?.questions) ? (d.questions as unknown[]) : null;
@@ -325,7 +349,7 @@ export function importJson(input: string, target: ListName): ImportResult {
   }
   list.forEach((raw) => {
     const q = (raw ?? {}) as Record<string, unknown>;
-    const into: ListName = q.round === 2 ? "buzzer" : q.round === 1 ? "round1" : target;
+    const into: ListName = q.round === 3 ? "blackout" : q.round === 2 ? "wildcard" : q.round === 1 ? "round1" : target;
     out[into].push({ ...cleanQuestion({ ...q, text: q.text ?? q.question, correct: q.correct ?? q.correctOption }), id: newId() });
   });
   return out;
@@ -343,10 +367,17 @@ const csvCell = (v: string | number | null) => {
 };
 
 /** The quiz as a spreadsheet (the same columns the import reads). */
-export function quizToCsv(quiz: Pick<Quiz, "round1" | "buzzer">): string {
+export function quizToCsv(quiz: Pick<Quiz, ListName>): string {
   const line = (q: LibraryQuestion, round: string) =>
     [q.text, ...q.options, "ABCD"[q.correct], round, q.readSeconds, q.openSeconds].map(csvCell).join(",");
-  return [TEMPLATE_HEADER.join(","), ...quiz.round1.map((q) => line(q, "1")), ...quiz.buzzer.map((q) => line(q, "buzzer"))].join("\r\n") + "\r\n";
+  return (
+    [
+      TEMPLATE_HEADER.join(","),
+      ...quiz.round1.map((q) => line(q, "1")),
+      ...quiz.wildcard.map((q) => line(q, "wild card")),
+      ...quiz.blackout.map((q) => line(q, "blackout")),
+    ].join("\r\n") + "\r\n"
+  );
 }
 
 /** A filled-in example to download and copy. */
@@ -355,5 +386,6 @@ export const TEMPLATE_CSV = quizToCsv({
     { ...blankQuestion(), text: "What does LLM stand for?", options: ["Large Language Model", "Linear Logic Machine", "Layered Learning Matrix", "Long-term Language Memory"], correct: 0 },
     { ...blankQuestion(), text: "In an AI agent, what is a tool call?", options: ["The agent asking a program to do something", "A phone call to support", "A bug report", "A software licence"], correct: 0, openSeconds: 12 },
   ],
-  buzzer: [{ ...blankQuestion(), text: "Which company makes Claude?", options: ["Anthropic", "OpenAI", "Google", "Meta"], correct: 0 }],
+  wildcard: [{ ...blankQuestion(), text: "Which company makes Claude?", options: ["Anthropic", "OpenAI", "Google", "Meta"], correct: 0 }],
+  blackout: [{ ...blankQuestion(), text: "What does an agent's memory let it do?", options: ["Remember earlier steps", "Run faster", "Use less power", "Skip its tools"], correct: 0 }],
 });

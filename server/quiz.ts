@@ -1,14 +1,16 @@
 /**
- * One quiz room: every rule from docs/SPEC.md (v2), with no socket code, so it
+ * One quiz room: every rule from docs/SPEC.md (v3), with no socket code, so it
  * can be tested on its own (npm run simulate).
  *
- * The quizmaster drives the flow through `command()`. Timers only run where
- * SPEC says so (Round 1 read → answer; Round 2 read → buzz window → spoken
- * answer countdown), and when one ends the room holds for the next click.
+ * Three rounds: Round 1 (everyone, points), the wild card round (everyone
+ * outside the top 9, most correct answers wins the 10th seat) and Blackout (the
+ * 10 finalists race a darkness down the corridor). Every answer is a phone tap,
+ * marked here; the quizmaster only moves the steps along (`command()`).
+ * Timers only run where SPEC says so, and when one ends the room holds.
  *
  * Views are built on demand (hostView, participantView, adminView). Derived
- * data (rankings, finalist lists) is cached until the next change, so building
- * 100 phone views after an update stays cheap.
+ * data (rankings, standings) is cached until the next change, so building 100
+ * phone views after an update stays cheap.
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -18,22 +20,22 @@ import {
   type AdminParticipant,
   type AdminQuestion,
   type AdminView,
+  type AnswerOption,
   type Backing,
+  type BlackoutState,
   BOT_HEADS,
   type BotHead,
   type BotMood,
   type BotResult,
-  type BuzzerQuestion,
-  type BuzzOutcome,
   type CommandResult,
   type Counts,
-  type FinalistState,
+  type FinalistInfo,
   type HostStage,
   type HostView,
   type JoinResult,
   type LeaderRow,
+  type McqQuestion,
   NAME_MAX_LENGTH,
-  OPTION_LETTERS,
   type OptionResult,
   normalizeBotColor,
   PARTICIPANT_COLORS,
@@ -42,21 +44,23 @@ import {
   type ParticipantTag,
   type ParticipantView,
   type Phase,
+  type PodiumBasis,
   type PodiumEntry,
   type PodiumSummary,
   type PrimaryAction,
   type QuestionPreview,
   type QuizSettings,
-  type Round1Question,
-  type Round2Phone,
-  type Round2State,
-  type Round2Step,
+  type Reveal,
+  type RoundNumber,
+  type Runner,
   type Standing,
   STEP_INDEPENDENT_ACTIONS,
   type Timer,
+  type WildCardStanding,
+  type WildCardState,
 } from "../src/shared/protocol";
-import type { GameConfig } from "./config";
-import { pickRound1, pickRound2, type QuizQuestion } from "./questions";
+import { darknessStep, type GameConfig } from "./config";
+import { pickRound, type QuizQuestion } from "./questions";
 
 // ============================================================================
 // Clock (injectable, so tests can fast-forward time)
@@ -77,6 +81,34 @@ export const realClock: Clock = {
 // ============================================================================
 // Internal state
 // ============================================================================
+
+/** A participant's wild card tally. Planned questions and sudden death kept apart. */
+interface WildRecord {
+  correct: number;
+  /** Answer time over the planned questions (wrong / miss = the full time). */
+  timeMs: number;
+  /** Planned questions they were asked (scored, not voided). */
+  asked: number;
+  /** Sudden death: answer time over its questions (wrong / miss = the full time). */
+  sdTimeMs: number;
+}
+
+/** A finalist's place in the chase. */
+interface RunnerState {
+  start: number;
+  headStart: number;
+  position: number;
+  /** Position before the last reveal. */
+  from: number;
+  /** The last reveal's move, or null (none yet this question run). */
+  delta: number | null;
+  alive: boolean;
+  caughtOnQuestion: number | null;
+  /** Position just before the dark moved on the question they were caught. */
+  beforeDark: number;
+  /** Total Blackout answer time (wrong / miss = the full time). */
+  timeMs: number;
+}
 
 interface Participant {
   id: string;
@@ -101,59 +133,71 @@ interface Participant {
   change: number;
   /** Round 1 rank, frozen at the cut. */
   cutRank: number | null;
-  /** Buzzer-round points. */
-  points: number;
+  /** Round 1 tie-break time, frozen at the cut. */
+  cutTimeMs: number;
+  /** Played the wild card round (status was "wildcard" at its start). */
+  wild: WildRecord | null;
+  /** Won the wild card (or took a seat after it). */
+  isWildCard: boolean;
+  runner: RunnerState | null;
   backingId: string | null;
   pageHidden: boolean;
   leftPageCount: number;
 }
 
-interface Round1Run {
+/** One question being played, in any round. */
+interface Run {
   id: string;
+  round: RoundNumber;
+  /** Index into that round's question list. */
   index: number;
-  question: QuizQuestion;
-  /** Opaque id per option, same index as question.options. */
-  optionIds: string[];
-  /** Option indexes in A–D order (Admin letters, results chart). */
-  hostOrder: number[];
-  answers: Map<string, { optionIndex: number; elapsedMs: number }>;
-  /** Points and time actually applied per participant, so a void can undo them. */
-  applied: Map<string, { points: number; timeMs: number }>;
-  /** Answer time for this question, including any "+5 seconds". */
-  limitMs: number;
-  scored: boolean;
-  voided: boolean;
-}
-
-type Outcome = { kind: "correct"; by: string } | { kind: "nobody"; reason: "allWrong" | "timeUp" } | { kind: "voided" };
-
-interface Round2Run {
-  id: string;
-  /** Index into round2Questions. */
-  index: number;
-  /** 1-based number shown on screen. */
+  /** 1-based number shown on screen (wild card sudden death counts on). */
   number: number;
   suddenDeath: boolean;
   question: QuizQuestion;
-  /** Option indexes in A–D order. */
+  /** Opaque id per option, same index as question.options. */
+  optionIds: string[];
+  /** Option indexes in the 1–4 order every screen shows. */
   hostOrder: number[];
-  /** Finalist ids who can buzz on this question. */
-  inPlay: string[];
-  /** Marked wrong on this question, in order. */
-  lockedOut: string[];
-  buzzedBy: string | null;
-  answerTimeUp: boolean;
-  outcome: Outcome | null;
-  /** Who got the point on this question. */
-  awardedTo: string | null;
+  /** Who may answer: Round 1 decides per participant (late joiners); later rounds fix the list here. */
+  players: Set<string>;
+  answers: Map<string, { optionIndex: number; elapsedMs: number }>;
+  /** Answer time for this question, including any "+5 seconds". */
+  limitMs: number;
+  /** Round 1: points and time applied per participant, so a void can undo them. */
+  applied: Map<string, { points: number; timeMs: number }>;
+  scored: boolean;
+  voided: boolean;
+  /** Wild card / Blackout: the round's state before this question, restored by void or restart. */
+  before: WildSnapshot | BlackoutSnapshot | null;
 }
 
-interface LastMark {
-  runId: string;
-  by: string;
-  correct: boolean;
-  /** State just before the mark, restored by undo. */
-  before: { run: Round2Run; points: number; winnerId: string | null };
+interface WildSnapshot {
+  kind: "wild";
+  records: Map<string, WildRecord>;
+  sudden: SuddenDeath | null;
+  winnerId: string | null;
+  fallback: boolean;
+  number: number;
+}
+
+interface BlackoutSnapshot {
+  kind: "blackout";
+  runners: Map<string, RunnerState>;
+  dark: number;
+  darkFrom: number;
+  caught: string[];
+  over: boolean;
+  number: number;
+}
+
+interface SuddenDeath {
+  /** Still in it. */
+  alive: string[];
+  /** Knocked out of it, in order. */
+  out: string[];
+  /** Sudden-death questions started. */
+  number: number;
 }
 
 const randomId = () => randomUUID().replace(/-/g, "").slice(0, 12);
@@ -171,7 +215,7 @@ export interface QuizRecorder {
 
 export interface AnswerRecord {
   participantId: string;
-  /** Index into the question's options as written in questions.json; null = no answer. */
+  /** Index into the question's options as written in the quiz; null = no answer. */
   optionIndex: number | null;
   correct: boolean;
   points: number;
@@ -181,7 +225,7 @@ export interface AnswerRecord {
 /** Everything worth saving about the room right now (see RoomManager, db.ts). */
 export interface RoomSnapshot {
   phase: Phase;
-  /** Current Round 1 question (0-based) or buzzer question number, -1 before any. */
+  /** The current question's number in its round, -1 before any. */
   questionIndex: number;
   players: {
     id: string;
@@ -189,14 +233,22 @@ export interface RoomSnapshot {
     status: ParticipantStatus;
     score: number;
     round1Rank: number | null;
-    buzzerPoints: number;
+    wildCorrect: number | null;
+    blackoutPlace: number | null;
+    blackoutPosition: number | null;
   }[];
 }
 
-const ROUND1_QUESTION_PHASES: Phase[] = ["r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "r1Results", "r1Leaderboard"];
-const ROUND1_PHASES: Phase[] = ["r1Intro", ...ROUND1_QUESTION_PHASES];
-const ROUND2_QUESTION_PHASES: Phase[] = ["r2Read", "r2BuzzOpen", "r2Answering", "r2Reveal"];
-const ROUND2_PHASES: Phase[] = ["r2Intro", ...ROUND2_QUESTION_PHASES, "r2Scores", "suddenDeath"];
+const R1_QUESTION_PHASES: Phase[] = ["r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "r1Results", "r1Leaderboard"];
+const R1_PHASES: Phase[] = ["r1Intro", ...R1_QUESTION_PHASES];
+const WC_QUESTION_PHASES: Phase[] = ["wcRead", "wcAnswer", "wcTimesUp", "wcReveal", "wcStandings"];
+const WC_PHASES: Phase[] = ["wcIntro", ...WC_QUESTION_PHASES];
+const BO_QUESTION_PHASES: Phase[] = ["boRead", "boAnswer", "boTimesUp", "boReveal", "boDark"];
+const BO_PHASES: Phase[] = ["boIntro", ...BO_QUESTION_PHASES];
+const READ_PHASES: Phase[] = ["r1Read", "wcRead", "boRead"];
+const ANSWER_PHASES: Phase[] = ["r1Answer", "wcAnswer", "boAnswer"];
+const TIMES_UP_PHASES: Phase[] = ["r1TimesUp", "wcTimesUp", "boTimesUp"];
+const REVEALED_PHASES: Phase[] = ["r1Reveal", "r1Results", "r1Leaderboard", "wcReveal", "wcStandings", "boReveal", "boDark"];
 
 // ============================================================================
 // The room
@@ -211,31 +263,52 @@ export class QuizRoom {
   private participants: Participant[] = [];
   private phase: Phase = "lobby";
   private step = 1;
+  /** The question being played (any round), from Show question until the round moves on. */
+  private run: Run | null = null;
+
+  // Questions per round, picked once
+  private readonly round1Questions: QuizQuestion[];
+  private readonly wildQuestions: QuizQuestion[];
+  private readonly blackoutQuestions: QuizQuestion[];
 
   // Round 1
-  private readonly round1Questions: QuizQuestion[];
-  private r1: Round1Run | null = null;
   /** Round 1 question index → scored and not voided. */
   private r1Scored = new Map<number, boolean>();
 
   // The cut
   /** Round 1 participants in rank order, frozen at "End round 1". */
   private cutOrder: string[] | null = null;
-  /** Finalists, frozen when the first buzzer question is shown. Before that they're derived from cutOrder. */
-  private frozenFinalists: string[] | null = null;
+  /** No wild card round (fewer played Round 1 than there are safe seats + 1). */
+  private wildSkipped = false;
 
-  // Round 2
-  private readonly round2Questions: QuizQuestion[];
-  private r2Next = 0;
-  /** Planned questions started so far (sudden death not included). */
-  private r2Number = 0;
-  private r2: Round2Run | null = null;
-  private sudden: { tiedIds: string[]; number: number } | null = null;
-  private winnerId: string | null = null;
-  private lastMark: LastMark | null = null;
+  // Wild card
+  private wcStarted = false;
+  /** Next index into wildQuestions. */
+  private wcNext = 0;
+  /** Planned wild card questions started (voids give their number back). */
+  private wcNumber = 0;
+  private sudden: SuddenDeath | null = null;
+  private wcWinnerId: string | null = null;
+  private wcFallback = false;
+  /** Reveal wild card has been clicked. */
+  private wcRevealed = false;
+
+  // Blackout
+  private boStarted = false;
+  /** The first Blackout question has been shown: seats are final. */
+  private boLocked = false;
+  private boNext = 0;
+  /** Planned Blackout questions started (voids give their number back). */
+  private boNumber = 0;
+  private dark = 0;
+  private darkFrom = 0;
+  private caughtThisQuestion: string[] = [];
+  private boOver = false;
+  /** Ran out of questions (voids ate the spares). */
+  private boOutOfQuestions = false;
 
   // Podium (frozen when shown)
-  private podium: { basis: "buzzer" | "round1"; order: string[] } | null = null;
+  private podium: { basis: PodiumBasis; order: string[] } | null = null;
 
   // Timer
   private timer: Timer | null = null;
@@ -257,9 +330,12 @@ export class QuizRoom {
     private readonly clock: Clock = realClock,
     private readonly random: () => number = Math.random,
   ) {
-    this.round1Questions = pickRound1(questions, config.round1.questions);
-    // Planned questions plus plenty of spares for voids and sudden death.
-    this.round2Questions = pickRound2(questions, config.round2.questions + 60, this.round1Questions);
+    // Each round takes its own questions; only the demo preset reuses them (fresh ids every run).
+    const used = new Set<string>();
+    const reuse = config.name === "demo";
+    this.round1Questions = pickRound(questions, 1, config.round1.questions, used, reuse);
+    this.wildQuestions = pickRound(questions, 2, config.wildCard.questions + config.wildCard.suddenDeathMax, used, reuse);
+    this.blackoutQuestions = pickRound(questions, 3, config.blackout.questions + config.blackout.spares, used, reuse);
   }
 
   get stepId() {
@@ -308,11 +384,11 @@ export class QuizRoom {
     if (this.phase === "podium") return { ok: false, error: "quiz-ended" };
     if (this.active().length >= this.config.maxParticipants) return { ok: false, error: "room-full" };
 
-    const inRound1 = this.phase === "lobby" || ROUND1_PHASES.includes(this.phase);
+    const inRound1 = this.phase === "lobby" || R1_PHASES.includes(this.phase);
     let firstQuestion = 0;
-    if (this.r1 && ROUND1_QUESTION_PHASES.includes(this.phase)) {
+    if (this.run && this.run.round === 1 && R1_QUESTION_PHASES.includes(this.phase)) {
       // Joined during the read step: plays this question. Later: from the next one.
-      firstQuestion = this.phase === "r1Read" ? this.r1.index : this.r1.index + 1;
+      firstQuestion = this.phase === "r1Read" ? this.run.index : this.run.index + 1;
     }
     const participant: Participant = {
       id: randomId(),
@@ -329,7 +405,10 @@ export class QuizRoom {
       prevRank: null,
       change: 0,
       cutRank: null,
-      points: 0,
+      cutTimeMs: 0,
+      wild: null,
+      isWildCard: false,
+      runner: null,
       backingId: null,
       pageHidden: false,
       leftPageCount: 0,
@@ -363,7 +442,7 @@ export class QuizRoom {
     this.endAnswerIfEveryoneAnswered();
   }
 
-  /** The quiz page was hidden or shown on this phone. Counted only while a question is open. */
+  /** The quiz page was hidden or shown on this phone. Counted only while a question is open for them. */
   setPageHidden(id: string, hidden: boolean) {
     const p = this.find(id);
     if (!p || p.status === "removed" || p.pageHidden === hidden) return;
@@ -372,11 +451,12 @@ export class QuizRoom {
     this.changed();
   }
 
+  /** Every round: the first tap counts; anyone who can't answer this question is ignored. */
   answer(id: string, questionId: string, optionId: string) {
     const p = this.find(id);
-    const run = this.r1;
-    if (!p || !run || this.phase !== "r1Answer" || this.paused || !this.timer) return;
-    if (run.id !== questionId || !this.playsQuestion(p, run) || run.answers.has(id)) return;
+    const run = this.run;
+    if (!p || !run || !ANSWER_PHASES.includes(this.phase) || this.paused || !this.timer) return;
+    if (run.id !== questionId || !this.canAnswer(p, run) || run.answers.has(id)) return;
     const optionIndex = run.optionIds.indexOf(optionId);
     if (optionIndex === -1) return;
     const elapsedMs = Math.min(run.limitMs, Math.max(0, this.timer.durationMs - (this.timer.endsAt - this.clock.now())));
@@ -385,19 +465,7 @@ export class QuizRoom {
     this.endAnswerIfEveryoneAnswered();
   }
 
-  buzz(id: string, questionId: string) {
-    const run = this.r2;
-    if (!run || this.phase !== "r2BuzzOpen" || this.paused || run.id !== questionId || run.buzzedBy) return;
-    if (!this.canBuzz(id, run)) return;
-    run.buzzedBy = id;
-    run.answerTimeUp = false;
-    this.lastMark = null; // a new buzz ends the chance to undo the previous mark
-    this.go("r2Answering", this.config.round2.answerMs, () => {
-      run.answerTimeUp = true;
-      this.changed();
-    });
-  }
-
+  /** Audience backs a finalist during predictions. */
   back(id: string, finalistId: string) {
     const p = this.find(id);
     if (!p || this.phase !== "predictions" || p.status !== "audience") return;
@@ -422,11 +490,11 @@ export class QuizRoom {
         this.go("r1Intro");
         break;
       case "showQuestion":
-        if (this.phase === "r1Intro") this.beginRound1Question(0);
-        else this.beginRound2Question();
+      case "nextQuestion":
+        this.nextQuestion();
         break;
       case "revealAnswer":
-        this.go("r1Reveal");
+        this.reveal();
         break;
       case "showResults":
         this.go("r1Results");
@@ -434,39 +502,29 @@ export class QuizRoom {
       case "showLeaderboard":
         this.go("r1Leaderboard");
         break;
-      case "nextQuestion":
-        if (this.isRound1Phase()) this.beginRound1Question(this.r1!.index + 1);
-        else this.beginRound2Question();
-        break;
       case "endRound1":
         this.cut();
+        break;
+      case "startWildCard":
+        this.startWildCard();
+        break;
+      case "showStandings":
+        this.go("wcStandings");
+        break;
+      case "revealWildCard":
+        this.revealWildCard();
         break;
       case "openPredictions":
         this.go("predictions");
         break;
-      case "startBuzzerRound":
-        this.go("r2Intro");
+      case "startBlackout":
+        this.startBlackout();
         break;
-      case "showScores":
-        this.lastMark = null;
-        this.go("r2Scores");
-        break;
-      case "startSuddenDeath":
-        this.sudden = { tiedIds: this.tiedLeaders().map((p) => p.id), number: 0 };
-        this.lastMark = null;
-        this.go("suddenDeath");
+      case "advanceDarkness":
+        this.advanceDarkness();
         break;
       case "showWinner":
-        this.finish("buzzer");
-        break;
-      case "markCorrect":
-        this.mark(true);
-        break;
-      case "markWrong":
-        this.mark(false);
-        break;
-      case "undoMark":
-        this.undoMark();
+        this.finish("blackout");
         break;
       case "pause":
         this.pause();
@@ -502,49 +560,65 @@ export class QuizRoom {
         this.changed();
         break;
       case "endQuiz":
-        this.finish(this.cutOrder ? "buzzer" : "round1");
+        this.endQuizNow();
         break;
     }
     return { ok: true };
   }
 
-  /** Results for prizes: one row per participant, best first. */
+  /** Results for prizes: one row per participant, best first (docs/SPEC.md v3 "Results CSV"). */
   resultsCsv(): { csv: string; filename: string } {
-    const header = ["Place", "Name", "Result", "Round 1 rank", "Round 1 score", "Buzzer points", "Backed", "Called it", "Left page", "Status"];
-    const podiumIds = this.podium?.basis === "buzzer" ? this.podium.order : [];
-    const winnerId = this.podium ? this.podium.order[0] ?? null : null;
+    const header = [
+      "Place",
+      "Name",
+      "Result",
+      "Round 1 score",
+      "Round 1 rank",
+      "Wild card correct",
+      "Wild card time (s)",
+      "Blackout place",
+      "Blackout final position",
+      "Backed",
+      "Called it",
+      "Left page",
+    ];
+    const order = this.podium?.order ?? [];
     const r1Rank = this.round1RankMap();
+    const places = this.blackoutPlaces();
+    const winnerId = order[0] ?? null;
     const sorted = [...this.participants].sort((a, b) => {
-      const pa = podiumIds.indexOf(a.id);
-      const pb = podiumIds.indexOf(b.id);
+      const pa = order.indexOf(a.id);
+      const pb = order.indexOf(b.id);
       if (pa !== -1 || pb !== -1) return (pa === -1 ? 1e6 : pa) - (pb === -1 ? 1e6 : pb);
       if ((a.status === "removed") !== (b.status === "removed")) return a.status === "removed" ? 1 : -1;
-      const ra = r1Rank.get(a.id) ?? 1e6;
-      const rb = r1Rank.get(b.id) ?? 1e6;
-      return ra - rb || a.joinIndex - b.joinIndex;
+      return (r1Rank.get(a.id) ?? 1e6) - (r1Rank.get(b.id) ?? 1e6) || a.joinIndex - b.joinIndex;
     });
     const rows = sorted.map((p, i) => {
-      const place = podiumIds.indexOf(p.id);
+      const place = order.indexOf(p.id);
       let result: string;
-      if (p.status === "removed") result = "Removed";
-      else if (place === 0) result = "Winner";
-      else if (place > 0) result = place < 3 ? `${ordinal(place + 1)} place` : `Finalist (${ordinal(place + 1)})`;
-      else if (p.joinedLate) result = "Audience (joined after round 1)";
-      else if (p.cutRank !== null) result = p.status === "finalist" ? "Finalist" : `Round 1: ${ordinal(p.cutRank)}`;
-      else result = this.podium?.basis === "round1" && r1Rank.has(p.id) ? `${ordinal(r1Rank.get(p.id)!)} (quiz ended in round 1)` : "Playing";
+      if (p.status === "removed") result = "removed";
+      else if (place === 0) result = "winner";
+      else if (place === 1) result = "2nd";
+      else if (place === 2) result = "3rd";
+      else if (p.status === "finalist") result = "finalist";
+      else if (p.wild) result = "wildcard";
+      else if (p.status === "playing" || p.cutRank !== null) result = "played";
+      else result = "audience";
       const backed = p.backingId ? this.find(p.backingId)?.name ?? "" : "";
-      const calledIt = p.backingId && winnerId && this.podium?.basis === "buzzer" ? (p.backingId === winnerId ? "Yes" : "No") : "";
+      const calledIt = p.backingId && winnerId && this.podium?.basis === "blackout" ? (p.backingId === winnerId ? "yes" : "no") : "";
       return [
         String(i + 1),
         p.name,
         result,
+        p.cutRank !== null || p.status === "playing" ? String(p.score) : "",
         r1Rank.has(p.id) ? String(r1Rank.get(p.id)) : "",
-        String(p.score),
-        p.cutRank !== null && (p.status === "finalist" || podiumIds.includes(p.id)) ? String(p.points) : "",
+        p.wild ? String(p.wild.correct) : "",
+        p.wild ? (p.wild.timeMs / 1000).toFixed(1) : "",
+        places.has(p.id) ? String(places.get(p.id)) : "",
+        p.runner ? String(p.runner.position) : "",
         backed,
         calledIt,
         String(p.leftPageCount),
-        p.status,
       ];
     });
     const csv = [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
@@ -557,45 +631,114 @@ export class QuizRoom {
   }
 
   // ==========================================================================
-  // Round 1
+  // Questions (all rounds)
   // ==========================================================================
 
-  private beginRound1Question(index: number) {
-    const question = this.round1Questions[index];
-    this.r1 = {
+  /** Show question / Next question: the next question of whichever round we're in. */
+  private nextQuestion() {
+    if (R1_PHASES.includes(this.phase)) {
+      this.beginQuestion(1, this.run && this.run.round === 1 ? this.run.index + 1 : 0, 0, false);
+      return;
+    }
+    if (WC_PHASES.includes(this.phase)) {
+      const suddenDeath = !!this.sudden;
+      if (suddenDeath) this.sudden!.number += 1;
+      else this.wcNumber += 1;
+      const number = suddenDeath ? this.config.wildCard.questions + this.sudden!.number : this.wcNumber;
+      this.beginQuestion(2, this.wcNext++, number, suddenDeath);
+      return;
+    }
+    this.boLocked = true;
+    this.boNumber += 1;
+    this.beginQuestion(3, this.boNext++, this.boNumber, false);
+  }
+
+  private beginQuestion(round: RoundNumber, index: number, number: number, suddenDeath: boolean) {
+    const list = this.questionsFor(round);
+    const question = list[index];
+    const players = new Set<string>();
+    if (round === 2) for (const id of this.sudden ? this.sudden.alive : this.wildPlayerIds()) players.add(id);
+    if (round === 3) for (const p of this.runners()) if (p.runner!.alive) players.add(p.id);
+    this.run = {
       id: randomId(),
+      round,
       index,
+      number: round === 1 ? index + 1 : number,
+      suddenDeath,
       question,
       optionIds: question.options.map(() => randomId()),
       hostOrder: shuffle([0, 1, 2, 3], this.random),
+      players,
       answers: new Map(),
+      limitMs: this.answerMsFor(round, question),
       applied: new Map(),
-      limitMs: question.openMs ?? this.config.round1.answerMs,
       scored: false,
       voided: false,
+      before: round === 2 ? this.wildSnapshot() : round === 3 ? this.blackoutSnapshot() : null,
     };
-    this.go("r1Read", question.readMs ?? this.config.round1.readMs, () => this.openAnswers());
+    if (round === 3) {
+      for (const p of this.runners()) p.runner!.delta = null;
+      this.caughtThisQuestion = [];
+    }
+    const readPhase: Phase = round === 1 ? "r1Read" : round === 2 ? "wcRead" : "boRead";
+    this.go(readPhase, question.readMs ?? this.readMsFor(round), () => this.openAnswers());
   }
 
   private openAnswers() {
-    const run = this.r1!;
-    run.limitMs = run.question.openMs ?? this.config.round1.answerMs;
-    this.go("r1Answer", run.limitMs, () => this.timesUp());
+    const run = this.run!;
+    run.limitMs = this.answerMsFor(run.round, run.question);
+    const answerPhase: Phase = run.round === 1 ? "r1Answer" : run.round === 2 ? "wcAnswer" : "boAnswer";
+    this.go(answerPhase, run.limitMs, () => this.timesUp());
     this.endAnswerIfEveryoneAnswered();
   }
 
   private timesUp() {
-    const run = this.r1!;
-    this.scoreRound1(run);
-    this.go("r1TimesUp");
+    const run = this.run!;
+    if (run.round === 1) this.scoreRound1(run);
+    this.go(run.round === 1 ? "r1TimesUp" : run.round === 2 ? "wcTimesUp" : "boTimesUp");
   }
 
-  private scoreRound1(run: Round1Run) {
+  /** Reveal answer: Round 1 was scored at time's up; the wild card and Blackout apply here. */
+  private reveal() {
+    const run = this.run!;
+    if (run.round === 1) return this.go("r1Reveal");
+    if (run.round === 2) {
+      this.scoreWildCard(run);
+      return this.go("wcReveal");
+    }
+    this.moveRunners(run);
+    this.go("boReveal");
+  }
+
+  private questionsFor(round: RoundNumber) {
+    return round === 1 ? this.round1Questions : round === 2 ? this.wildQuestions : this.blackoutQuestions;
+  }
+
+  private readMsFor(round: RoundNumber) {
+    return round === 1 ? this.config.round1.readMs : round === 2 ? this.config.wildCard.readMs : this.config.blackout.readMs;
+  }
+
+  private answerMsFor(round: RoundNumber, question: QuizQuestion) {
+    if (question.openMs) return question.openMs;
+    return round === 1 ? this.config.round1.answerMs : round === 2 ? this.config.wildCard.answerMs : this.config.blackout.answerMs;
+  }
+
+  private isCorrect(run: Run, id: string) {
+    const a = run.answers.get(id);
+    return !!a && a.optionIndex === run.question.correct;
+  }
+
+  // ==========================================================================
+  // Round 1
+  // ==========================================================================
+
+  /** correct = round(min + (max − min) × (1 − elapsed / limit)); wrong or none = 0. */
+  private scoreRound1(run: Run) {
     const { maxPoints, minCorrectPoints } = this.config.scoring;
     const rankBefore = new Map(this.round1Ranking().map((p, i) => [p.id, i + 1]));
     const records: AnswerRecord[] = [];
     for (const p of this.participants) {
-      if (!this.playsQuestion(p, run)) continue;
+      if (!this.playsRound1Question(p, run)) continue;
       const a = run.answers.get(p.id);
       let points = 0;
       let timeMs = run.limitMs;
@@ -626,8 +769,8 @@ export class QuizRoom {
     this.changed();
   }
 
-  /** Takes back the points (and time) a question gave. */
-  private unscoreRound1(run: Round1Run) {
+  /** Takes back the points (and time) a Round 1 question gave. */
+  private unscoreRound1(run: Run) {
     if (!run.scored) return;
     for (const [id, applied] of run.applied) {
       const p = this.find(id);
@@ -642,196 +785,372 @@ export class QuizRoom {
     this.recorder?.round1Unscored(run.index);
   }
 
-  /** "End round 1": freeze the ranking, top N become finalists, the rest the audience. */
+  /** "End round 1": freeze the ranking; the top `safe` are finalists, everyone else plays the wild card. */
   private cut() {
     const ranking = this.round1Ranking();
+    const times = new Map(ranking.map((p) => [p.id, this.round1TieTime(p)]));
     this.cutOrder = ranking.map((p) => p.id);
     ranking.forEach((p, i) => {
       p.cutRank = i + 1;
+      p.cutTimeMs = times.get(p.id) ?? 0;
     });
-    this.syncFinalistStatuses();
+    // Fewer than safe + 1 played: everyone is a finalist and the wild card round is skipped.
+    this.wildSkipped = ranking.length <= this.config.safe;
+    ranking.forEach((p, i) => {
+      p.status = this.wildSkipped || i < this.config.safe ? "finalist" : "wildcard";
+    });
+    this.run = null;
     this.go("cut");
   }
 
   // ==========================================================================
-  // Round 2 (buzzer)
+  // Wild card round
   // ==========================================================================
 
-  private beginRound2Question() {
-    if (!this.frozenFinalists) this.frozenFinalists = this.finalistIds();
-    const index = this.r2Next++ % this.round2Questions.length;
-    const question = this.round2Questions[index];
-    const sudden = this.sudden;
-    const number = sudden ? ++sudden.number : ++this.r2Number;
-    const inPlay = (sudden ? sudden.tiedIds : this.finalistIds()).filter((id) => this.find(id)?.status === "finalist");
-    this.r2 = {
-      id: randomId(),
-      index,
-      number,
-      suddenDeath: !!sudden,
-      question,
-      hostOrder: shuffle([0, 1, 2, 3], this.random),
-      inPlay,
-      lockedOut: [],
-      buzzedBy: null,
-      answerTimeUp: false,
-      outcome: null,
-      awardedTo: null,
-    };
-    this.lastMark = null;
-    this.startRound2Read();
+  private startWildCard() {
+    this.wcStarted = true;
+    for (const p of this.participants) if (p.status === "wildcard") p.wild = { correct: 0, timeMs: 0, asked: 0, sdTimeMs: 0 };
+    // No wild card questions at all: decide straight away (the fallback).
+    if (this.wildQuestions.length === 0) this.decideWildCard();
+    this.go("wcIntro");
   }
 
-  private startRound2Read() {
-    const q = this.r2!.question;
-    this.go("r2Read", q.readMs ?? this.config.round2.readMs, () => this.openBuzzers(q.openMs ?? this.config.round2.buzzMs));
+  /** Wild card players still in it (not removed). */
+  private wildPlayerIds(): string[] {
+    return this.participants.filter((p) => p.status === "wildcard").map((p) => p.id);
   }
 
-  private openBuzzers(ms: number) {
-    this.go("r2BuzzOpen", ms, () => this.nobodyScores("timeUp"));
-  }
-
-  private nobodyScores(reason: "allWrong" | "timeUp") {
-    const run = this.r2!;
-    run.buzzedBy = null;
-    run.outcome = { kind: "nobody", reason };
-    this.go("r2Reveal");
-  }
-
-  private mark(correct: boolean) {
-    const run = this.r2!;
-    const by = run.buzzedBy!;
-    const p = this.find(by)!;
-    const before = { run: cloneRun(run), points: p.points, winnerId: this.winnerId };
-
-    if (correct) {
-      p.points += 1;
-      run.awardedTo = by;
-      run.buzzedBy = null;
-      run.outcome = { kind: "correct", by };
-      if (run.suddenDeath) this.winnerId = by;
-      this.go("r2Reveal");
-    } else {
-      run.lockedOut.push(by);
-      run.buzzedBy = null;
-      if (this.buzzersLeft(run).length > 0) {
-        this.openBuzzers(this.config.round2.reopenMs);
-      } else {
-        run.outcome = { kind: "nobody", reason: "allWrong" };
-        this.go("r2Reveal");
+  /** At the reveal: tallies, sudden death outs, and whether the round is decided. */
+  private scoreWildCard(run: Run) {
+    if (run.scored) return;
+    const limit = run.limitMs;
+    if (!run.suddenDeath) {
+      for (const id of run.players) {
+        const p = this.find(id);
+        if (!p?.wild || p.status !== "wildcard") continue;
+        const a = run.answers.get(id);
+        const right = this.isCorrect(run, id);
+        p.wild.asked += 1;
+        if (right) p.wild.correct += 1;
+        p.wild.timeMs += right && a ? a.elapsedMs : limit;
       }
+    } else {
+      const sudden = this.sudden!;
+      const stillIn = sudden.alive.filter((id) => this.find(id)?.status === "wildcard");
+      for (const id of stillIn) {
+        const p = this.find(id)!;
+        const a = run.answers.get(id);
+        p.wild!.sdTimeMs += this.isCorrect(run, id) && a ? a.elapsedMs : limit;
+      }
+      const right = stillIn.filter((id) => this.isCorrect(run, id));
+      // Wrong or no answer = out; but if everyone left is wrong, they all stay in.
+      if (right.length > 0) {
+        sudden.out.push(...stillIn.filter((id) => !right.includes(id)));
+        sudden.alive = right;
+      } else sudden.alive = stillIn;
     }
-    this.lastMark = { runId: run.id, by, correct, before };
+    run.scored = true;
+    this.decideWildCard();
     this.changed();
   }
 
-  private undoMark() {
-    const mark = this.lastMark!;
-    const p = this.find(mark.by);
-    if (p) p.points = mark.before.points;
-    this.winnerId = mark.before.winnerId;
-    this.r2 = cloneRun(mark.before.run);
-    this.r2.buzzedBy = mark.by;
-    this.r2.answerTimeUp = true;
-    this.lastMark = null;
-    // Back to judging, with no countdown: the quizmaster marks it again.
-    this.go("r2Answering");
+  /**
+   * After a scored wild card question: is there a winner yet? Only once the
+   * planned questions are done (or the list ran out): most correct, then lower
+   * time; an exact tie starts sudden death, capped at suddenDeathMax.
+   */
+  private decideWildCard() {
+    if (this.wcWinnerId) return;
+    const players = this.participants.filter((p) => p.status === "wildcard" && p.wild);
+    if (players.length === 0) return;
+    const outOfQuestions = this.wcNext >= this.wildQuestions.length;
+    if (!this.sudden && this.wcNumber < this.config.wildCard.questions && !outOfQuestions) return;
+
+    if (this.sudden) {
+      const alive = this.sudden.alive.filter((id) => this.find(id)?.status === "wildcard");
+      if (alive.length === 1) this.wcWinnerId = alive[0];
+      else if (alive.length === 0 || this.sudden.number >= this.config.wildCard.suddenDeathMax || outOfQuestions) {
+        // Lowest total time over all their wild card questions, then the better Round 1 rank.
+        const pool = (alive.length ? alive : this.sudden.out).map((id) => this.find(id)!).filter((p) => p.status === "wildcard");
+        pool.sort((a, b) => a.wild!.timeMs + a.wild!.sdTimeMs - (b.wild!.timeMs + b.wild!.sdTimeMs) || (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6));
+        this.wcWinnerId = pool[0]?.id ?? this.wildStandingOrder()[0]?.id ?? null;
+      }
+      return;
+    }
+
+    const order = this.wildStandingOrder();
+    const top = order[0];
+    if (!top) return;
+    if (top.wild!.correct === 0) {
+      // Fallback: nobody got one right. The best Round 1 rank outside the safe seats takes it.
+      this.wcFallback = true;
+      this.wcWinnerId = [...players].sort((a, b) => (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6))[0].id;
+      return;
+    }
+    const tied = order.filter((p) => p.wild!.correct === top.wild!.correct && p.wild!.timeMs === top.wild!.timeMs);
+    if (tied.length === 1) this.wcWinnerId = top.id;
+    else if (this.config.wildCard.suddenDeathMax > 0 && !outOfQuestions) this.sudden = { alive: tied.map((p) => p.id), out: [], number: 0 };
+    else this.wcWinnerId = [...tied].sort((a, b) => (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6))[0].id;
   }
 
-  private get canUndo(): boolean {
-    const mark = this.lastMark;
-    return (
-      !!mark &&
-      !!this.r2 &&
-      mark.runId === this.r2.id &&
-      (this.phase === "r2BuzzOpen" || this.phase === "r2Reveal") &&
-      this.r2.outcome?.kind !== "voided"
+  /** Wild card players best first: most correct, lower time, better Round 1 rank. */
+  private wildStandingOrder(): Participant[] {
+    return this.cached("wildOrder", () =>
+      this.participants
+        .filter((p) => p.wild && (p.status === "wildcard" || (this.wcRevealed && p.status !== "removed")))
+        .sort((a, b) => b.wild!.correct - a.wild!.correct || a.wild!.timeMs - b.wild!.timeMs || (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6)),
     );
   }
 
-  /** Finalists who can still buzz on this question. */
-  private buzzersLeft(run: Round2Run): string[] {
-    return run.inPlay.filter((id) => !run.lockedOut.includes(id) && this.find(id)?.status === "finalist");
+  /** Reveal wild card: the winner becomes a finalist; the rest of the wild card players become audience. */
+  private revealWildCard() {
+    const winner = this.wcWinnerId ? this.find(this.wcWinnerId) : undefined;
+    // Seats left empty by removals during the wild card round go to the next best.
+    const seats = Math.max(1, this.config.safe + 1 - this.participants.filter((p) => p.status === "finalist").length);
+    const ranked = this.wildStandingOrder().filter((p) => p.status === "wildcard");
+    const winners = [winner, ...ranked.filter((p) => p !== winner)].filter((p): p is Participant => !!p && p.status === "wildcard").slice(0, seats);
+    for (const p of this.participants) {
+      if (p.status !== "wildcard") continue;
+      if (winners.includes(p)) {
+        p.status = "finalist";
+        p.isWildCard = true;
+      } else p.status = "audience";
+    }
+    this.wcRevealed = true;
+    this.run = null;
+    this.go("wcWinner");
   }
 
-  private canBuzz(id: string, run: Round2Run) {
-    return this.buzzersLeft(run).includes(id);
+  // ==========================================================================
+  // Blackout
+  // ==========================================================================
+
+  /** Start Blackout: every finalist on the track at BASE_GAP + their head start. */
+  private startBlackout() {
+    this.boStarted = true;
+    this.placeRunners();
+    this.go("boIntro");
   }
 
-  /** Finalists sharing the most points, when more than one (and no sudden-death winner yet). */
-  private tiedLeaders(): Participant[] {
-    if (this.winnerId) return [];
-    const finalists = this.finalists();
-    if (finalists.length < 2) return [];
-    const top = Math.max(...finalists.map((p) => p.points));
-    const leaders = finalists.filter((p) => p.points === top);
-    return leaders.length > 1 ? leaders : [];
+  private placeRunners() {
+    const { baseGap, headStart } = this.config.blackout;
+    for (const p of this.finalists()) {
+      const hs = p.isWildCard ? headStart.wildCard : (p.cutRank ?? 99) <= 3 ? headStart.top3 : headStart.safe;
+      const start = baseGap + hs;
+      p.runner = { start, headStart: hs, position: start, from: start, delta: null, alive: true, caughtOnQuestion: null, beforeDark: start, timeMs: 0 };
+    }
+    this.dark = 0;
+    this.darkFrom = 0;
+    this.caughtThisQuestion = [];
+    this.boOver = false;
+    this.boOutOfQuestions = false;
   }
 
-  /** Has the buzzer round played its planned questions? */
-  private get plannedDone() {
-    return this.r2Number >= this.config.round2.questions;
+  /** Finalists on the track (removed ones leave the chase). */
+  private runners(): Participant[] {
+    return this.participants.filter((p) => p.runner && p.status === "finalist");
+  }
+
+  /**
+   * At the reveal: correct +3 / +2 / +1 by the third of the answer time it
+   * arrived in; wrong −1 (not below 0); no answer 0. Nobody is caught here.
+   */
+  private moveRunners(run: Run) {
+    if (run.scored) return;
+    const limit = run.limitMs;
+    for (const id of run.players) {
+      const p = this.find(id);
+      const r = p?.runner;
+      if (!p || !r || !r.alive || p.status !== "finalist") continue;
+      const a = run.answers.get(id);
+      let delta = 0;
+      if (a && a.optionIndex === run.question.correct) {
+        delta = a.elapsedMs < limit / 3 ? 3 : a.elapsedMs < (2 * limit) / 3 ? 2 : 1;
+        r.timeMs += a.elapsedMs;
+      } else {
+        if (a) delta = r.position > 0 ? -1 : 0;
+        r.timeMs += limit;
+      }
+      r.from = r.position;
+      r.position += delta;
+      r.delta = a ? delta : 0;
+    }
+    run.scored = true;
+    this.changed();
+  }
+
+  /** Advance the darkness: the dark moves; everyone at or behind it is caught. Then: is it over? */
+  private advanceDarkness() {
+    const run = this.run!;
+    this.darkFrom = this.dark;
+    this.dark += darknessStep(this.config, run.number);
+    const caught: string[] = [];
+    for (const p of this.runners()) {
+      const r = p.runner!;
+      if (!r.alive) continue;
+      r.beforeDark = r.position;
+      if (r.position <= this.dark) {
+        r.alive = false;
+        r.caughtOnQuestion = run.number;
+        caught.push(p.id);
+      }
+    }
+    this.caughtThisQuestion = caught;
+    this.checkBlackoutOver();
+    this.go("boDark");
+  }
+
+  /** Over when one (or no) runner is left, or after the last planned question, or out of questions. */
+  private checkBlackoutOver() {
+    const alive = this.runners().filter((p) => p.runner!.alive).length;
+    const lastPlanned = this.boNumber >= this.config.blackout.questions;
+    this.boOutOfQuestions = this.boNext >= this.blackoutQuestions.length;
+    this.boOver = alive <= 1 || lastPlanned || this.boOutOfQuestions;
+  }
+
+  /**
+   * The chase's final order: runners still running by position (then lower total
+   * time, then Round 1 rank), then caught ones by catch order: caught later
+   * first; same question → further ahead before the dark moved, lower time,
+   * better Round 1 rank. Removed runners aren't placed.
+   */
+  private blackoutOrder(): Participant[] {
+    return this.cached("blackoutOrder", () => {
+      const byRank = (a: Participant, b: Participant) => (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6) || a.joinIndex - b.joinIndex;
+      const all = this.runners();
+      const alive = all
+        .filter((p) => p.runner!.alive)
+        .sort((a, b) => b.runner!.position - a.runner!.position || a.runner!.timeMs - b.runner!.timeMs || byRank(a, b));
+      const caught = all
+        .filter((p) => !p.runner!.alive)
+        .sort(
+          (a, b) =>
+            (b.runner!.caughtOnQuestion ?? 0) - (a.runner!.caughtOnQuestion ?? 0) ||
+            b.runner!.beforeDark - a.runner!.beforeDark ||
+            a.runner!.timeMs - b.runner!.timeMs ||
+            byRank(a, b),
+        );
+      return [...alive, ...caught];
+    });
+  }
+
+  /** Place per runner: caught runners (their place is already final) and everyone once it's over. */
+  private blackoutPlaces(): Map<string, number> {
+    return this.cached("blackoutPlaces", () => {
+      const places = new Map<string, number>();
+      if (!this.boStarted) return places;
+      this.blackoutOrder().forEach((p, i) => {
+        if (!p.runner!.alive || this.boOver || this.phase === "podium") places.set(p.id, i + 1);
+      });
+      return places;
+    });
+  }
+
+  private blackoutWinner(): Participant | null {
+    return this.boOver ? this.blackoutOrder()[0] ?? null : null;
+  }
+
+  // ==========================================================================
+  // Snapshots (void and restart question in the wild card round and Blackout)
+  // ==========================================================================
+
+  private wildSnapshot(): WildSnapshot {
+    const records = new Map<string, WildRecord>();
+    for (const p of this.participants) if (p.wild) records.set(p.id, { ...p.wild });
+    return {
+      kind: "wild",
+      records,
+      sudden: this.sudden ? { alive: [...this.sudden.alive], out: [...this.sudden.out], number: this.sudden.number } : null,
+      winnerId: this.wcWinnerId,
+      fallback: this.wcFallback,
+      number: this.wcNumber,
+    };
+  }
+
+  private blackoutSnapshot(): BlackoutSnapshot {
+    const runners = new Map<string, RunnerState>();
+    for (const p of this.participants) if (p.runner) runners.set(p.id, { ...p.runner });
+    return { kind: "blackout", runners, dark: this.dark, darkFrom: this.darkFrom, caught: [...this.caughtThisQuestion], over: this.boOver, number: this.boNumber };
+  }
+
+  /** Puts the round back as it was before this question (removals since then stay removed). */
+  private restoreBefore(run: Run) {
+    const s = run.before;
+    if (!s) return;
+    if (s.kind === "wild") {
+      for (const p of this.participants) {
+        const rec = s.records.get(p.id);
+        if (rec) p.wild = { ...rec };
+      }
+      this.sudden = s.sudden ? { alive: [...s.sudden.alive], out: [...s.sudden.out], number: s.sudden.number } : null;
+      this.wcWinnerId = s.winnerId;
+      this.wcFallback = s.fallback;
+    } else {
+      for (const p of this.participants) {
+        const r = s.runners.get(p.id);
+        if (r) p.runner = { ...r };
+      }
+      this.dark = s.dark;
+      this.darkFrom = s.darkFrom;
+      this.caughtThisQuestion = [...s.caught];
+      this.boOver = s.over;
+    }
   }
 
   // ==========================================================================
   // Fixing mistakes
   // ==========================================================================
 
+  /**
+   * Void: the question doesn't count. Round 1: dropped. Wild card: the next
+   * unused question takes its number. Blackout: no moves, the dark doesn't
+   * move; the next spare takes its number.
+   */
   private voidQuestion() {
-    if (this.isRound1Phase()) {
-      const run = this.r1!;
+    const run = this.run!;
+    if (run.round === 1) {
       this.unscoreRound1(run);
       run.voided = true;
       this.go("r1Reveal");
       return;
     }
-    const run = this.r2!;
-    this.takeBackRound2Point(run);
-    run.buzzedBy = null;
-    run.outcome = { kind: "voided" };
-    this.lastMark = null;
-    // A voided buzzer question is replaced by the next one, so the round still
-    // has its full number of real questions.
-    if (run.suddenDeath) this.sudden!.number -= 1;
-    else this.r2Number -= 1;
-    this.go("r2Reveal");
-  }
-
-  private restartQuestion() {
-    if (this.isRound1Phase()) {
-      const run = this.r1!;
-      this.unscoreRound1(run);
-      this.beginRound1Question(run.index);
+    this.restoreBefore(run);
+    run.voided = true;
+    run.scored = true;
+    if (run.round === 2) {
+      if (run.suddenDeath) this.sudden!.number -= 1;
+      else this.wcNumber -= 1;
+      // Out of questions to replace it: decide with what was played.
+      if (this.wcNext >= this.wildQuestions.length) this.decideWildCard();
+      this.go("wcReveal");
       return;
     }
-    const run = this.r2!;
-    this.takeBackRound2Point(run);
-    this.r2 = {
-      ...run,
-      id: randomId(),
-      inPlay: (run.suddenDeath ? this.sudden!.tiedIds : this.finalistIds()).filter(
-        (id) => this.find(id)?.status === "finalist",
-      ),
-      lockedOut: [],
-      buzzedBy: null,
-      answerTimeUp: false,
-      outcome: null,
-      awardedTo: null,
-    };
-    this.lastMark = null;
-    this.startRound2Read();
+    this.boNumber -= 1;
+    for (const p of this.runners()) {
+      p.runner!.delta = 0;
+      p.runner!.from = p.runner!.position;
+    }
+    if (this.boNext >= this.blackoutQuestions.length) {
+      this.boOutOfQuestions = true;
+      this.boOver = true;
+    }
+    this.go("boReveal");
   }
 
-  private takeBackRound2Point(run: Round2Run) {
-    if (!run.awardedTo) return;
-    const p = this.find(run.awardedTo);
-    if (p) p.points = Math.max(0, p.points - 1);
-    if (this.winnerId === run.awardedTo) this.winnerId = null;
-    run.awardedTo = null;
+  /** Restart question: undo everything it did and play it again from its read step, with fresh ids. */
+  private restartQuestion() {
+    const run = this.run!;
+    if (run.round === 1) {
+      this.unscoreRound1(run);
+      this.beginQuestion(1, run.index, 0, false);
+      return;
+    }
+    this.restoreBefore(run);
+    this.beginQuestion(run.round, run.index, run.number, run.suddenDeath);
   }
 
   private restartRound() {
-    if (this.isRound1Phase() || this.phase === "r1Intro" || this.phase === "cut") {
+    if (R1_PHASES.includes(this.phase) || this.phase === "cut") {
       for (const p of this.participants) {
         if (p.status === "removed") continue;
         Object.assign(p, {
@@ -844,80 +1163,102 @@ export class QuizRoom {
           prevRank: null,
           change: 0,
           cutRank: null,
+          cutTimeMs: 0,
           backingId: null,
         } satisfies Partial<Participant>);
       }
-      this.r1 = null;
+      this.run = null;
       for (const index of this.r1Scored.keys()) this.recorder?.round1Unscored(index);
       this.r1Scored.clear();
       this.cutOrder = null;
+      this.wildSkipped = false;
       this.go("r1Intro");
       return;
     }
-    for (const p of this.participants) p.points = 0;
-    this.r2 = null;
-    this.r2Next = 0;
-    this.r2Number = 0;
-    this.sudden = null;
-    this.winnerId = null;
-    this.lastMark = null;
-    this.go("r2Intro");
+    if (WC_PHASES.includes(this.phase)) {
+      for (const p of this.participants) if (p.wild) p.wild = { correct: 0, timeMs: 0, asked: 0, sdTimeMs: 0 };
+      this.run = null;
+      this.wcNext = 0;
+      this.wcNumber = 0;
+      this.sudden = null;
+      this.wcWinnerId = null;
+      this.wcFallback = false;
+      this.go("wcIntro");
+      return;
+    }
+    // Blackout: back to the start positions.
+    this.run = null;
+    this.boNext = 0;
+    this.boNumber = 0;
+    this.placeRunners();
+    this.go("boIntro");
   }
 
   private remove(id: string) {
     const p = this.find(id);
     if (!p || p.status === "removed") return;
-    const wasFinalist = p.status === "finalist";
+    const was = p.status;
     p.status = "removed";
     p.connected = false;
     p.backingId = null;
 
-    if (wasFinalist && !this.frozenFinalists) {
-      // Before the buzzer round starts, the next-best participant takes the seat.
+    if (was === "finalist") {
       for (const other of this.participants) if (other.backingId === id) other.backingId = null;
-      this.syncFinalistStatuses();
+      if (!this.boLocked) this.fillSeat();
+      if (this.boStarted && !this.boLocked) this.placeRunners();
     }
-
-    const run = this.r2;
-    if (wasFinalist && run && ROUND2_QUESTION_PHASES.includes(this.phase)) {
-      run.inPlay = run.inPlay.filter((x) => x !== id);
-      if (this.sudden) this.sudden.tiedIds = this.sudden.tiedIds.filter((x) => x !== id);
-      if (this.phase === "r2Answering" && run.buzzedBy === id) {
-        // They had the turn: give the others the buzzers back.
-        run.buzzedBy = null;
-        this.lastMark = null;
-        if (this.buzzersLeft(run).length > 0) this.openBuzzers(this.config.round2.reopenMs);
-        else this.nobodyScores("allWrong");
-        return;
-      }
-      if (this.phase === "r2BuzzOpen" && this.buzzersLeft(run).length === 0) {
-        this.nobodyScores(run.lockedOut.length ? "allWrong" : "timeUp");
-        return;
-      }
-    } else if (wasFinalist && this.sudden) {
-      this.sudden.tiedIds = this.sudden.tiedIds.filter((x) => x !== id);
+    if (was === "wildcard" && this.sudden) {
+      this.sudden.alive = this.sudden.alive.filter((x) => x !== id);
+      if (this.sudden.alive.length <= 1 && (this.phase === "wcReveal" || this.phase === "wcStandings")) this.decideWildCard();
     }
+    if (was === "finalist" && this.boLocked && (this.phase === "boReveal" || this.phase === "boDark")) this.checkBlackoutOver();
 
     this.changed();
     this.endAnswerIfEveryoneAnswered();
   }
 
-  private finish(basis: "buzzer" | "round1") {
-    let order: string[];
-    if (basis === "buzzer") {
-      order = [...this.finalists()]
-        .sort(
-          (a, b) =>
-            Number(b.id === this.winnerId) - Number(a.id === this.winnerId) ||
-            b.points - a.points ||
-            (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6),
-        )
-        .map((p) => p.id);
-    } else {
-      order = this.round1Ranking().map((p) => p.id);
+  /**
+   * Before the first Blackout question, a removed finalist's seat goes to the
+   * next best: the next Round 1 rank outside the finalists (before the wild card
+   * round starts), the wild card runner-up (after it's revealed). During the
+   * wild card round the seat is filled at Reveal wild card.
+   */
+  private fillSeat() {
+    if (!this.cutOrder) return;
+    if (this.wcRevealed) {
+      const next = this.wildStandingOrder().find((p) => p.status === "audience");
+      if (next) {
+        next.status = "finalist";
+        next.isWildCard = true;
+      }
+      return;
     }
+    if (this.wcStarted || this.wildSkipped) return;
+    const next = this.cutOrder.map((x) => this.find(x)!).find((x) => x.status === "wildcard");
+    if (next) next.status = "finalist";
+  }
+
+  /** End quiz now: the podium with the standings as they are, for whichever round we're in. */
+  private endQuizNow() {
+    if (!this.cutOrder) return this.finish("round1");
+    if (!this.boStarted && !this.wcRevealed && !this.wildSkipped) return this.finish("wildcard");
+    this.finish("blackout");
+  }
+
+  private finish(basis: PodiumBasis) {
+    let order: string[];
+    if (basis === "round1") order = this.round1Ranking().map((p) => p.id);
+    else if (basis === "wildcard") {
+      order = this.participants
+        .filter((p) => p.status === "finalist" && !p.isWildCard)
+        .sort((a, b) => (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6))
+        .map((p) => p.id);
+    } else if (this.boStarted) {
+      this.boOver = true;
+      this.cache.clear();
+      order = this.blackoutOrder().map((p) => p.id);
+    } else order = this.finalists().map((p) => p.id);
     this.podium = { basis, order };
-    this.lastMark = null;
     this.go("podium");
   }
 
@@ -980,19 +1321,8 @@ export class QuizRoom {
   }
 
   private addTime() {
-    if (this.phase === "r2Answering" && !this.timer) {
-      // The spoken-answer countdown already ran out: give them a fresh few seconds.
-      const run = this.r2!;
-      run.answerTimeUp = false;
-      this.startTimer(ADD_TIME_MS, () => {
-        run.answerTimeUp = true;
-        this.changed();
-      });
-      this.changed();
-      return;
-    }
     if (!this.timer) return;
-    if (this.phase === "r1Answer" && this.r1) this.r1.limitMs += ADD_TIME_MS;
+    if (ANSWER_PHASES.includes(this.phase) && this.run) this.run.limitMs += ADD_TIME_MS;
     if (this.paused) {
       this.timer = {
         ...this.timer,
@@ -1007,11 +1337,11 @@ export class QuizRoom {
     this.changed();
   }
 
-  /** Round 1 answer step ends early once every connected participant in the question has answered. */
+  /** An answer step ends early once everyone connected who can answer it has answered. */
   private endAnswerIfEveryoneAnswered() {
-    const run = this.r1;
-    if (this.phase !== "r1Answer" || !run || this.paused) return;
-    const waitingOn = this.participants.filter((p) => p.connected && this.playsQuestion(p, run));
+    const run = this.run;
+    if (!ANSWER_PHASES.includes(this.phase) || !run || this.paused) return;
+    const waitingOn = this.participants.filter((p) => p.connected && this.canAnswer(p, run));
     // If every phone dropped at once (a Wi-Fi blip), let the timer run instead of racing ahead.
     if (waitingOn.length === 0) return;
     if (waitingOn.every((p) => run.answers.has(p.id))) this.endTimerNow();
@@ -1049,133 +1379,96 @@ export class QuizRoom {
     return { color, head };
   }
 
-  /** What `p`'s bot eyes are doing on the Host right now (see BotMood). */
+  /** Can `p` answer this question run? */
+  private canAnswer(p: Participant, run: Run): boolean {
+    if (run.round === 1) return this.playsRound1Question(p, run);
+    if (!run.players.has(p.id)) return false;
+    if (run.round === 2) return p.status === "wildcard";
+    return p.status === "finalist" && !!p.runner?.alive;
+  }
+
+  /** In Round 1 and allowed to answer this question (late joiners start later). */
+  private playsRound1Question(p: Participant, run: Run) {
+    return p.status === "playing" && p.firstQuestion <= run.index;
+  }
+
+  private questionOpenFor(p: Participant) {
+    if (!this.run || !(READ_PHASES.includes(this.phase) || ANSWER_PHASES.includes(this.phase))) return false;
+    return this.canAnswer(p, this.run);
+  }
+
+  /** What `p`'s bot eyes are doing on the Host right now (see BotMood and docs/SPEC.md v3). */
   private botMood(p: Participant): BotMood {
     if (p.status === "removed") return "out";
     const phase = this.phase;
-
-    if (this.isRound1Phase() && this.r1) {
-      const run = this.r1;
-      if (!this.playsQuestion(p, run)) return "idle";
-      const answer = run.answers.get(p.id);
-      switch (phase) {
-        case "r1Read":
-          return "idle";
-        case "r1Answer":
-          return answer ? "locked" : "thinking";
-        case "r1TimesUp":
-          return answer ? "locked" : "idle";
-        default:
-          // Reveal, results, leaderboard: right or wrong (a miss counts as wrong).
-          if (run.voided) return "idle";
-          return answer && answer.optionIndex === run.question.correct ? "right" : "wrong";
-      }
-    }
+    const run = this.run;
 
     if (phase === "lobby" || phase === "r1Intro") return "idle";
+    if (phase === "podium") return this.podium?.order[0] === p.id ? "right" : "idle";
 
-    // From the cut on, only the finalists are still in the game.
-    const finalist = this.finalistIds().includes(p.id);
-    if (phase === "podium" && this.podium) {
-      if (this.podium.order[0] === p.id) return "right";
-      return this.podium.basis === "round1" || finalist ? "idle" : "out";
+    // A question in any round: the same eyes for whoever can answer it.
+    if (run && (READ_PHASES.includes(phase) || ANSWER_PHASES.includes(phase) || TIMES_UP_PHASES.includes(phase) || REVEALED_PHASES.includes(phase))) {
+      if (run.round === 3 && p.runner && !p.runner.alive) return "out";
+      const plays = run.round === 1 ? this.playsRound1Question(p, run) : run.players.has(p.id);
+      if (!plays) return run.round === 2 && p.status === "audience" ? "out" : "idle";
+      const answered = run.answers.has(p.id);
+      if (READ_PHASES.includes(phase)) return "idle";
+      if (ANSWER_PHASES.includes(phase)) return answered ? "locked" : "thinking";
+      if (TIMES_UP_PHASES.includes(phase)) return answered ? "locked" : "idle";
+      if (run.voided) return "idle";
+      if (phase === "boDark") return "idle";
+      if (run.round === 3 && !answered) return "idle";
+      return this.isCorrect(run, p.id) ? "right" : "wrong";
     }
-    if (!finalist) return "out";
 
-    if (this.r2 && ROUND2_QUESTION_PHASES.includes(phase)) {
-      const run = this.r2;
-      if (!run.inPlay.includes(p.id)) return "idle";
-      if (run.lockedOut.includes(p.id)) return "wrong";
-      switch (phase) {
-        case "r2Read":
-          return "idle";
-        case "r2BuzzOpen":
-          return "thinking";
-        case "r2Answering":
-          return run.buzzedBy === p.id ? "locked" : "thinking";
-        default:
-          return run.outcome?.kind === "correct" && run.outcome.by === p.id ? "right" : "idle";
-      }
-    }
-    return "idle";
+    if (phase === "cut") return p.status === "finalist" ? "right" : p.status === "wildcard" ? "idle" : "out";
+    if (WC_PHASES.includes(phase)) return p.status === "wildcard" ? "idle" : p.status === "finalist" ? "idle" : "out";
+    if (phase === "wcWinner") return p.isWildCard && p.status === "finalist" ? "right" : p.status === "finalist" ? "idle" : "out";
+    if (p.runner && !p.runner.alive) return "out";
+    return p.status === "finalist" ? "idle" : "out";
   }
 
   private active() {
     return this.participants.filter((p) => p.status !== "removed");
   }
 
-  private isRound1Phase() {
-    return ROUND1_QUESTION_PHASES.includes(this.phase);
-  }
-
-  private isLastRound1Question() {
-    return !!this.r1 && this.r1.index >= this.round1Questions.length - 1;
-  }
-
-  /** In Round 1 and allowed to answer this question (late joiners start later). */
-  private playsQuestion(p: Participant, run: Round1Run) {
-    return p.status === "playing" && p.firstQuestion <= run.index;
-  }
-
-  private questionOpenFor(p: Participant) {
-    if ((this.phase === "r1Read" || this.phase === "r1Answer") && this.r1) return this.playsQuestion(p, this.r1);
-    if (["r2Read", "r2BuzzOpen", "r2Answering"].includes(this.phase) && this.r2) return this.r2.inPlay.includes(p.id);
-    return false;
+  /** Round 1 tie-break time: time over the questions played, plus the full time for those before joining. */
+  private round1TieTime(p: Participant) {
+    const answerMs = (index: number) => this.round1Questions[index]?.openMs ?? this.config.round1.answerMs;
+    let missedBeforeJoining = 0;
+    for (const [index, scored] of this.r1Scored) if (scored && index < p.firstQuestion) missedBeforeJoining += answerMs(index);
+    return p.playedTimeMs + missedBeforeJoining;
   }
 
   /** Round 1 participants, best first: score, then lower total answer time, then who joined first. */
   private round1Ranking(): Participant[] {
-    return this.cached("r1ranking", () => {
-      const answerMs = (index: number) => this.round1Questions[index]?.openMs ?? this.config.round1.answerMs;
-      const tieTime = (p: Participant) => {
-        let missedBeforeJoining = 0;
-        for (const [index, scored] of this.r1Scored) if (scored && index < p.firstQuestion) missedBeforeJoining += answerMs(index);
-        return p.playedTimeMs + missedBeforeJoining;
-      };
-      return this.participants
+    return this.cached("r1ranking", () =>
+      this.participants
         .filter((p) => p.status === "playing")
-        .sort((a, b) => b.score - a.score || tieTime(a) - tieTime(b) || a.joinIndex - b.joinIndex);
-    });
+        .sort((a, b) => b.score - a.score || this.round1TieTime(a) - this.round1TieTime(b) || a.joinIndex - b.joinIndex),
+    );
   }
 
   /** Round 1 rank per participant: frozen cut rank after the cut, live rank before. */
   private round1RankMap(): Map<string, number> {
     return this.cached("r1rankmap", () => {
-      if (this.cutOrder) {
-        return new Map(this.participants.filter((p) => p.cutRank !== null).map((p) => [p.id, p.cutRank!]));
-      }
+      if (this.cutOrder) return new Map(this.participants.filter((p) => p.cutRank !== null).map((p) => [p.id, p.cutRank!]));
       return new Map(this.round1Ranking().map((p, i) => [p.id, i + 1]));
     });
   }
 
-  /** Finalist ids in seat order (removed ones dropped). Before the buzzer round, the next best fill empty seats. */
+  /** Finalist ids in seat order: Round 1 rank, the wild card(s) last. */
   private finalistIds(): string[] {
-    return this.cached("finalistIds", () => {
-      if (this.frozenFinalists) return this.frozenFinalists.filter((id) => this.find(id)?.status === "finalist");
-      if (!this.cutOrder) return [];
-      return this.cutOrder.filter((id) => this.find(id)?.status !== "removed").slice(0, this.config.finalists);
-    });
+    return this.cached("finalistIds", () =>
+      this.participants
+        .filter((p) => p.status === "finalist")
+        .sort((a, b) => Number(a.isWildCard) - Number(b.isWildCard) || (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6))
+        .map((p) => p.id),
+    );
   }
 
   private finalists(): Participant[] {
     return this.finalistIds().map((id) => this.find(id)!);
-  }
-
-  /** After the cut (and after removals before the buzzer round): finalists vs audience. */
-  private syncFinalistStatuses() {
-    this.cache.clear();
-    const finalistIds = new Set(this.finalistIds());
-    for (const id of this.cutOrder ?? []) {
-      const p = this.find(id);
-      if (!p || p.status === "removed") continue;
-      if (finalistIds.has(id)) {
-        if (p.status !== "finalist") p.backingId = null;
-        p.status = "finalist";
-      } else {
-        p.status = "audience";
-      }
-    }
-    this.cache.clear();
   }
 
   // ==========================================================================
@@ -1186,18 +1479,20 @@ export class QuizRoom {
     return this.participants.filter((p) => p.status === "playing").length >= this.config.minParticipants;
   }
 
-  /** What comes after a buzzer question (from its reveal or the scores). */
-  private afterRound2Question(): { action: AdminAction; label: string } {
-    if (this.sudden) {
-      // Over when someone answered correctly (or removals left only one tied finalist).
-      return this.winnerId || this.tiedLeaders().length < 2
-        ? { action: { type: "showWinner" }, label: "Show winner" }
-        : { action: { type: "nextQuestion" }, label: "Next question" };
-    }
-    if (!this.plannedDone) return { action: { type: "nextQuestion" }, label: "Next question" };
-    return this.tiedLeaders().length > 1
-      ? { action: { type: "startSuddenDeath" }, label: "Start sudden death" }
-      : { action: { type: "showWinner" }, label: "Show winner" };
+  /** Is the wild card decided (so the next step is Reveal wild card)? */
+  private get wildDecided() {
+    return !!this.wcWinnerId || this.wildPlayerIds().length === 0;
+  }
+
+  /** What comes after a wild card question (from its reveal or the standings). */
+  private afterWildQuestion(): PrimaryAction {
+    if (this.wildDecided) return { action: { type: "revealWildCard" }, label: "Reveal wild card" };
+    return { action: { type: "nextQuestion" }, label: this.sudden ? "Next question (sudden death)" : "Next question" };
+  }
+
+  /** What comes after a Blackout question's dark (or a voided question). */
+  private afterBlackoutQuestion(): PrimaryAction {
+    return this.boOver ? { action: { type: "showWinner" }, label: "Show winner" } : { action: { type: "nextQuestion" }, label: "Next question" };
   }
 
   private allowedActions(): Set<AdminActionType> {
@@ -1213,25 +1508,32 @@ export class QuizRoom {
       }
       const add = (...types: AdminActionType[]) => types.forEach((t) => a.add(t));
       const hasFinalists = this.finalistIds().length > 0;
+      const voided = !!this.run?.voided;
 
       switch (phase) {
         case "lobby":
           if (this.canStart()) add("startQuiz");
           break;
         case "r1Intro":
-          add("showQuestion", "restartRound");
+          if (this.round1Questions.length > 0) add("showQuestion");
+          add("restartRound");
           break;
         case "r1Read":
         case "r1Answer":
+        case "wcRead":
+        case "wcAnswer":
+        case "boRead":
+        case "boAnswer":
           add("voidQuestion", "restartQuestion", "restartRound");
           break;
         case "r1TimesUp":
+        case "wcTimesUp":
+        case "boTimesUp":
           add("revealAnswer", "voidQuestion", "restartQuestion", "restartRound");
           break;
         case "r1Reveal":
         case "r1Results":
         case "r1Leaderboard": {
-          const voided = this.r1!.voided;
           if (!voided && phase === "r1Reveal") add("showResults");
           if (!voided && phase !== "r1Leaderboard") add("showLeaderboard");
           if (!voided) add("voidQuestion");
@@ -1240,37 +1542,42 @@ export class QuizRoom {
           break;
         }
         case "cut":
-          if (hasFinalists) add("openPredictions", "startBuzzerRound");
+          if (this.wildPlayerIds().length > 0) add("startWildCard");
+          else if (hasFinalists) add("openPredictions", "startBlackout");
           add("restartRound");
+          break;
+        case "wcIntro":
+          if (this.wildQuestions.length > 0 && !this.wildDecided) add("showQuestion");
+          if (this.wildDecided) add("revealWildCard");
+          add("restartRound");
+          break;
+        case "wcReveal":
+        case "wcStandings":
+          if (!voided && phase === "wcReveal") add("showStandings");
+          if (!voided) add("voidQuestion");
+          add(this.afterWildQuestion().action.type, "restartQuestion", "restartRound");
+          break;
+        case "wcWinner":
+          if (hasFinalists) add("openPredictions", "startBlackout");
           break;
         case "predictions":
-          if (hasFinalists) add("startBuzzerRound");
+          if (hasFinalists) add("startBlackout");
           break;
-        case "r2Intro":
-          if (hasFinalists) add("showQuestion");
+        case "boIntro":
+          if (this.runners().length > 0 && this.blackoutQuestions.length > 0) add("showQuestion");
           add("restartRound");
           break;
-        case "r2Read":
-          add("voidQuestion", "restartQuestion", "restartRound");
+        case "boReveal":
+          if (voided) add(this.afterBlackoutQuestion().action.type);
+          else {
+            add("advanceDarkness", "voidQuestion");
+            // A removal left one runner (or none): the winner can be shown straight away.
+            if (this.runners().filter((p) => p.runner!.alive).length <= 1) add("showWinner");
+          }
+          add("restartQuestion", "restartRound");
           break;
-        case "r2BuzzOpen":
-          add("voidQuestion", "restartQuestion", "restartRound");
-          if (this.canUndo) add("undoMark");
-          break;
-        case "r2Answering":
-          add("markCorrect", "markWrong", "addTime", "voidQuestion", "restartQuestion", "restartRound");
-          break;
-        case "r2Reveal": {
-          add("showScores", this.afterRound2Question().action.type, "restartQuestion", "restartRound");
-          if (this.r2!.outcome?.kind !== "voided") add("voidQuestion");
-          if (this.canUndo) add("undoMark");
-          break;
-        }
-        case "r2Scores":
-          add(this.afterRound2Question().action.type, "restartRound");
-          break;
-        case "suddenDeath":
-          add("showQuestion", "restartRound");
+        case "boDark":
+          add(this.afterBlackoutQuestion().action.type, "restartQuestion", "restartRound");
           break;
         case "podium":
           break;
@@ -1280,11 +1587,11 @@ export class QuizRoom {
   }
 
   private primaryAndHint(): { primary: PrimaryAction | null; hint: string | null } {
-    const finalistCount = this.finalistIds().length;
     const answeredLine = () => {
       const c = this.answerCounts();
       return c ? `${c.answered} of ${c.expected} answered.` : null;
     };
+    const run = this.run;
     switch (this.phase) {
       case "lobby": {
         const joined = this.active().length;
@@ -1298,91 +1605,87 @@ export class QuizRoom {
           hint: `Question 1 goes up. ${(this.round1Questions[0]?.readMs ?? this.config.round1.readMs) / 1000}s to read, then ${(this.round1Questions[0]?.openMs ?? this.config.round1.answerMs) / 1000}s to answer.`,
         };
       case "r1Read":
+      case "wcRead":
+      case "boRead":
         return { primary: null, hint: "Reading time. Answers open by themselves." };
       case "r1Answer":
-        return {
-          primary: null,
-          hint: ["Answering.", answeredLine(), "Time's up comes by itself, or when everyone has answered."].filter(Boolean).join(" "),
-        };
+      case "wcAnswer":
+      case "boAnswer":
+        return { primary: null, hint: ["Answering.", answeredLine(), "Time's up comes by itself, or when everyone has answered."].filter(Boolean).join(" ") };
       case "r1TimesUp":
-        return {
-          primary: { action: { type: "revealAnswer" }, label: "Reveal answer" },
-          hint: ["Time's up.", answeredLine()].filter(Boolean).join(" "),
-        };
+      case "wcTimesUp":
+      case "boTimesUp":
+        return { primary: { action: { type: "revealAnswer" }, label: "Reveal answer" }, hint: ["Time's up.", answeredLine()].filter(Boolean).join(" ") };
       case "r1Reveal":
       case "r1Results":
       case "r1Leaderboard": {
-        const run = this.r1!;
         const next: PrimaryAction = this.isLastRound1Question()
           ? { action: { type: "endRound1" }, label: "End round 1" }
           : { action: { type: "nextQuestion" }, label: "Next question" };
-        if (run.voided) return { primary: next, hint: "Question cancelled. Nobody gained or lost points." };
-        if (this.phase === "r1Reveal") {
-          return { primary: { action: { type: "showResults" }, label: "Show results" }, hint: `Results and leaderboard are optional. "${next.label}" works now too.` };
-        }
-        if (this.phase === "r1Results") {
-          return { primary: { action: { type: "showLeaderboard" }, label: "Show leaderboard" }, hint: `Leaderboard is optional. "${next.label}" works now too.` };
-        }
-        return {
-          primary: next,
-          hint: this.isLastRound1Question() ? `That was the last question. Next: the top ${this.config.finalists} are revealed.` : null,
-        };
+        if (run!.voided) return { primary: next, hint: "Question cancelled. Nobody gained or lost points." };
+        if (this.phase === "r1Reveal") return { primary: { action: { type: "showResults" }, label: "Show results" }, hint: `Results and leaderboard are optional. "${next.label}" works now too.` };
+        if (this.phase === "r1Results") return { primary: { action: { type: "showLeaderboard" }, label: "Show leaderboard" }, hint: `Leaderboard is optional. "${next.label}" works now too.` };
+        return { primary: next, hint: this.isLastRound1Question() ? `That was the last question. Next: the cut (top ${this.config.safe} safe).` : "End round 1 also works now, to cut Round 1 short." };
       }
-      case "cut":
-        return finalistCount
-          ? {
-              primary: { action: { type: "openPredictions" }, label: "Open predictions" },
-              hint: `The top ${finalistCount} are on the Host. Next, the audience backs a finalist (or start the buzzer round straight away).`,
-            }
+      case "cut": {
+        const wild = this.wildPlayerIds().length;
+        if (wild > 0) {
+          return {
+            primary: { action: { type: "startWildCard" }, label: "Start wild card round" },
+            hint: `${this.finalistIds().length} safe. ${wild} play the wild card round for the last seat.`,
+          };
+        }
+        return this.finalistIds().length
+          ? { primary: { action: { type: "openPredictions" }, label: "Open predictions" }, hint: `Fewer than ${this.config.safe + 1} played, so everyone is a finalist and there's no wild card round. Start Blackout works now too.` }
           : { primary: null, hint: "Nobody played Round 1, so there are no finalists. Use End quiz now." };
+      }
+      case "wcIntro":
+        return this.wildDecided
+          ? { primary: { action: { type: "revealWildCard" }, label: "Reveal wild card" }, hint: "Nobody is left in the wild card round." }
+          : {
+              primary: { action: { type: "showQuestion" }, label: "Show question" },
+              hint: `Wild card question 1 goes up. ${this.wildPlayerIds().length} play; the ${this.finalistIds().length} safe finalists watch.`,
+            };
+      case "wcReveal":
+      case "wcStandings": {
+        const after = this.afterWildQuestion();
+        const noSpare = this.wcNext >= this.wildQuestions.length && !this.wildDecided ? " No spare questions left." : "";
+        if (run!.voided) return { primary: after, hint: `Question cancelled. It doesn't count; the next one takes its place.${noSpare}` };
+        const lead = this.sudden && after.action.type === "nextQuestion" ? `Exact tie: sudden death between ${this.sudden.alive.map((id) => this.find(id)?.name).join(", ")}. ` : "";
+        if (this.phase === "wcReveal") return { primary: { action: { type: "showStandings" }, label: "Show standings" }, hint: `${lead}Standings are optional. "${after.label}" works now too.` };
+        return { primary: after, hint: lead || (after.action.type === "revealWildCard" ? "The wild card is decided." : null) };
+      }
+      case "wcWinner":
+        return { primary: { action: { type: "openPredictions" }, label: "Open predictions" }, hint: "Next, the audience backs a finalist (or Start Blackout straight away)." };
       case "predictions": {
         const b = this.backing();
         return {
-          primary: finalistCount ? { action: { type: "startBuzzerRound" }, label: "Start buzzer round" } : null,
-          hint: `${b.backers} of ${b.audience} audience have backed someone. Backing closes when the buzzer round starts.`,
+          primary: { action: { type: "startBlackout" }, label: "Start Blackout" },
+          hint: `${b.backers} of ${b.audience} audience have backed someone. Backing closes when Blackout starts.`,
         };
       }
-      case "r2Intro":
-        return {
-          primary: finalistCount ? { action: { type: "showQuestion" }, label: "Show question" } : null,
-          hint: `Buzzer question 1 goes up with its options. ${(this.round2Questions[0]?.readMs ?? this.config.round2.readMs) / 1000}s to read, then buzzers open.`,
-        };
-      case "r2Read":
-        return { primary: null, hint: "Reading time. Buzzers open by themselves." };
-      case "r2BuzzOpen":
-        return { primary: null, hint: this.r2!.lockedOut.length ? "Buzzers reopened for the others. Waiting for a buzz." : "Buzzers are open. Waiting for a buzz." };
-      case "r2Answering": {
-        const name = this.find(this.r2!.buzzedBy!)?.name ?? "";
-        return {
-          primary: null,
-          hint: this.r2!.answerTimeUp ? `${name}'s time is up. Mark the answer: Correct or Wrong.` : `${name} is answering out loud. Mark it Correct or Wrong.`,
-        };
-      }
-      case "r2Reveal": {
-        const after = this.afterRound2Question();
-        if (this.r2!.outcome?.kind === "voided") {
-          return { primary: after, hint: "Question cancelled. It doesn't count; the next one takes its place." };
-        }
-        return { primary: { action: { type: "showScores" }, label: "Show scores" }, hint: `Scores are optional. "${after.label}" works now too.` };
-      }
-      case "r2Scores": {
-        const after = this.afterRound2Question();
-        const tied = this.tiedLeaders();
-        return {
-          primary: after,
-          hint:
-            after.action.type === "startSuddenDeath"
-              ? `Tie for 1st: ${tied.map((p) => p.name).join(" and ")}.`
-              : after.action.type === "showWinner"
-                ? "That was the last question."
-                : null,
-        };
-      }
-      case "suddenDeath": {
-        const names = (this.sudden?.tiedIds ?? []).map((id) => this.find(id)?.name).filter(Boolean);
+      case "boIntro":
         return {
           primary: { action: { type: "showQuestion" }, label: "Show question" },
-          hint: `Only ${names.join(" and ")} can buzz. First correct answer wins.`,
+          hint: `${this.runners().length} runners on the track. Each question: Show question, Reveal answer, Advance the darkness.`,
+        };
+      case "boReveal": {
+        if (run!.voided) {
+          const after = this.afterBlackoutQuestion();
+          return { primary: after, hint: this.boOutOfQuestions ? "Question cancelled. No spare questions left, so Blackout ends here." : "Question cancelled: no moves and the dark stays. The next one takes its place." };
+        }
+        return {
+          primary: { action: { type: "advanceDarkness" }, label: "Advance the darkness" },
+          hint: `Runners moved. The dark moves ${darknessStep(this.config, run!.number)} next.`,
+        };
+      }
+      case "boDark": {
+        const after = this.afterBlackoutQuestion();
+        const caught = this.caughtThisQuestion.map((id) => this.find(id)?.name).filter(Boolean);
+        const alive = this.runners().filter((p) => p.runner!.alive).length;
+        return {
+          primary: after,
+          hint: `${caught.length ? `Caught: ${caught.join(", ")}. ` : "Nobody caught. "}${alive} still running.${this.boOutOfQuestions && !this.boOver ? " No spare questions left." : ""}`,
         };
       }
       case "podium":
@@ -1391,52 +1694,69 @@ export class QuizRoom {
   }
 
   private stepLabel(): string {
-    const r1 = this.r1;
-    const r2 = this.r2;
-    const r1Prefix = r1 ? `Round 1, question ${r1.index + 1} of ${this.round1Questions.length}` : "Round 1";
-    const r2Prefix = r2
-      ? r2.suddenDeath
-        ? `Sudden death, question ${r2.number}`
-        : `Buzzer round, question ${r2.number} of ${this.config.round2.questions}`
-      : "Buzzer round";
+    const run = this.run;
+    const r1 = run && run.round === 1 ? `Round 1, question ${run.index + 1} of ${this.round1Questions.length}` : "Round 1";
+    const wc =
+      run && run.round === 2
+        ? run.suddenDeath
+          ? `Wild card, sudden death ${this.sudden?.number ?? 1} of ${this.config.wildCard.suddenDeathMax}`
+          : `Wild card, question ${run.number} of ${this.config.wildCard.questions}`
+        : "Wild card";
+    const bo = run && run.round === 3 ? `Blackout, question ${run.number} of ${this.config.blackout.questions}` : "Blackout";
     switch (this.phase) {
       case "lobby":
         return "Lobby";
       case "r1Intro":
         return "Round 1: intro";
       case "r1Read":
-        return `${r1Prefix}: reading`;
+        return `${r1}: reading`;
       case "r1Answer":
-        return `${r1Prefix}: answering`;
+        return `${r1}: answering`;
       case "r1TimesUp":
-        return `${r1Prefix}: time's up`;
+        return `${r1}: time's up`;
       case "r1Reveal":
-        return `${r1Prefix}: ${r1?.voided ? "cancelled" : "answer revealed"}`;
+        return `${r1}: ${run?.voided ? "cancelled" : "answer revealed"}`;
       case "r1Results":
-        return `${r1Prefix}: results`;
+        return `${r1}: results`;
       case "r1Leaderboard":
-        return `${r1Prefix}: leaderboard`;
+        return `${r1}: leaderboard`;
       case "cut":
-        return `End of round 1: top ${this.finalistIds().length} revealed`;
+        return `The cut: top ${this.finalistIds().length} safe`;
+      case "wcIntro":
+        return "Wild card: intro";
+      case "wcRead":
+        return `${wc}: reading`;
+      case "wcAnswer":
+        return `${wc}: answering`;
+      case "wcTimesUp":
+        return `${wc}: time's up`;
+      case "wcReveal":
+        return `${wc}: ${run?.voided ? "cancelled" : "reveal"}`;
+      case "wcStandings":
+        return `${wc}: standings`;
+      case "wcWinner":
+        return "Wild card revealed";
       case "predictions":
         return "Predictions: audience backing a finalist";
-      case "r2Intro":
-        return "Buzzer round: intro";
-      case "r2Read":
-        return `${r2Prefix}: reading`;
-      case "r2BuzzOpen":
-        return `${r2Prefix}: ${r2?.lockedOut.length ? "buzzers reopened" : "buzzers open"}`;
-      case "r2Answering":
-        return `${r2Prefix}: ${this.find(r2?.buzzedBy ?? "")?.name ?? "someone"} is answering`;
-      case "r2Reveal":
-        return `${r2Prefix}: ${r2?.outcome?.kind === "voided" ? "cancelled" : "answer revealed"}`;
-      case "r2Scores":
-        return `${r2Prefix}: scores`;
-      case "suddenDeath":
-        return "Sudden death: intro";
+      case "boIntro":
+        return "Blackout: intro";
+      case "boRead":
+        return `${bo}: reading`;
+      case "boAnswer":
+        return `${bo}: answering`;
+      case "boTimesUp":
+        return `${bo}: time's up`;
+      case "boReveal":
+        return `${bo}: ${run?.voided ? "cancelled" : "runners move"}`;
+      case "boDark":
+        return `${bo}: the dark moves`;
       case "podium":
         return "Podium: quiz finished";
     }
+  }
+
+  private isLastRound1Question() {
+    return !!this.run && this.run.round === 1 && this.run.index >= this.round1Questions.length - 1;
   }
 
   // ==========================================================================
@@ -1453,18 +1773,18 @@ export class QuizRoom {
       round1Questions: this.round1Questions.length,
       round1ReadSeconds: this.config.round1.readMs / 1000,
       round1AnswerSeconds: this.config.round1.answerMs / 1000,
-      finalistCount: this.config.finalists,
-      round2Questions: this.config.round2.questions,
-      round2ReadSeconds: this.config.round2.readMs / 1000,
-      buzzSeconds: this.config.round2.buzzMs / 1000,
-      answerSeconds: this.config.round2.answerMs / 1000,
-      reopenSeconds: this.config.round2.reopenMs / 1000,
+      safeCount: this.config.safe,
+      wildCardQuestions: this.config.wildCard.questions,
+      wildCardSuddenDeathMax: this.config.wildCard.suddenDeathMax,
+      blackoutQuestions: this.config.blackout.questions,
+      blackoutReadSeconds: this.config.blackout.readMs / 1000,
+      blackoutAnswerSeconds: this.config.blackout.answerMs / 1000,
     }));
   }
 
   private counts(): Counts {
     return this.cached("counts", () => {
-      const c: Counts = { joined: 0, connected: 0, playing: 0, finalists: 0, audience: 0, removed: 0 };
+      const c: Counts = { joined: 0, connected: 0, playing: 0, finalists: 0, wildcard: 0, audience: 0, removed: 0 };
       for (const p of this.participants) {
         if (p.status === "removed") {
           c.removed += 1;
@@ -1474,21 +1794,23 @@ export class QuizRoom {
         if (p.connected) c.connected += 1;
         if (p.status === "playing") c.playing += 1;
         if (p.status === "finalist") c.finalists += 1;
+        if (p.status === "wildcard") c.wildcard += 1;
         if (p.status === "audience") c.audience += 1;
       }
       return c;
     });
   }
 
-  /** answered / expected for the current Round 1 question (answer step onward). */
+  /** answered / expected for the current question (answer step onward, until the next question). */
   private answerCounts(): { answered: number; expected: number } | null {
-    const run = this.r1;
-    if (!run || !["r1Answer", "r1TimesUp", "r1Reveal", "r1Results", "r1Leaderboard"].includes(this.phase)) return null;
+    const run = this.run;
+    if (!run || READ_PHASES.includes(this.phase) || !(ANSWER_PHASES.includes(this.phase) || TIMES_UP_PHASES.includes(this.phase) || REVEALED_PHASES.includes(this.phase))) return null;
     return this.cached("answerCounts", () => {
       let answered = 0;
       let expected = 0;
       for (const p of this.participants) {
-        if (!this.playsQuestion(p, run)) continue;
+        const plays = run.round === 1 ? this.playsRound1Question(p, run) : run.players.has(p.id) && p.status !== "removed";
+        if (!plays) continue;
         expected += 1;
         if (run.answers.has(p.id)) answered += 1;
       }
@@ -1496,35 +1818,39 @@ export class QuizRoom {
     });
   }
 
-  private round1Question(run: Round1Run): Round1Question {
+  private mcqQuestion(run: Run): McqQuestion {
+    const count = run.round === 1 ? this.round1Questions.length : run.round === 2 ? this.config.wildCard.questions : this.config.blackout.questions;
     return {
       id: run.id,
-      number: run.index + 1,
-      count: this.round1Questions.length,
+      round: run.round,
+      number: run.number,
+      count,
+      suddenDeath: run.suddenDeath,
       text: run.question.text,
       image: run.question.image,
       // Shown from the answer step on, numbered 1–4 in this order (the same on every phone).
-      options: this.phase === "r1Read" ? null : run.hostOrder.map((i) => run.question.options[i]),
+      options: READ_PHASES.includes(this.phase) ? null : run.hostOrder.map((i) => run.question.options[i]),
     };
   }
 
+  /** After a reveal only: the right answer and where it is in the 1–4 order. */
+  private revealOf(run: Run): Reveal {
+    if (run.voided) return { correctText: null, correctIndex: null, voided: true };
+    return { correctText: run.question.options[run.question.correct], correctIndex: run.hostOrder.indexOf(run.question.correct), voided: false };
+  }
+
   /** The phone's answer buttons: the Host's order, so "2" means the same thing on every screen. */
-  private optionsFor(run: Round1Run, _id: string) {
+  private optionsFor(run: Run): AnswerOption[] {
     return run.hostOrder.map((i) => ({ id: run.optionIds[i], text: run.question.options[i] }));
   }
 
-  private optionResults(run: Round1Run): OptionResult[] {
+  private optionResults(run: Run): OptionResult[] {
     const counts = [0, 0, 0, 0];
     for (const [id, a] of run.answers) {
       const p = this.find(id);
       if (p && p.status !== "removed") counts[a.optionIndex] += 1;
     }
-    return run.hostOrder.map((i, slot) => ({
-      letter: OPTION_LETTERS[slot],
-      text: run.question.options[i],
-      count: counts[i],
-      correct: i === run.question.correct,
-    }));
+    return run.hostOrder.map((i, slot) => ({ number: slot + 1, text: run.question.options[i], count: counts[i], correct: i === run.question.correct }));
   }
 
   private leaderboard(): LeaderRow[] {
@@ -1538,21 +1864,89 @@ export class QuizRoom {
       (this.cutOrder ?? [])
         .map((id) => this.find(id)!)
         .filter((p) => p.status !== "removed")
-        .map((p) => ({ ...this.tag(p), rank: p.cutRank!, score: p.score, finalist: p.status === "finalist" })),
+        .map((p) => ({ ...this.tag(p), rank: p.cutRank!, score: p.score, timeMs: p.cutTimeMs, finalist: p.status === "finalist" && !p.isWildCard })),
     );
   }
 
-  private finalistStates(): FinalistState[] {
-    return this.cached("finalistStates", () => {
-      const run = this.r2 && ROUND2_QUESTION_PHASES.includes(this.phase) ? this.r2 : null;
-      return this.finalists().map((p, i) => ({
-        ...this.tag(p),
-        points: p.points,
-        seat: i + 1,
-        connected: p.connected,
-        lockedOut: !!run && run.lockedOut.includes(p.id),
-        inPlay: run ? run.inPlay.includes(p.id) : this.sudden ? this.sudden.tiedIds.includes(p.id) : true,
-      }));
+  /** The wild card round as screens see it. `full`: every standing (Admin); else the top 10, and only when shown. */
+  private wildCardState(full: boolean): WildCardState | null {
+    if (!this.cutOrder || this.wildSkipped) return null;
+    return this.cached(`wildCard:${full}`, () => {
+      const run = this.run && this.run.round === 2 ? this.run : null;
+      const counts = run && (ANSWER_PHASES.includes(this.phase) || TIMES_UP_PHASES.includes(this.phase)) ? this.answerCounts() : null;
+      const showStandings = full || this.phase === "wcStandings" || this.phase === "wcWinner";
+      const order = this.wcStarted ? this.wildStandingOrder() : [];
+      const standings: WildCardStanding[] = showStandings
+        ? (full ? order : order.slice(0, this.config.standingsSize)).map((p, i) => ({ ...this.tag(p), rank: i + 1, correct: p.wild!.correct, timeMs: p.wild!.timeMs }))
+        : [];
+      const winner = this.wcWinnerId ? this.find(this.wcWinnerId) : undefined;
+      const showWinner = full || this.wcRevealed;
+      return {
+        players: this.wcRevealed ? order.length : this.wildPlayerIds().length,
+        questionNumber: run ? run.number : this.wcNumber,
+        questionCount: this.config.wildCard.questions,
+        answered: counts?.answered ?? null,
+        expected: counts?.expected ?? null,
+        standings,
+        safe: this.participants.filter((p) => p.status === "finalist" && !p.isWildCard).sort((a, b) => (a.cutRank ?? 0) - (b.cutRank ?? 0)).map((p) => this.tag(p)),
+        suddenDeath: this.sudden
+          ? {
+              active: true,
+              number: this.sudden.number,
+              max: this.config.wildCard.suddenDeathMax,
+              alive: this.sudden.alive.map((id) => this.find(id)).filter((p): p is Participant => !!p && p.status !== "removed").map((p) => this.tag(p)),
+            }
+          : null,
+        winner: showWinner && winner ? this.tag(winner) : null,
+        fallback: showWinner && this.wcFallback,
+      };
+    });
+  }
+
+  private finalistInfos(): FinalistInfo[] {
+    return this.cached("finalistInfos", () =>
+      this.finalists().map((p, i) => ({ ...this.tag(p), seat: i + 1, round1Rank: p.cutRank, wildCard: p.isWildCard, connected: p.connected })),
+    );
+  }
+
+  /** The chase as screens see it. Moves (delta) only after the reveal; no correctness before. */
+  private blackoutState(): BlackoutState | null {
+    if (!this.boStarted) return null;
+    return this.cached("blackout", () => {
+      const run = this.run && this.run.round === 3 ? this.run : null;
+      const places = this.blackoutPlaces();
+      const revealed = this.phase === "boReveal" || this.phase === "boDark";
+      const runners: Runner[] = this.runners()
+        .sort((a, b) => Number(a.isWildCard) - Number(b.isWildCard) || (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6))
+        .map((p) => {
+          const r = p.runner!;
+          return {
+            ...this.tag(p),
+            mood: this.botMood(p),
+            position: r.position,
+            from: revealed ? r.from : r.position,
+            delta: revealed ? r.delta : null,
+            gap: r.position - this.dark,
+            alive: r.alive,
+            caughtOnQuestion: r.caughtOnQuestion,
+            place: places.get(p.id) ?? null,
+            headStart: r.headStart,
+            wildCard: p.isWildCard,
+            round1Rank: p.cutRank,
+          };
+        });
+      const winner = this.blackoutWinner();
+      return {
+        questionNumber: run ? run.number : this.boNumber,
+        questionCount: this.config.blackout.questions,
+        dark: this.dark,
+        darkFrom: this.phase === "boDark" ? this.darkFrom : this.dark,
+        runners,
+        caughtThisQuestion: this.phase === "boDark" ? [...this.caughtThisQuestion] : [],
+        alive: runners.filter((r) => r.alive).length,
+        over: this.boOver,
+        winner: winner && (this.phase === "boDark" || this.phase === "podium" || this.phase === "boReveal") ? this.tag(winner) : null,
+      };
     });
   }
 
@@ -1574,53 +1968,6 @@ export class QuizRoom {
     });
   }
 
-  private buzzerQuestion(run: Round2Run): BuzzerQuestion {
-    return {
-      id: run.id,
-      number: run.number,
-      count: run.suddenDeath ? 0 : this.config.round2.questions,
-      suddenDeath: run.suddenDeath,
-      text: run.question.text,
-      image: run.question.image,
-      options: run.hostOrder.map((i) => run.question.options[i]),
-    };
-  }
-
-  private outcomeView(outcome: Outcome | null): BuzzOutcome | null {
-    if (!outcome) return null;
-    if (outcome.kind === "correct") {
-      const p = this.find(outcome.by);
-      return { kind: "correct", by: p ? this.tag(p) : { id: outcome.by, name: "", color: "#888888", head: "box" } };
-    }
-    return outcome;
-  }
-
-  private round2State(): Round2State | null {
-    const run = this.r2;
-    if (!run || !ROUND2_QUESTION_PHASES.includes(this.phase)) return null;
-    return this.cached("round2State", () => {
-      const revealed = this.phase === "r2Reveal";
-      const correctSlot = run.hostOrder.indexOf(run.question.correct);
-      const tagOf = (id: string | null) => {
-        const p = id ? this.find(id) : undefined;
-        return p ? this.tag(p) : null;
-      };
-      return {
-        question: this.buzzerQuestion(run),
-        finalists: this.finalistStates(),
-        buzzedBy: this.phase === "r2Answering" ? tagOf(run.buzzedBy) : null,
-        answerTimeUp: this.phase === "r2Answering" && run.answerTimeUp,
-        wrong: run.lockedOut.map((id) => tagOf(id)).filter((t): t is ParticipantTag => !!t),
-        outcome: revealed ? this.outcomeView(run.outcome) : null,
-        correct:
-          revealed && run.outcome?.kind !== "voided"
-            ? { letter: OPTION_LETTERS[correctSlot], text: run.question.options[run.question.correct] }
-            : null,
-        winner: tagOf(this.winnerId),
-      };
-    });
-  }
-
   private podiumEntries(): PodiumEntry[] {
     const podium = this.podium;
     if (!podium) return [];
@@ -1632,8 +1979,11 @@ export class QuizRoom {
         .map((p, i) => ({
           ...this.tag(p),
           place: i + 1,
-          points: podium.basis === "buzzer" ? p.points : p.score,
           round1Rank: r1Rank.get(p.id) ?? null,
+          round1Score: p.score,
+          position: p.runner ? p.runner.position : null,
+          caughtOnQuestion: p.runner?.caughtOnQuestion ?? null,
+          wildCard: p.isWildCard,
         }));
     });
   }
@@ -1644,27 +1994,26 @@ export class QuizRoom {
   }
 
   private buildPreview(): QuestionPreview | null {
-    const r1Preview = (index: number): QuestionPreview => {
-      const q = this.round1Questions[index];
-      return { round: 1, number: index + 1, count: this.round1Questions.length, suddenDeath: false, text: q.text, image: q.image };
+    const make = (round: RoundNumber, index: number, number: number, suddenDeath: boolean): QuestionPreview | null => {
+      const q = this.questionsFor(round)[index];
+      if (!q) return null;
+      const count = round === 1 ? this.round1Questions.length : round === 2 ? this.config.wildCard.questions : this.config.blackout.questions;
+      return { round, number, count, suddenDeath, text: q.text, image: q.image };
     };
-    const r2Preview = (suddenDeath: boolean): QuestionPreview => {
-      const q = this.round2Questions[this.r2Next % this.round2Questions.length];
-      const number = suddenDeath ? (this.sudden?.number ?? 0) + 1 : this.r2Number + 1;
-      return { round: 2, number, count: suddenDeath ? 0 : this.config.round2.questions, suddenDeath, text: q.text, image: q.image };
-    };
-
-    if (this.phase === "lobby" || this.phase === "r1Intro") return this.round1Questions.length ? r1Preview(0) : null;
-    if (ROUND1_QUESTION_PHASES.includes(this.phase) && this.r1) {
-      return this.isLastRound1Question() ? r2Preview(false) : r1Preview(this.r1.index + 1);
+    const run = this.run;
+    const phase = this.phase;
+    if (phase === "lobby" || phase === "r1Intro") return make(1, 0, 1, false);
+    if (run?.round === 1 && R1_QUESTION_PHASES.includes(phase)) {
+      return this.isLastRound1Question() ? (this.wildQuestions.length ? make(2, 0, 1, false) : make(3, 0, 1, false)) : make(1, run.index + 1, run.index + 2, false);
     }
-    if (this.phase === "cut" || this.phase === "predictions" || this.phase === "r2Intro") return r2Preview(false);
-    if (this.phase === "suddenDeath") return r2Preview(true);
-    if (ROUND2_QUESTION_PHASES.includes(this.phase) || this.phase === "r2Scores") {
-      if (this.sudden) return this.winnerId ? null : r2Preview(true);
-      if (!this.plannedDone) return r2Preview(false);
-      return this.tiedLeaders().length > 1 ? r2Preview(true) : null;
+    if (phase === "cut") return this.wildPlayerIds().length ? make(2, 0, 1, false) : make(3, 0, 1, false);
+    if (WC_PHASES.includes(phase)) {
+      if (this.wildDecided) return make(3, 0, 1, false);
+      const sd = !!this.sudden;
+      return make(2, this.wcNext, sd ? this.config.wildCard.questions + this.sudden!.number + 1 : this.wcNumber + 1, sd);
     }
+    if (phase === "wcWinner" || phase === "predictions" || phase === "boIntro") return make(3, this.boNext, this.boNumber + 1, false);
+    if (BO_QUESTION_PHASES.includes(phase)) return this.boOver ? null : make(3, this.boNext, this.boNumber + 1, false);
     return null;
   }
 
@@ -1673,60 +2022,57 @@ export class QuizRoom {
   // ==========================================================================
 
   private hostStage(): HostStage {
-    const run1 = this.r1;
+    const run = this.run;
+    const backing = () => this.backing();
+    const counts = () => this.answerCounts() ?? { answered: 0, expected: 0 };
     switch (this.phase) {
       case "lobby":
         return { phase: "lobby" };
       case "r1Intro":
         return { phase: "r1Intro" };
       case "r1Read":
-        return { phase: "r1Read", question: this.round1Question(run1!) };
+        return { phase: "r1Read", question: this.mcqQuestion(run!) };
       case "r1Answer":
-      case "r1TimesUp": {
-        const c = this.answerCounts()!;
-        return { phase: this.phase, question: this.round1Question(run1!), answered: c.answered, expected: c.expected };
-      }
+      case "r1TimesUp":
+        return { phase: this.phase, question: this.mcqQuestion(run!), ...counts() };
       case "r1Reveal":
-        return {
-          phase: "r1Reveal",
-          question: this.round1Question(run1!),
-          correctText: run1!.voided ? null : run1!.question.options[run1!.question.correct],
-          voided: run1!.voided,
-        };
-      case "r1Results": {
-        const c = this.answerCounts()!;
-        return { phase: "r1Results", question: this.round1Question(run1!), options: this.optionResults(run1!), answered: c.answered, expected: c.expected };
-      }
+        return { phase: "r1Reveal", question: this.mcqQuestion(run!), ...this.revealOf(run!) };
+      case "r1Results":
+        return { phase: "r1Results", question: this.mcqQuestion(run!), options: this.optionResults(run!), ...counts() };
       case "r1Leaderboard":
-        return { phase: "r1Leaderboard", question: this.round1Question(run1!), rows: this.leaderboard() };
+        return { phase: "r1Leaderboard", question: this.mcqQuestion(run!), rows: this.leaderboard() };
       case "cut":
-        return { phase: "cut", standings: this.standings() };
+        return {
+          phase: "cut",
+          standings: this.standings(),
+          safeCount: this.participants.filter((p) => p.status === "finalist").length,
+          wildCardCount: this.wildPlayerIds().length,
+          wildCardSkipped: this.wildSkipped,
+        };
+      case "wcIntro":
+      case "wcStandings":
+      case "wcWinner":
+        return { phase: this.phase, wildCard: this.wildCardState(false)! };
+      case "wcRead":
+      case "wcAnswer":
+      case "wcTimesUp":
+        return { phase: this.phase, question: this.mcqQuestion(run!), wildCard: this.wildCardState(false)! };
+      case "wcReveal":
+        return { phase: "wcReveal", question: this.mcqQuestion(run!), wildCard: this.wildCardState(false)!, ...this.revealOf(run!) };
       case "predictions":
-        return { phase: "predictions", finalists: this.finalistStates(), backing: this.backing() };
-      case "r2Intro":
-        return { phase: "r2Intro", finalists: this.finalistStates(), backing: this.backing() };
-      case "r2Read":
-      case "r2BuzzOpen":
-      case "r2Answering":
-      case "r2Reveal":
-        return { phase: this.phase, round2: this.round2State()!, backing: this.backing() };
-      case "r2Scores":
-        return {
-          phase: "r2Scores",
-          finalists: [...this.finalistStates()].sort((a, b) => b.points - a.points || a.seat - b.seat),
-          questionNumber: this.r2?.number ?? 0,
-          questionCount: this.r2?.suddenDeath ? 0 : this.config.round2.questions,
-          suddenDeath: !!this.r2?.suddenDeath,
-          backing: this.backing(),
-        };
-      case "suddenDeath":
-        return {
-          phase: "suddenDeath",
-          tied: this.finalistStates().filter((f) => this.sudden?.tiedIds.includes(f.id)),
-          backing: this.backing(),
-        };
+        return { phase: "predictions", finalists: this.finalistInfos(), backing: backing() };
+      case "boIntro":
+        return { phase: "boIntro", blackout: this.blackoutState()!, backing: backing() };
+      case "boRead":
+      case "boAnswer":
+      case "boTimesUp":
+        return { phase: this.phase, question: this.mcqQuestion(run!), blackout: this.blackoutState()!, ...counts(), backing: backing() };
+      case "boReveal":
+        return { phase: "boReveal", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing(), ...this.revealOf(run!) };
+      case "boDark":
+        return { phase: "boDark", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing() };
       case "podium":
-        return { phase: "podium", ...this.podiumSummary()!, backing: this.backing() };
+        return { phase: "podium", ...this.podiumSummary()!, backing: backing() };
     }
   }
 
@@ -1734,12 +2080,23 @@ export class QuizRoom {
   private podiumSummary(): PodiumSummary | null {
     if (this.phase !== "podium" || !this.podium) return null;
     const entries = this.podiumEntries();
-    const winnerId = this.podium.basis === "buzzer" ? entries[0]?.id : undefined;
+    const winnerId = this.podium.basis === "blackout" ? entries[0]?.id : undefined;
     return {
       basis: this.podium.basis,
       entries,
       calledIt: winnerId ? this.participants.filter((p) => p.status === "audience" && p.backingId === winnerId).length : 0,
     };
+  }
+
+  /** The bots across the top: everyone, then from the wild card round the players in it, from Blackout the finalists. */
+  private castMembers(): Participant[] {
+    const phase = this.phase;
+    if (WC_PHASES.includes(phase)) return this.participants.filter((p) => p.status === "wildcard");
+    if (phase === "wcWinner") return this.participants.filter((p) => p.wild && p.status !== "removed");
+    if (phase === "predictions") return this.finalists();
+    if (BO_PHASES.includes(phase)) return this.runners().sort((a, b) => Number(a.isWildCard) - Number(b.isWildCard) || (a.cutRank ?? 1e6) - (b.cutRank ?? 1e6));
+    if (phase === "podium" && this.podium?.basis !== "round1") return this.podium!.order.map((id) => this.find(id)!).filter((p) => p.status !== "removed");
+    return this.active();
   }
 
   hostView(): HostView {
@@ -1750,7 +2107,7 @@ export class QuizRoom {
       soundOn: this.soundOn,
       settings: this.settings(),
       participants: this.cached("hostParticipants", () => this.active().map((p) => this.tag(p))),
-      cast: this.cached("hostCast", () => this.active().map((p) => ({ ...this.tag(p), mood: this.botMood(p) }))),
+      cast: this.cached("hostCast", () => this.castMembers().map((p) => ({ ...this.tag(p), mood: this.botMood(p) }))),
       counts: this.counts(),
       timer: this.timer,
       paused: this.paused,
@@ -1777,124 +2134,136 @@ export class QuizRoom {
     };
   }
 
+  /** A question step on a phone (read, answer, time's up), for whoever can answer it. */
+  private questionScreen(p: Participant, run: Run): ParticipantScreen {
+    const answer = run.answers.get(p.id);
+    const base = { round: run.round, questionNumber: run.number, questionCount: this.mcqQuestion(run).count, suddenDeath: run.suddenDeath };
+    if (READ_PHASES.includes(this.phase)) return { kind: "eyesUp", ...base };
+    if (ANSWER_PHASES.includes(this.phase)) {
+      return answer
+        ? { kind: "lockedIn", round: run.round, choiceText: run.question.options[answer.optionIndex], timeUp: false }
+        : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run) };
+    }
+    return answer ? { kind: "lockedIn", round: run.round, choiceText: run.question.options[answer.optionIndex], timeUp: true } : { kind: "timesUp", round: run.round };
+  }
+
   private participantScreen(p: Participant): ParticipantScreen {
     if (p.status === "removed") return { kind: "removed" };
-    if (this.phase === "podium") return this.podiumScreen(p);
+    const phase = this.phase;
+    const run = this.run;
+    if (phase === "podium") return this.podiumScreen(p);
+    if (phase === "lobby") return { kind: "lobby", joined: this.counts().joined };
+    if (phase === "r1Intro") return { kind: "r1Intro", settings: this.settings() };
 
-    switch (this.phase) {
-      case "lobby":
-        return { kind: "lobby", joined: this.counts().joined };
-      case "r1Intro":
-        return { kind: "r1Intro", settings: this.settings() };
-      case "cut":
-        if (p.cutRank === null) return { kind: "audience" };
-        return {
-          kind: "cut",
-          madeIt: p.status === "finalist",
-          rank: p.cutRank,
-          of: this.cutOrder!.length,
-          finalistCount: this.finalistIds().length,
-        };
-      case "predictions":
-        if (p.status === "finalist") {
-          return { kind: "finalist", seat: this.finalistIds().indexOf(p.id) + 1, finalistCount: this.finalistIds().length };
-        }
-        return { kind: "backFinalist", finalists: this.finalistStates(), backedId: p.backingId };
+    // Round 1
+    if (run?.round === 1 && R1_QUESTION_PHASES.includes(phase)) {
+      if (!this.playsRound1Question(p, run)) return p.status === "playing" ? { kind: "nextQuestion" } : { kind: "audience" };
+      if (!REVEALED_PHASES.includes(phase)) return this.questionScreen(p, run);
+      if (run.voided) return { kind: "voided", round: 1 };
+      const a = run.answers.get(p.id);
+      return {
+        kind: "result",
+        round: 1,
+        outcome: !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong",
+        correctText: run.question.options[run.question.correct],
+        tally: null,
+      };
     }
 
-    if (this.isRound1Phase()) {
-      const run = this.r1!;
-      if (!this.playsQuestion(p, run)) return { kind: "nextQuestion" };
-      const answer = run.answers.get(p.id);
-      switch (this.phase) {
-        case "r1Read":
-          return { kind: "eyesUp", questionNumber: run.index + 1, questionCount: this.round1Questions.length };
-        case "r1Answer":
-          return answer
-            ? { kind: "lockedIn", choiceText: run.question.options[answer.optionIndex], timeUp: false }
-            : {
-                kind: "answer",
-                questionId: run.id,
-                questionNumber: run.index + 1,
-                questionCount: this.round1Questions.length,
-                options: this.optionsFor(run, p.id),
-              };
-        case "r1TimesUp":
-          return answer ? { kind: "lockedIn", choiceText: run.question.options[answer.optionIndex], timeUp: true } : { kind: "timesUp" };
-        default:
-          if (run.voided) return { kind: "voided" };
-          return {
-            kind: "result",
-            outcome: !answer ? "missed" : answer.optionIndex === run.question.correct ? "correct" : "wrong",
-            correctText: run.question.options[run.question.correct],
-          };
+    if (phase === "cut") {
+      if (p.cutRank === null) return { kind: "audience" };
+      return { kind: "cut", outcome: p.status === "finalist" ? "safe" : "wildcard", rank: p.cutRank, of: this.cutOrder!.length, safeCount: this.config.safe };
+    }
+
+    // Wild card round
+    if (WC_PHASES.includes(phase)) {
+      if (p.status === "finalist") {
+        return { kind: "safeWatch", players: this.wildPlayerIds().length, questionNumber: run?.round === 2 ? run.number : this.wcNumber, questionCount: this.config.wildCard.questions };
       }
+      if (p.status !== "wildcard" || !p.wild) return { kind: "audience" };
+      const sd: "in" | "out" | null = this.sudden ? (this.sudden.alive.includes(p.id) ? "in" : this.sudden.out.includes(p.id) ? "out" : null) : null;
+      const status: ParticipantScreen = { kind: "wcStatus", right: p.wild.correct, asked: p.wild.asked, questionCount: this.config.wildCard.questions, suddenDeath: sd };
+      if (!run || run.round !== 2 || phase === "wcIntro" || phase === "wcStandings") return status;
+      if (!run.players.has(p.id)) return status;
+      if (!REVEALED_PHASES.includes(phase)) return this.questionScreen(p, run);
+      if (run.voided) return { kind: "voided", round: 2 };
+      const a = run.answers.get(p.id);
+      return {
+        kind: "result",
+        round: 2,
+        outcome: !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong",
+        correctText: run.question.options[run.question.correct],
+        tally: { right: p.wild.correct, asked: p.wild.asked },
+      };
     }
 
-    // Buzzer round (r2Intro, questions, scores, sudden death)
-    const phone = this.round2Phone();
-    if (p.status === "finalist") {
-      const run = this.r2 && ROUND2_QUESTION_PHASES.includes(this.phase) ? this.r2 : null;
-      const inPlay = run ? run.inPlay.includes(p.id) : this.sudden ? this.sudden.tiedIds.includes(p.id) : true;
-      const lockedOut = !!run && run.lockedOut.includes(p.id);
+    if (phase === "wcWinner") {
+      if (!p.wild) return p.status === "finalist" ? { kind: "safeWatch", players: 0, questionNumber: this.wcNumber, questionCount: this.config.wildCard.questions } : { kind: "audience" };
+      const winner = this.wcWinnerId ? this.find(this.wcWinnerId) : undefined;
+      return { kind: "wcWinner", you: p.isWildCard && p.status === "finalist" ? "won" : "lost", winner: winner ? this.tag(winner) : null };
+    }
+
+    if (phase === "predictions") {
+      if (p.status === "finalist") return this.runnerStatus(p);
+      return { kind: "backFinalist", finalists: this.finalistInfos(), backedId: p.backingId };
+    }
+
+    // Blackout
+    if (BO_PHASES.includes(phase)) {
+      if (p.status !== "finalist" || !p.runner) return this.blackoutWatch(p);
+      if (!p.runner.alive || !run || run.round !== 3 || phase === "boIntro" || phase === "boDark" || !run.players.has(p.id)) return this.runnerStatus(p);
+      if (phase !== "boReveal") return this.questionScreen(p, run);
+      const a = run.answers.get(p.id);
+      const outcome = run.voided ? "voided" : !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong";
       return {
-        ...phone,
-        kind: "buzzer",
-        canBuzz: this.phase === "r2BuzzOpen" && !this.paused && !!run && this.canBuzz(p.id, run),
-        inPlay,
-        lockedOut,
-        points: p.points,
-        myResult: this.r2 && (ROUND2_QUESTION_PHASES.includes(this.phase) || this.phase === "r2Scores")
-          ? this.r2.awardedTo === p.id
-            ? "correct"
-            : this.r2.lockedOut.includes(p.id)
-              ? "wrong"
-              : null
-          : null,
+        kind: "runnerResult",
+        outcome,
+        delta: run.voided ? 0 : p.runner.delta ?? 0,
+        position: p.runner.position,
+        gap: p.runner.position - this.dark,
+        correctText: outcome === "wrong" || outcome === "missed" ? run.question.options[run.question.correct] : null,
       };
     }
-    return { ...phone, kind: "buzzerWatch", backedId: p.backingId };
+    return { kind: "audience" };
   }
 
-  private round2Phone(): Round2Phone {
-    return this.cached("round2Phone", () => {
-      const steps: Partial<Record<Phase, Round2Step>> = {
-        r2Intro: "intro",
-        r2Read: "read",
-        r2BuzzOpen: "buzzOpen",
-        r2Answering: "answering",
-        r2Reveal: "reveal",
-        r2Scores: "scores",
-        suddenDeath: "suddenDeath",
-      };
-      const inQuestion = ROUND2_QUESTION_PHASES.includes(this.phase);
-      const run = this.r2;
-      const state = this.round2State();
-      const showRun = !!run && (inQuestion || this.phase === "r2Scores");
-      return {
-        step: steps[this.phase] ?? "intro",
-        questionId: inQuestion && run ? run.id : null,
-        questionNumber: showRun ? run!.number : null,
-        questionCount: this.sudden ? 0 : this.config.round2.questions,
-        suddenDeath: this.phase === "suddenDeath" || !!(showRun && run!.suddenDeath),
-        finalists: this.finalistStates(),
-        buzzedBy: state?.buzzedBy ?? null,
-        wrong: state?.wrong ?? [],
-        outcome: state?.outcome ?? null,
-        winner: this.winnerTag(),
-      };
-    });
+  private runnerStatus(p: Participant): ParticipantScreen {
+    const r = p.runner;
+    const alive = this.runners().filter((x) => x.runner!.alive).length;
+    const headStart = r?.headStart ?? (p.isWildCard ? this.config.blackout.headStart.wildCard : (p.cutRank ?? 99) <= 3 ? this.config.blackout.headStart.top3 : this.config.blackout.headStart.safe);
+    const position = r?.position ?? this.config.blackout.baseGap + headStart;
+    return {
+      kind: "runnerStatus",
+      alive: r ? r.alive : true,
+      gap: position - this.dark,
+      position,
+      headStart,
+      caughtNow: this.phase === "boDark" && this.caughtThisQuestion.includes(p.id),
+      place: this.blackoutPlaces().get(p.id) ?? null,
+      aliveCount: this.boStarted ? alive : this.finalistIds().length,
+      questionNumber: this.run?.round === 3 ? this.run.number : this.boNumber,
+      questionCount: this.config.blackout.questions,
+    };
   }
 
-  private winnerTag(): ParticipantTag | null {
-    const w = this.winnerId ? this.find(this.winnerId) : undefined;
-    return w ? this.tag(w) : null;
+  private blackoutWatch(p: Participant): ParticipantScreen {
+    const state = this.blackoutState();
+    const backed = p.backingId ? this.find(p.backingId) : undefined;
+    const runners = (state?.runners ?? []).map((r) => ({ id: r.id, name: r.name, color: r.color, head: r.head, mood: r.mood, gap: r.gap, alive: r.alive, place: r.place }));
+    return {
+      kind: "blackoutWatch",
+      backed: backed ? this.tag(backed) : null,
+      runners,
+      alive: runners.filter((r) => r.alive).length,
+      questionNumber: state?.questionNumber ?? 0,
+      questionCount: this.config.blackout.questions,
+    };
   }
 
   private podiumScreen(p: Participant): ParticipantScreen {
     const entries = this.podiumEntries();
     const basis = this.podium!.basis;
-    const winner = entries[0] ? { id: entries[0].id, name: entries[0].name, color: entries[0].color, head: entries[0].head } : null;
+    const winner = entries[0] ? this.tag(this.find(entries[0].id)!) : null;
     const mine = entries.find((e) => e.id === p.id);
     const backedP = p.status === "audience" && p.backingId ? this.find(p.backingId) : undefined;
     return {
@@ -1904,7 +2273,7 @@ export class QuizRoom {
       of: entries.length,
       winner,
       backed: backedP ? this.tag(backedP) : null,
-      calledIt: backedP && winner && basis === "buzzer" ? backedP.id === winner.id : null,
+      calledIt: backedP && winner && basis === "blackout" ? backedP.id === winner.id : null,
       round1Rank: this.round1RankMap().get(p.id) ?? null,
     };
   }
@@ -1914,64 +2283,41 @@ export class QuizRoom {
   // ==========================================================================
 
   private adminQuestion(): AdminQuestion | null {
-    if (this.isRound1Phase() && this.r1) {
-      const run = this.r1;
-      const options = run.hostOrder.map((i, slot) => ({
-        letter: OPTION_LETTERS[slot],
-        text: run.question.options[i],
-        correct: i === run.question.correct,
-      }));
-      const correct = options.find((o) => o.correct)!;
-      return {
-        id: run.id,
-        round: 1,
-        number: run.index + 1,
-        count: this.round1Questions.length,
-        suddenDeath: false,
-        text: run.question.text,
-        image: run.question.image,
-        options,
-        correctLetter: correct.letter,
-        correctText: correct.text,
-      };
-    }
-    if ((ROUND2_QUESTION_PHASES.includes(this.phase) || this.phase === "r2Scores") && this.r2) {
-      const run = this.r2;
-      const options = run.hostOrder.map((i, slot) => ({
-        letter: OPTION_LETTERS[slot],
-        text: run.question.options[i],
-        correct: i === run.question.correct,
-      }));
-      const correct = options.find((o) => o.correct)!;
-      return {
-        id: run.id,
-        round: 2,
-        number: run.number,
-        count: run.suddenDeath ? 0 : this.config.round2.questions,
-        suddenDeath: run.suddenDeath,
-        text: run.question.text,
-        image: run.question.image,
-        options,
-        correctLetter: correct.letter,
-        correctText: correct.text,
-      };
-    }
-    return null;
+    const run = this.run;
+    if (!run) return null;
+    const options = run.hostOrder.map((i, slot) => ({ number: slot + 1, text: run.question.options[i], correct: i === run.question.correct }));
+    const correct = options.find((o) => o.correct)!;
+    const q = this.mcqQuestion(run);
+    return {
+      id: run.id,
+      round: run.round,
+      number: run.number,
+      count: q.count,
+      suddenDeath: run.suddenDeath,
+      text: run.question.text,
+      image: run.question.image,
+      options,
+      correctNumber: correct.number,
+      correctText: correct.text,
+    };
   }
 
   /** What db.ts saves: the step and everyone's standing. */
   snapshot(): RoomSnapshot {
     const rank = this.round1RankMap();
+    const places = this.blackoutPlaces();
     return {
       phase: this.phase,
-      questionIndex: this.r2 ? this.r2.number : this.r1 ? this.r1.index : -1,
+      questionIndex: this.run ? this.run.number : -1,
       players: this.participants.map((p) => ({
         id: p.id,
         name: p.name,
         status: p.status,
         score: p.score,
         round1Rank: rank.get(p.id) ?? null,
-        buzzerPoints: p.points,
+        wildCorrect: p.wild ? p.wild.correct : null,
+        blackoutPlace: places.get(p.id) ?? null,
+        blackoutPosition: p.runner ? p.runner.position : null,
       })),
     };
   }
@@ -1979,7 +2325,8 @@ export class QuizRoom {
   private adminParticipants(): AdminParticipant[] {
     return this.cached("adminParticipants", () => {
       const rank = this.round1RankMap();
-      const run = this.r1 && ["r1Answer", "r1TimesUp", "r1Reveal", "r1Results", "r1Leaderboard"].includes(this.phase) ? this.r1 : null;
+      const places = this.blackoutPlaces();
+      const run = this.run && (ANSWER_PHASES.includes(this.phase) || TIMES_UP_PHASES.includes(this.phase) || REVEALED_PHASES.includes(this.phase)) ? this.run : null;
       return this.participants.map((p) => ({
         ...this.tag(p),
         status: p.status,
@@ -1989,8 +2336,13 @@ export class QuizRoom {
         leftPageCount: p.leftPageCount,
         score: p.score,
         rank: rank.get(p.id) ?? null,
-        points: p.points,
-        answered: run && this.playsQuestion(p, run) ? run.answers.has(p.id) : null,
+        wildCorrect: p.wild ? p.wild.correct : null,
+        wildTimeMs: p.wild ? p.wild.timeMs : null,
+        isWildCard: p.isWildCard,
+        blackout: p.runner
+          ? { position: p.runner.position, gap: p.runner.position - this.dark, caughtOnQuestion: p.runner.caughtOnQuestion, place: places.get(p.id) ?? null }
+          : null,
+        answered: run && (run.round === 1 ? this.playsRound1Question(p, run) : run.players.has(p.id)) ? run.answers.has(p.id) : null,
         backingId: p.backingId,
       }));
     });
@@ -1999,8 +2351,6 @@ export class QuizRoom {
   adminView(): AdminView {
     const { primary, hint } = this.cached("primary", () => this.primaryAndHint());
     const answerCounts = this.answerCounts();
-    const mark = this.canUndo ? this.lastMark : null;
-    const markBy = mark ? this.find(mark.by) : undefined;
     return {
       roomCode: this.code,
       joinUrl: this.joinUrl,
@@ -2020,11 +2370,10 @@ export class QuizRoom {
       nextQuestion: this.preview(),
       counts: { ...this.counts(), answered: answerCounts?.answered ?? null, expected: answerCounts?.expected ?? null },
       participants: this.adminParticipants(),
-      round2: this.round2State(),
-      finalists: this.cutOrder ? this.finalistStates() : [],
+      finalists: this.cutOrder ? this.finalistInfos() : [],
+      wildCard: this.wildCardState(true),
+      blackout: this.blackoutState(),
       backing: this.cutOrder ? this.backing() : null,
-      canUndo: this.canUndo,
-      lastMark: mark && markBy ? { by: this.tag(markBy), correct: mark.correct } : null,
       podium: this.podiumSummary(),
       quizTitle: this.quizTitle,
     };
@@ -2041,22 +2390,6 @@ export function shuffle<T>(items: T[], random: () => number = Math.random): T[] 
     [items[i], items[j]] = [items[j], items[i]];
   }
   return items;
-}
-
-function cloneRun(run: Round2Run): Round2Run {
-  return {
-    ...run,
-    inPlay: [...run.inPlay],
-    lockedOut: [...run.lockedOut],
-    outcome: run.outcome ? { ...run.outcome } : null,
-  };
-}
-
-function ordinal(n: number): string {
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return `${n}th`;
-  const suffix: Record<number, string> = { 1: "st", 2: "nd", 3: "rd" };
-  return `${n}${suffix[n % 10] ?? "th"}`;
 }
 
 function csvCell(value: string) {

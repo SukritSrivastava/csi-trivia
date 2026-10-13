@@ -4,8 +4,8 @@ import path from "node:path";
 /** One MCQ as written in data/questions.json. */
 export interface QuizQuestion {
   id: string;
-  /** 1 = Round 1, 2 = buzzer round, null = either. */
-  round: 1 | 2 | null;
+  /** 1 = Round 1, 2 = wild card round, 3 = Blackout, null = any round. */
+  round: 1 | 2 | 3 | null;
   text: string;
   /** Path under /public (e.g. "/questions/hexagon.svg"), shown on the Host only. */
   image: string | null;
@@ -14,7 +14,7 @@ export interface QuizQuestion {
   correct: number;
   /** This question's own read time (ms), overriding the quiz's. From the quiz library only. */
   readMs?: number;
-  /** Round 1: answer time; buzzer round: buzz window (ms), overriding the quiz's. */
+  /** This question's own answer time (ms), overriding the quiz's. From the quiz library only. */
   openMs?: number;
 }
 
@@ -52,8 +52,8 @@ export function loadQuestions(file = QUESTIONS_FILE): QuizQuestion[] {
     if (typeof q.text !== "string" || !q.text.trim()) problems.push(`${where}: missing "text".`);
 
     const round = q.round === undefined ? null : q.round;
-    if (round !== null && round !== 1 && round !== 2) {
-      problems.push(`${where}: "round" must be 1, 2 or null (got ${JSON.stringify(q.round)}).`);
+    if (round !== null && round !== 1 && round !== 2 && round !== 3) {
+      problems.push(`${where}: "round" must be 1 (Round 1), 2 (wild card), 3 (Blackout) or null (got ${JSON.stringify(q.round)}).`);
     }
 
     const options = q.options;
@@ -91,27 +91,21 @@ export function loadQuestions(file = QUESTIONS_FILE): QuizQuestion[] {
 }
 
 /**
- * Round 1: questions tagged 1, then untagged ones, in file order.
- * "all" takes every one of them; a number repeats the list if there aren't
- * enough (the demo has only 3).
+ * The questions one round plays, in order: those tagged for it (file order),
+ * then untagged ones nobody has used yet. `used` holds ids already taken by
+ * earlier rounds (and is updated). With `reuse` (the demo preset only), a short
+ * list is topped up by cycling through every question; each run still gets
+ * fresh opaque ids. Without it, the list is simply as long as it can be.
  */
-export function pickRound1(all: QuizQuestion[], count: number | "all"): QuizQuestion[] {
-  const pool = all.filter((q) => q.round === 1 || q.round === null);
-  const source = pool.length > 0 ? pool : all;
-  const n = count === "all" ? source.length : count;
-  return Array.from({ length: n }, (_, i) => source[i % source.length]);
-}
-
-/**
- * Buzzer round: questions tagged 2 first, then untagged ones Round 1 didn't
- * use, then (only if those run out) anything else. Returns `count` questions
- * cycling through that order, so there are always spares for sudden death.
- */
-export function pickRound2(all: QuizQuestion[], count: number, usedInRound1: QuizQuestion[]): QuizQuestion[] {
-  const used = new Set(usedInRound1.map((q) => q.id));
-  const tagged = all.filter((q) => q.round === 2);
-  const fresh = all.filter((q) => q.round === null && !used.has(q.id));
-  const rest = all.filter((q) => !tagged.includes(q) && !fresh.includes(q));
-  const order = [...tagged, ...fresh, ...rest];
-  return Array.from({ length: count }, (_, i) => order[i % order.length]);
+export function pickRound(all: QuizQuestion[], round: 1 | 2 | 3, count: number, used: Set<string>, reuse = false): QuizQuestion[] {
+  const tagged = all.filter((q) => q.round === round && !used.has(q.id));
+  const untagged = all.filter((q) => q.round === null && !used.has(q.id));
+  const picked = [...tagged, ...untagged].slice(0, count);
+  for (const q of picked) used.add(q.id);
+  if (picked.length < count && reuse && all.length > 0) {
+    const pool = all.filter((q) => q.round === round || q.round === null);
+    const source = pool.length ? pool : all;
+    for (let i = 0; picked.length < count; i++) picked.push(source[i % source.length]);
+  }
+  return picked;
 }

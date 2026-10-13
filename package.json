@@ -22,6 +22,7 @@
     "drills": "tsx scripts/drills.ts",
     "rehearsal": "tsx scripts/rehearsal.ts",
     "check-questions": "tsx scripts/check-questions.ts",
+    "tune-blackout": "tsx scripts/tune-blackout.ts",
     "washout": "tsx scripts/washout.ts",
     "db-check": "tsx scripts/db-check.ts",
     "deploy": "tsx scripts/deploy.ts"

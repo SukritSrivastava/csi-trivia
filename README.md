@@ -2,7 +2,7 @@
 
 A live multiple-choice quiz for 60–100 people in one hall, run by the CSI student chapter at
 KJSCE after the Hermes AI agent workshop. Questions go up on the **projector**, everyone answers
-on their **phone**, the top 6 play a **buzzer-round final**, and a **quizmaster** runs every step
+on their **phone**, the top 9 plus a **wild card** winner race the dark in **Blackout**, and a **quizmaster** runs every step
 from an admin panel.
 
 | | Live |
@@ -12,9 +12,11 @@ from an admin panel.
 | Phones (Participant) | https://hermes-quiz-nine.vercel.app/play (or scan the QR on the Host) |
 | Game server | https://hermes-quiz-game.onrender.com ([`/health`](https://hermes-quiz-game.onrender.com/health) says `ok`) |
 
-**Status (13 Oct 2026):** all five build phases are done: the game engine, Admin (with the quiz
-library), the phones, the projector, and event-proofing (failure drills, a 100-player rehearsal,
-handover docs). What's left is the real Hermes questions (Admin → Quizzes, see
+**Status (14 Oct 2026):** the rules changed to **three rounds** ([`docs/SPEC.md`](docs/SPEC.md) v3):
+Round 1 → the cut (top 9 safe) → a **wild card** round for the 10th seat → **Blackout**, a chase where
+the dark catches the slow. The engine, contract, server and tests for it are done; the screens work
+for the new flow and get their final polish next. The live site still runs the earlier buzzer-round
+version until the new one is pushed. Still to do: the real Hermes questions (Admin → Quizzes, see
 [Writing questions](#writing-questions)) and a run-through in the hall
 ([`docs/RUN-SHEET.md`](docs/RUN-SHEET.md)).
 
@@ -28,7 +30,7 @@ handover docs). What's left is the real Hermes questions (Admin → Quizzes, see
  Quizmaster /admin─┘     on Vercel                          on Render                   results
 ```
 
-- **The game server owns the game:** timers, scores, the cut, the buzzers. Screens only send
+- **The game server owns the game:** timers, scores, the cut, the wild card, Blackout's moves and catches. Screens only send
   actions ("tapped option 2", "Reveal answer") and draw what the server sends back.
 - **The quizmaster drives it:** nothing moves on by itself except the short read/answer timers.
 - **The contract** between screens and server is one file:
@@ -120,7 +122,8 @@ For the tests against a running server, start it with the results database off:
 ## Quizzes and questions
 
 Quizzes are made in **Admin → Quizzes** (PIN first) and saved in Supabase:
-- two lists: **Round 1** (everyone) and **Buzzer round** (finalists), each played top to bottom;
+- three lists: **Round 1** (everyone), **Wild card** (everyone outside the top 9) and **Blackout**
+  (the 10 finalists), each played top to bottom;
   extra questions at the end are spares;
 - every question has exactly 4 answers (shuffled on screen), an optional picture (projector only)
   and optional own timers;
@@ -152,8 +155,8 @@ rather write them in a file first, use this shape and import it as JSON, or put 
       "correct": 0
     },
     {
-      "id": "hermes-buzz-01",
-      "round": 2,
+      "id": "hermes-blackout-01",
+      "round": 3,
       "text": "Which file tells an agent which tools it may use?",
       "image": "/questions/tools-diagram.png",
       "options": ["The tool manifest", "The README", "The lock file", "The .gitignore"],
@@ -163,15 +166,16 @@ rather write them in a file first, use this shape and import it as JSON, or put 
 }
 ```
 
-- `id`: unique, any text. `round`: `1` (everyone), `2` (buzzer round, read out loud by the
-  finalists, so keep answers short and sayable) or `null` (either).
+- `id`: unique, any text. `round`: `1` (Round 1), `2` (wild card round), `3` (Blackout) or `null`
+  (any round that needs one). Blackout is played fast (5 s to read, 8 s to answer), so keep its
+  questions short.
 - `options`: exactly 4, all different, short enough for a phone button (under ~40 characters).
   They're shuffled on screen, so put the right one anywhere; `correct` is its index (0–3).
 - `image` (optional, projector only): upload it in Admin's question form, or (for this file) put it in
   `public/questions/` and redeploy. It sits on a **dark card**, so
   use pictures with a light or solid background: dark lines on a transparent background vanish.
-- How many: the event plays every Round 1 question (aim for 10–15) and **10 buzzer questions**.
-  Add 3 spare buzzer questions for a voided question or sudden death.
+- How many: the event plays **20 Round 1**, **5 wild card** (+3 for sudden death) and **12 Blackout**
+  questions (+3 spares for voids): **48** in all.
 
 Then run **`npm run check-questions -- --preset event`**: it checks 4 options, valid `correct`,
 duplicate ids, missing images, images that won't read on the dark card, and whether there are
@@ -189,7 +193,7 @@ Step by step, from scratch: [`docs/DEPLOY.md`](docs/DEPLOY.md). Don't deploy fro
 | `PUBLIC_WEB_URL` | Render | the website's address, e.g. `https://hermes-quiz-nine.vercel.app`. The QR code and join link on the projector point at `<this>/play`. |
 | `CORS_ORIGIN` | Render | which websites may connect, comma-separated: the Vercel address (add a custom domain here too). Unset = any site may connect. |
 | `ADMIN_PIN` | Render | the quizmaster's PIN (Admin and the projector). Never in the repo: it's public. Default `1234` is for laptops only. |
-| `GAME_PRESET` | Render | `event` for the night (all Round 1 questions, top 6, 10 buzzer questions) or `demo`. New quizzes start with these settings; each quiz's own Settings win. |
+| `GAME_PRESET` | Render | `event` for the night (20 Round 1, top 9 safe, 5 wild card, 12 Blackout) or `demo`. New quizzes start with these settings; each quiz's own Settings win. The Blackout tuning always comes from the preset. |
 | `DATABASE_URL` | Render | Supabase **Session pooler** connection string. Unset or `off` = nothing saved (the quiz still runs). |
 | `PORT` | Render sets it | the game server listens on it (`GAME_PORT` locally, default 3001). |
 

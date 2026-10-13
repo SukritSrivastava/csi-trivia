@@ -6,7 +6,9 @@
  *   npx tsx scripts/host-shots.ts [--bots 30] [--out screenshots/host]
  *
  * Six scripted players (four always right, two always wrong, so the cut has
- * people below the line) plus `npm run bots` for a crowd (no buzzing).
+ * people below the line and the wild card round has someone to win it) plus
+ * `npm run bots` for a crowd. Round 1, the cut, the wild card round,
+ * predictions, a whole Blackout and the podium.
  * Everything is driven over sockets as Admin; the browser only watches.
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -74,10 +76,6 @@ class Player {
     if (!r.ok) throw new Error(`${this.name} couldn't join`);
     this.id = r.participantId!;
   }
-  buzz() {
-    const s = this.view?.screen;
-    if (s?.kind === "buzzer" && s.questionId) this.socket.emit("participant:buzz", { questionId: s.questionId });
-  }
 }
 
 async function main() {
@@ -90,9 +88,14 @@ async function main() {
   const room = opened.roomCode;
   console.log(`Room ${room}`);
   const send = async (action: AdminAction) => {
-    const r = await new Promise<{ ok: boolean; reason?: string }>((res) => watcher.emit("admin:command", { stepId: admin!.stepId, action }, res));
+    const step = admin!.stepId;
+    const r = await new Promise<{ ok: boolean; reason?: string }>((res) => watcher.emit("admin:command", { stepId: step, action }, res));
     if (!r.ok) throw new Error(`${action.type} refused: ${r.reason}`);
+    // Wait for the new step's view, so the next command carries the right stepId.
+    await until("the next step", (v) => v.stepId !== step, 1500).catch(() => {});
   };
+  /** The big button's action right now (a function, so TypeScript doesn't narrow it across awaits). */
+  const primaryType = () => admin?.primary?.action.type;
 
   const pageErrors: string[] = [];
   /** Frames per second over 2 s on the big screen (headless, so only a rough guide). */
@@ -148,7 +151,7 @@ async function main() {
       new Player("Dev", false, 1300),
     ];
     for (const p of players) await p.join(room);
-    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --buzz 0 --url ${GAME}`, { shell: true, stdio: "ignore" });
+    if (BOTS > 0) bots = spawn(`npx tsx scripts/bots.ts --room ${room} --count ${BOTS} --url ${GAME}`, { shell: true, stdio: "ignore" });
     await until("everyone joined", (v) => v.counts.joined >= players.length + BOTS, 60_000);
     await shot("01-lobby", 1500);
 
@@ -186,29 +189,61 @@ async function main() {
     await phase("cut");
     await shot("10-cut", 4800);
 
-    await send({ type: "openPredictions" });
-    await shot("11-predictions", 2000);
-    await send({ type: "startBuzzerRound" });
-    await shot("12-buzzer-intro", 1500);
-
+    // The wild card round: question 1 step by step, then straight through.
+    await send({ type: "startWildCard" });
+    await shot("11-wildcard-intro", 1500);
     await send({ type: "showQuestion" });
-    await phase("r2Read");
-    await shot("13-buzzer-read", 1000);
-    await phase("r2BuzzOpen");
-    await shot("14-buzzers-open", 700);
-    const finalist = players.find((p) => admin!.finalists.some((f) => f.id === p.id))!;
-    finalist.buzz();
-    await phase("r2Answering");
-    await shot("15-buzzed", 1100);
-    await send({ type: "markCorrect" });
-    await phase("r2Reveal");
-    await shot("16-buzzer-reveal", 2500);
-    await send({ type: "showScores" });
-    await shot("17-scores", 1800);
+    await phase("wcRead");
+    await shot("12-wildcard-read", 1200);
+    await phase("wcAnswer");
+    await shot("13-wildcard-answer", 1500);
+    await phase("wcTimesUp");
+    await send({ type: "revealAnswer" });
+    await shot("14-wildcard-reveal", 1200);
+    await send({ type: "showStandings" });
+    await shot("15-wildcard-standings", 1800);
+    // Until the wild card is decided (a tie would add sudden-death questions).
+    while (!admin!.allowed.includes("revealWildCard")) {
+      await send({ type: "nextQuestion" });
+      await phase("wcTimesUp", 60_000);
+      await send({ type: "revealAnswer" });
+      await sleep(300);
+    }
+    await send({ type: "revealWildCard" });
+    await shot("16-wildcard-winner", 2200);
 
-    await send({ type: "endQuiz" });
+    await send({ type: "openPredictions" });
+    await shot("17-predictions", 2000);
+    await send({ type: "startBlackout" });
+    await shot("18-blackout-intro", 1800);
+
+    // Blackout: question 1 step by step, then on until it's over.
+    await send({ type: "showQuestion" });
+    await phase("boRead");
+    await shot("19-blackout-read", 1000);
+    await phase("boAnswer");
+    await shot("20-blackout-answer", 1500);
+    console.log(`  fps during a Blackout answer step: ${await fps()}`);
+    await phase("boTimesUp");
+    await send({ type: "revealAnswer" });
+    await shot("21-blackout-reveal", 2200);
+    await send({ type: "advanceDarkness" });
+    await shot("22-blackout-dark", 2600);
+    let caughtShot = false;
+    while (primaryType() === "nextQuestion") {
+      await send({ type: "nextQuestion" });
+      await phase("boTimesUp", 60_000);
+      await send({ type: "revealAnswer" });
+      await sleep(300);
+      await send({ type: "advanceDarkness" });
+      if (!caughtShot && admin!.blackout!.caughtThisQuestion.length) {
+        caughtShot = true;
+        await shot("23-blackout-caught", 2600);
+      }
+    }
+    await send({ type: "showWinner" });
     await phase("podium");
-    await shot("18-podium", 3600);
+    await shot("24-podium", 3600);
 
     // The two projector frames from public/finaldesign.html, next to ours.
     const ref = await (await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 2 })).newPage();

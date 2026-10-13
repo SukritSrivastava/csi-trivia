@@ -2,7 +2,7 @@
  * Saves results to Postgres (Supabase), using the tables from the backend
  * teammate's archive/ws-backend-v1/db.js: rooms, players, game_history. Only on when
  * DATABASE_URL is set. Columns are only ever ADDED to their schema (name,
- * status, ranks, buzzer points, round), so their queries keep working.
+ * status, ranks, wild card and Blackout results, round), so their queries keep working.
  *
  * The game never waits for the database and never stops because of it:
  * writes run one after another in the background, and a failure is logged
@@ -10,7 +10,8 @@
  * (quiz.ts), exactly as before.
  *
  *   rooms         one row per quiz: room_code ("KJSC-2026-10-12T19:05"), step, question
- *   players       one row per participant: score, Round 1 rank, buzzer points, status
+ *   players       one row per participant: score, Round 1 rank, wild card correct, Blackout place
+ *                 and position, status (buzzer_points is a v2 leftover, no longer written)
  *   game_history  one row per Round 1 answer (removed again if the question is voided/restarted)
  */
 import pg from "pg";
@@ -53,6 +54,10 @@ const SCHEMA = [
   `ALTER TABLE players ADD COLUMN IF NOT EXISTS status TEXT`,
   `ALTER TABLE players ADD COLUMN IF NOT EXISTS round1_rank INTEGER`,
   `ALTER TABLE players ADD COLUMN IF NOT EXISTS buzzer_points INTEGER DEFAULT 0`,
+  // v3 (14 Oct 2026): wild card and Blackout.
+  `ALTER TABLE players ADD COLUMN IF NOT EXISTS wild_correct INTEGER`,
+  `ALTER TABLE players ADD COLUMN IF NOT EXISTS blackout_place INTEGER`,
+  `ALTER TABLE players ADD COLUMN IF NOT EXISTS blackout_position INTEGER`,
   `ALTER TABLE game_history ADD COLUMN IF NOT EXISTS round INTEGER DEFAULT 1`,
   `ALTER TABLE game_history ADD COLUMN IF NOT EXISTS answer_ms INTEGER`,
   // The quiz library (library.ts): each quiz as JSON, images as base64.
@@ -178,14 +183,15 @@ export class RoomRecorder implements QuizRecorder {
       if (!snapshot.players.length) return;
       const values: unknown[] = [];
       const rows = snapshot.players.map((p, i) => {
-        values.push(key, p.id, p.score, p.name, p.status, p.round1Rank, p.buzzerPoints);
-        const o = i * 7;
-        return `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, $${o + 6}, $${o + 7})`;
+        values.push(key, p.id, p.score, p.name, p.status, p.round1Rank, p.wildCorrect, p.blackoutPlace, p.blackoutPosition);
+        const o = i * 9;
+        return `(${Array.from({ length: 9 }, (_, k) => `$${o + k + 1}`).join(", ")})`;
       });
       await db.query(
-        `INSERT INTO players (room_code, player_id, score, name, status, round1_rank, buzzer_points) VALUES ${rows.join(", ")}
+        `INSERT INTO players (room_code, player_id, score, name, status, round1_rank, wild_correct, blackout_place, blackout_position) VALUES ${rows.join(", ")}
          ON CONFLICT (room_code, player_id) DO UPDATE SET score = EXCLUDED.score, name = EXCLUDED.name, status = EXCLUDED.status,
-           round1_rank = EXCLUDED.round1_rank, buzzer_points = EXCLUDED.buzzer_points`,
+           round1_rank = EXCLUDED.round1_rank, wild_correct = EXCLUDED.wild_correct, blackout_place = EXCLUDED.blackout_place,
+           blackout_position = EXCLUDED.blackout_position`,
         values,
       );
     });

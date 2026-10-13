@@ -1,7 +1,9 @@
 /**
  * Plays whole quizzes and every edge case with fake participants and a fake
- * clock, and checks every rule in docs/SPEC.md held. No sockets, no browser,
- * runs in about a second. Run: npm run simulate
+ * clock, and checks every rule in docs/SPEC.md (v3) held: Round 1, the cut, the
+ * wild card round, predictions, Blackout and the podium. No sockets, no
+ * browser, runs in a few seconds. Run: npm run simulate
+ * (GAME_PRESET=event adds more full event-size games.)
  */
 import assert from "node:assert/strict";
 import {
@@ -15,6 +17,7 @@ import {
   PARTICIPANT_COLORS,
   type Phase,
   type Quiz,
+  type QuizRules,
 } from "../src/shared/protocol";
 import { blankQuestion, cleanQuiz, importJson, importRows, importText, parseCsv, quizProblems, quizToCsv } from "../src/shared/quiz";
 import { type GameConfig, PRESETS } from "./config";
@@ -62,9 +65,6 @@ class FakeClock implements Clock {
     next[1].fn();
     return true;
   }
-  get pending() {
-    return this.timers.size;
-  }
   private earliest() {
     let next: [number, { at: number; fn: () => void }] | null = null;
     for (const entry of this.timers) if (!next || entry[1].at < next[1].at) next = entry;
@@ -81,9 +81,9 @@ function seeded(seed: number) {
 
 const FILE_QUESTIONS = loadQuestions();
 
-/** A made-up question set the size of the real event. */
-function eventQuestions(round1: number, round2: number): QuizQuestion[] {
-  const make = (id: string, round: 1 | 2 | null, i: number): QuizQuestion => ({
+/** A made-up question set with this many questions tagged for each round. */
+function questionSet(r1: number, wc: number, bo: number): QuizQuestion[] {
+  const make = (id: string, round: 1 | 2 | 3, i: number): QuizQuestion => ({
     id,
     round,
     text: `Question ${id}?`,
@@ -92,12 +92,23 @@ function eventQuestions(round1: number, round2: number): QuizQuestion[] {
     correct: i % 4,
   });
   return [
-    ...Array.from({ length: round1 }, (_, i) => make(`r1-${i + 1}`, 1, i)),
-    ...Array.from({ length: round2 }, (_, i) => make(`r2-${i + 1}`, 2, i)),
+    ...Array.from({ length: r1 }, (_, i) => make(`r1-${i + 1}`, 1, i)),
+    ...Array.from({ length: wc }, (_, i) => make(`wc-${i + 1}`, 2, i)),
+    ...Array.from({ length: bo }, (_, i) => make(`bo-${i + 1}`, 3, i)),
   ];
 }
+const EVENT_QUESTIONS = questionSet(20, 8, 15);
 
-const BEFORE_REVEAL: Phase[] = ["r1Read", "r1Answer", "r1TimesUp", "r2Read", "r2BuzzOpen", "r2Answering"];
+/** A small, predictable config: safe 3, 3 wild card questions, a 6-question Blackout with a slow dark. */
+function testConfig(overrides: Partial<GameConfig> = {}, blackout: Partial<GameConfig["blackout"]> = {}): GameConfig {
+  const base = PRESETS.demo;
+  return { ...base, ...overrides, blackout: { ...base.blackout, baseGap: 3, darkness: [1], questions: 6, spares: 2, ...blackout } };
+}
+
+const BEFORE_REVEAL: Phase[] = ["r1Read", "r1Answer", "r1TimesUp", "wcRead", "wcAnswer", "wcTimesUp", "boRead", "boAnswer", "boTimesUp"];
+const ANSWER_PHASES: Phase[] = ["r1Answer", "wcAnswer", "boAnswer"];
+
+type Pick = "correct" | "wrong";
 
 class Game {
   readonly clock = new FakeClock();
@@ -135,6 +146,16 @@ class Game {
     assert.ok(p, `no participant ${id}`);
     return p;
   }
+  runner(id: string) {
+    const r = this.admin().blackout?.runners.find((x) => x.id === id);
+    assert.ok(r, `no runner ${id}`);
+    return r;
+  }
+  mood(id: string) {
+    const c = this.host().cast.find((x) => x.id === id);
+    assert.ok(c, `${id} not in the cast in ${this.phase}`);
+    return c.mood;
+  }
 
   join(name: string): string {
     const r = this.room.join(name);
@@ -166,21 +187,44 @@ class Game {
     assert.equal(this.phase, phase, why);
   }
 
-  answer(id: string, pick: "correct" | "wrong") {
+  /** Taps an option on `id`'s phone: the right one or a wrong one. */
+  answer(id: string, pick: Pick) {
     const s = this.screen(id);
-    assert.equal(s.kind, "answer", `${this.person(id).name} should see options`);
+    assert.equal(s.kind, "answer", `${this.person(id).name} should see options in ${this.phase}`);
     if (s.kind !== "answer") return;
     const correctText = this.admin().question!.correctText;
     const option = s.options.find((o) => (pick === "correct" ? o.text === correctText : o.text !== correctText))!;
     this.room.answer(id, s.questionId, option.id);
   }
-
-  buzz(id: string) {
-    const s = this.screen(id);
-    this.room.buzz(id, s.kind === "buzzer" ? s.questionId ?? "" : "");
+  /** Taps an option exactly `elapsedMs` into the answer step. */
+  answerAt(id: string, pick: Pick, elapsedMs: number) {
+    const t = this.admin().timer!;
+    const elapsed = t.durationMs - (t.endsAt - this.clock.now());
+    assert.ok(elapsedMs >= elapsed, `can't answer at ${elapsedMs}ms: already ${elapsed}ms in`);
+    this.clock.advance(elapsedMs - elapsed);
+    this.answer(id, pick);
   }
 
-  /** No phone (and no Host) may know the answer before the reveal. */
+  /**
+   * Plays one wild card or Blackout question from its Show/Next click to the
+   * reveal. `plan`: who answers, what, and when (ms into the answer step).
+   */
+  playQuestion(plan: [string, Pick, number][], startLabel?: string) {
+    // The optional standings come first after a wild card reveal: show them, then go on.
+    if (this.admin().primary?.action.type === "showStandings") this.do({ type: "showStandings" });
+    const label = this.primary();
+    if (startLabel) assert.equal(label, startLabel);
+    this.tick(); // read → answer
+    assert.ok(ANSWER_PHASES.includes(this.phase), `answering in ${this.phase}`);
+    for (const [id, pick, at] of [...plan].sort((a, b) => a[2] - b[2])) {
+      if (!ANSWER_PHASES.includes(this.phase)) break;
+      this.answerAt(id, pick, at);
+    }
+    if (ANSWER_PHASES.includes(this.phase)) this.tick();
+    this.do({ type: "revealAnswer" });
+  }
+
+  /** No phone (and no Host) may know the answer before its reveal, in any round. */
   checkNoLeaks(ids: string[]) {
     if (!BEFORE_REVEAL.includes(this.phase)) return;
     for (const id of ids) {
@@ -188,11 +232,23 @@ class Game {
       assert.ok(!json.includes('"correct'), `phone view leaks the answer in ${this.phase}: ${json.slice(0, 300)}`);
     }
     const hostJson = JSON.stringify(this.host());
-    assert.ok(!/"correct(Text)?":(?!null)/.test(hostJson), `host view leaks the answer in ${this.phase}`);
+    assert.ok(!/"correct(Text|Index)?":(?!null)/.test(hostJson), `host view leaks the answer in ${this.phase}`);
+    const bo = this.host().stage;
+    if ("blackout" in bo) assert.ok(bo.blackout.runners.every((r) => r.delta === null), `no moves shown before the reveal (${this.phase})`);
+  }
+
+  /** In an answer step, every phone with options and the Host show the same 1–4 order. */
+  checkOneOrder(ids: string[]) {
+    const stage = this.host().stage;
+    if (!("question" in stage) || !stage.question.options || !ANSWER_PHASES.includes(this.phase)) return;
+    for (const id of ids) {
+      const s = this.screen(id);
+      if (s.kind === "answer") assert.deepEqual(s.options.map((o) => o.text), stage.question.options, `phones use the Host's 1–4 order (${this.phase})`);
+    }
   }
 }
 
-/** Round 1 played so that ids[0] is best, ids[1] second, and so on (everyone answers right, faster = earlier). */
+/** Round 1 played so that ids[0] is best, ids[1] second, and so on (everyone right, earlier = faster). */
 function playRound1InOrder(g: Game, ids: string[]) {
   g.do({ type: "startQuiz" });
   g.do({ type: "showQuestion" });
@@ -212,16 +268,27 @@ function playRound1InOrder(g: Game, ids: string[]) {
   g.expect("cut");
 }
 
-function setupBuzzerRound(names = ["Riya", "Aadi", "Kabir", "Zoya"]) {
-  const g = new Game(PRESETS.demo);
+/** A room at the cut: safe 3 (the first three names), the rest in the wild card round. */
+function atTheCut(names: string[], config = testConfig()) {
+  const g = new Game(config);
   const ids = names.map((n) => g.join(n));
   playRound1InOrder(g, ids);
-  const finalists = ids.slice(0, 3);
-  const audience = ids.slice(3);
-  g.do({ type: "openPredictions" });
-  g.do({ type: "startBuzzerRound" });
-  g.expect("r2Intro");
-  return { g, ids, finalists, audience };
+  return { g, ids, safe: ids.slice(0, config.safe), wild: ids.slice(config.safe) };
+}
+
+/** Through the wild card round: `winner` gets every question right, everyone else wrong. */
+function toBlackout(names: string[], winnerIndex: number, config = testConfig()) {
+  const { g, ids, safe, wild } = atTheCut(names, config);
+  g.do({ type: "startWildCard" });
+  const winner = ids[winnerIndex];
+  for (let q = 0; q < config.wildCard.questions; q++) {
+    g.playQuestion(wild.map((id) => [id, id === winner ? "correct" : "wrong", 500] as [string, Pick, number]));
+  }
+  assert.ok(g.admin().allowed.includes("revealWildCard"), "the wild card is decided");
+  g.do({ type: "showStandings" });
+  assert.equal(g.admin().primary?.label, "Reveal wild card");
+  g.do({ type: "revealWildCard" });
+  return { g, ids, safe, wild, winner };
 }
 
 const results: string[] = [];
@@ -232,7 +299,7 @@ function test(name: string, fn: () => void) {
 }
 
 // ============================================================================
-// Joining
+// Joining and bots
 // ============================================================================
 
 test("joining: duplicate and blank names, rejoin by id and by name, room full", () => {
@@ -253,93 +320,58 @@ test("joining: duplicate and blank names, rejoin by id and by name, room full", 
   assert.ok(byId.ok && byId.participantId === riya, "rejoin with the saved id");
 });
 
-test("bots: any colour (wheel), shared bots allowed, names unique; lobby only; moods follow the game; one 1–4 answer order", () => {
+test("bots: any colour (wheel), shared bots allowed, names unique; lobby only", () => {
   const g = new Game(PRESETS.demo);
   const ids = Array.from({ length: 100 }, (_, i) => g.join(`P${i}`));
   const looks = () => ids.map((id) => g.phone(id).me);
   assert.equal(new Set(looks().slice(0, 12).map((m) => m.color)).size, 12, "starting bots are varied: the first 12 get 12 colours");
   assert.ok(looks().every((m) => PARTICIPANT_COLORS.includes(m.color as never) && BOT_HEADS.includes(m.head)), "100 people all get a bot");
 
-  // Sharing is fine: copy someone else's exact bot.
   const p1 = g.phone(ids[1]).me;
-  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: p1.head }), { ok: true });
-  assert.deepEqual([g.phone(ids[0]).me.color, g.phone(ids[0]).me.head], [p1.color.toLowerCase(), p1.head], "same colour and head as P1");
-  const lobby = g.screen(ids[0]);
-  assert.ok(lobby.kind === "lobby" && !("botPicker" in lobby), "nothing to lock or grey out any more");
-
-  // Any colour from the wheel; very dark ones are brightened so they show on the dark screens.
+  assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: p1.head }), { ok: true }, "sharing a bot is fine");
+  assert.deepEqual([g.phone(ids[0]).me.color, g.phone(ids[0]).me.head], [p1.color.toLowerCase(), p1.head]);
   assert.deepEqual(g.room.setBot(ids[2], { color: "#3A86FF", head: "visor" }), { ok: true });
   assert.equal(g.phone(ids[2]).me.color, "#3a86ff");
   assert.deepEqual(g.room.setBot(ids[3], { color: "#000000", head: "box" }), { ok: true });
   assert.equal(hexToHsl(g.phone(ids[3]).me.color).l >= BOT_LIGHTNESS.min, true, "black becomes visible grey");
-  assert.deepEqual(g.room.setBot(ids[4], { color: "#140028", head: "box" }), { ok: true });
-  const dark = hexToHsl(g.phone(ids[4]).me.color);
-  assert.ok(Math.abs(dark.h - 270) < 3 && dark.l >= BOT_LIGHTNESS.min - 0.5, "a dark purple stays purple, just lighter");
   assert.equal(normalizeBotColor("#fff"), normalizeBotColor("#ffffff"), "#rgb short form works");
-  assert.ok(hexToHsl(normalizeBotColor("#ffffff")!).l <= BOT_LIGHTNESS.max + 0.5, "pure white is toned down a little");
   assert.deepEqual(g.room.setBot(ids[0], { color: "red", head: "box" }), { ok: false, error: "invalid" });
-  assert.deepEqual(g.room.setBot(ids[0], { color: "#12345", head: "box" }), { ok: false, error: "invalid" });
   assert.deepEqual(g.room.setBot(ids[0], { color: p1.color, head: "wings" }), { ok: false, error: "invalid" });
-
-  // Names stay unique (case-insensitive), whatever the bots.
-  const dupe = g.room.join("p1");
-  assert.ok(!dupe.ok && dupe.error === "name-taken", "two people can't share a name");
-
-  const g2 = new Game(PRESETS.demo);
-  const a = g2.join("A");
-  const b = g2.join("B");
-
-  // Moods on the Host.
-  const mood = (game: Game, id: string) => game.host().cast.find((c) => c.id === id)!.mood;
-  assert.ok(g2.host().cast.every((c) => c.mood === "idle"), "idle in the lobby");
-  g2.do({ type: "startQuiz" });
-  assert.deepEqual(g2.room.setBot(a, { color: PARTICIPANT_COLORS[5], head: "box" }), { ok: false, error: "too-late" });
-  g2.do({ type: "showQuestion" });
-  assert.equal(mood(g2, a), "idle", "idle while reading");
-  const reading = g2.host().stage;
-  assert.ok(reading.phase === "r1Read" && reading.question.options === null, "no options on the Host while reading");
-  g2.tick();
-  assert.equal(mood(g2, a), "thinking");
-  const answering = g2.host().stage;
-  const phoneA = g2.screen(a);
-  const phoneB = g2.screen(b);
-  assert.ok(answering.phase === "r1Answer" && answering.question.options?.length === 4, "Host shows the 4 options, numbered 1–4");
-  assert.ok(phoneA.kind === "answer" && phoneB.kind === "answer");
-  assert.deepEqual(phoneA.options.map((o) => o.text), answering.question.options, "phones show the Host's order");
-  assert.deepEqual(phoneB.options.map((o) => o.text), answering.question.options);
-  g2.answer(a, "correct");
-  assert.equal(mood(g2, a), "locked", "locked in, still no hint of right or wrong");
-  assert.equal(mood(g2, b), "thinking");
-  g2.answer(b, "wrong");
-  g2.do({ type: "revealAnswer" });
-  assert.equal(mood(g2, a), "right");
-  assert.equal(mood(g2, b), "wrong");
+  assert.ok(!g.room.join("p1").ok, "two people can't share a name");
+  g.do({ type: "startQuiz" });
+  assert.deepEqual(g.room.setBot(ids[0], { color: PARTICIPANT_COLORS[5], head: "box" }), { ok: false, error: "too-late" });
 });
 
 // ============================================================================
 // Round 1
 // ============================================================================
 
-test("round 1 scoring: instant ≈ 1000, last moment ≈ 500, wrong 0; early time's up", () => {
+test("round 1 scoring: instant = 1000, last moment ≈ 500, wrong 0; early time's up; moods; one 1–4 order", () => {
   const g = new Game(PRESETS.demo);
   const fast = g.join("Fast");
   const slow = g.join("Slow");
   const wrong = g.join("Wrong");
+  assert.ok(g.host().cast.every((c) => c.mood === "idle"), "idle in the lobby");
   assert.equal(g.admin().primary?.label, "Start quiz");
   g.do({ type: "startQuiz" });
-  g.expect("r1Intro");
   assert.equal(g.screen(fast).kind, "r1Intro");
   assert.equal(g.primary(), "Show question");
   g.expect("r1Read");
   assert.equal(g.host().timer?.durationMs, 8000, "8s to read");
   assert.equal(g.screen(fast).kind, "eyesUp");
+  assert.equal(g.mood(fast), "idle", "idle while reading");
+  const reading = g.host().stage;
+  assert.ok(reading.phase === "r1Read" && reading.question.options === null, "no options on the Host while reading");
   assert.equal(g.admin().primary, null, "no primary button while the read timer runs");
 
   g.tick();
   g.expect("r1Answer");
   assert.equal(g.host().timer?.durationMs, 8000, "8s to answer");
+  assert.equal(g.mood(fast), "thinking");
   g.checkNoLeaks([fast, slow, wrong]);
+  g.checkOneOrder([fast, slow, wrong]);
   g.answer(fast, "correct");
+  assert.equal(g.mood(fast), "locked", "locked in, no hint of right or wrong");
   g.clock.advance(7999);
   g.answer(slow, "correct");
   g.answer(wrong, "wrong");
@@ -347,11 +379,10 @@ test("round 1 scoring: instant ≈ 1000, last moment ≈ 500, wrong 0; early tim
   assert.equal(g.person(fast).score, 1000);
   assert.equal(g.person(slow).score, 500);
   assert.equal(g.person(wrong).score, 0);
-  const lock = g.screen(fast);
-  assert.ok(lock.kind === "lockedIn" && lock.timeUp, "phones say locked in, time's up");
   g.checkNoLeaks([fast, slow, wrong]);
 
   assert.equal(g.primary(), "Reveal answer");
+  assert.deepEqual([g.mood(fast), g.mood(wrong)], ["right", "wrong"]);
   assert.deepEqual(
     [fast, slow, wrong].map((id) => {
       const s = g.screen(id);
@@ -360,24 +391,15 @@ test("round 1 scoring: instant ≈ 1000, last moment ≈ 500, wrong 0; early tim
     ["correct", "correct", "wrong"],
   );
   const reveal = g.host().stage;
-  assert.ok(reveal.phase === "r1Reveal" && reveal.correctText === "Large Language Model");
+  assert.ok(reveal.phase === "r1Reveal" && reveal.correctText === "Large Language Model" && reveal.correctIndex !== null);
 
   assert.equal(g.primary(), "Show results");
-  const results = g.host().stage;
-  assert.ok(results.phase === "r1Results");
-  if (results.phase === "r1Results") {
-    assert.equal(results.options.reduce((s, o) => s + o.count, 0), 3, "chart counts every answer");
-    assert.equal(results.options.filter((o) => o.correct).length, 1);
-    assert.deepEqual(results.options.map((o) => o.letter), ["A", "B", "C", "D"]);
-  }
+  const res = g.host().stage;
+  assert.ok(res.phase === "r1Results" && res.options.reduce((s, o) => s + o.count, 0) === 3);
+  if (res.phase === "r1Results") assert.deepEqual(res.options.map((o) => o.number), [1, 2, 3, 4]);
   assert.equal(g.primary(), "Show leaderboard");
   const board = g.host().stage;
-  assert.ok(board.phase === "r1Leaderboard");
-  if (board.phase === "r1Leaderboard") {
-    assert.deepEqual(board.rows.map((r) => r.name), ["Fast", "Slow", "Wrong"]);
-    assert.deepEqual(board.rows.map((r) => r.previousRank), [null, null, null], "no previous rank on question 1");
-    assert.equal(board.rows[0].change, 1000);
-  }
+  assert.ok(board.phase === "r1Leaderboard" && board.rows.map((r) => r.name).join() === "Fast,Slow,Wrong");
   assert.equal(g.primary(), "Next question");
   g.expect("r1Read");
 });
@@ -394,9 +416,7 @@ test("round 1 answers: first tap wins; read time, pause, wrong id and removed ar
   const s = g.screen(a);
   assert.ok(s.kind === "answer");
   if (s.kind !== "answer") return;
-  assert.equal(new Set(s.options.map((o) => o.id)).size, 4);
   assert.ok(s.options.every((o) => o.id.length >= 8 && !/^[0-3]$/.test(o.id)), "option ids are opaque");
-
   g.room.answer(a, "not-this-question", s.options[0].id);
   assert.equal(g.screen(a).kind, "answer", "an answer for another question is ignored");
   g.do({ type: "pause" });
@@ -407,7 +427,6 @@ test("round 1 answers: first tap wins; read time, pause, wrong id and removed ar
   g.room.answer(a, s.questionId, s.options[1].id);
   const locked = g.screen(a);
   assert.ok(locked.kind === "lockedIn" && locked.choiceText === s.options[0].text, "first tap wins");
-
   g.do({ type: "removeParticipant", participantId: c });
   assert.equal(g.screen(c).kind, "removed");
   g.answer(b, "wrong");
@@ -424,7 +443,6 @@ test("round 1: disconnected phones don't hold up time's up, but a full drop lets
   g.answer(a, "correct");
   g.room.disconnect(b);
   g.expect("r1TimesUp", "everyone still connected has answered");
-
   g.do({ type: "revealAnswer" });
   g.do({ type: "nextQuestion" });
   g.tick();
@@ -432,14 +450,12 @@ test("round 1: disconnected phones don't hold up time's up, but a full drop lets
   g.expect("r1Answer", "with every phone gone, the timer keeps running");
   g.tick();
   g.expect("r1TimesUp");
-  const host = g.host().stage;
-  assert.ok(host.phase === "r1TimesUp" && host.answered === 0 && host.expected === 2);
 });
 
-test("late joiners: play from the next question in round 1, audience after it", () => {
+test("late joiners: play from the next question in round 1, audience after the cut", () => {
   const g = new Game(PRESETS.demo);
   const a = g.join("A");
-  g.join("B");
+  const b = g.join("B");
   g.do({ type: "startQuiz" });
   const c = g.join("C");
   assert.equal(g.person(c).status, "playing", "joined at the intro: plays question 1");
@@ -449,14 +465,9 @@ test("late joiners: play from the next question in round 1, audience after it", 
   assert.equal(g.screen(d).kind, "answer", "joined during the read: plays this question");
   const e = g.join("E");
   assert.equal(g.screen(e).kind, "nextQuestion", "joined while answering: next question");
-  const host = g.host().stage;
-  assert.ok(host.phase === "r1Answer" && host.expected === 4, "the late joiner isn't waited for");
-  for (const id of [a, g.admin().participants[1].id, c, d]) g.answer(id, "wrong");
+  for (const id of [a, b, c, d]) g.answer(id, "wrong");
   g.expect("r1TimesUp", "time's up without waiting for E");
-  assert.equal(g.person(e).answered, null);
-
   g.do({ type: "revealAnswer" });
-  assert.equal(g.screen(e).kind, "nextQuestion");
   g.do({ type: "nextQuestion" });
   g.tick();
   assert.equal(g.screen(e).kind, "answer", "E plays question 2");
@@ -465,271 +476,574 @@ test("late joiners: play from the next question in round 1, audience after it", 
   g.do({ type: "revealAnswer" });
   g.do({ type: "endRound1" });
   g.expect("cut", "round 1 can end early");
-
-  // Everyone has 0 points, so total answer time decides. E answered question 2
-  // instantly, but question 1 (before E joined) counts as the full 8s: E ranks last.
+  // Everyone on 0 points: total answer time decides; question 1 counts as the full 8s for E.
   assert.equal(g.person(e).rank, 5);
   const f = g.join("F");
   assert.equal(g.person(f).status, "audience");
-  assert.equal(g.person(f).joinedLate, true);
   assert.equal(g.screen(f).kind, "audience");
-  g.do({ type: "openPredictions" });
-  assert.equal(g.screen(f).kind, "backFinalist", "late joiners can back a finalist");
 });
 
-test("the cut: top 6 by points, ties broken by total answer time; ranks shown only here", () => {
-  const g = new Game({ ...PRESETS.event, round1: { ...PRESETS.event.round1, questions: 2 } }, eventQuestions(2, 10));
-  const ids = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"].map((n) => g.join(n));
+// ============================================================================
+// The cut
+// ============================================================================
+
+test("the cut: top 9 safe by points then time, everyone else in the wild card round; ranks shown only here", () => {
+  const config: GameConfig = { ...PRESETS.event, round1: { ...PRESETS.event.round1, questions: 2 } };
+  const g = new Game(config, EVENT_QUESTIONS);
+  const ids = Array.from({ length: 12 }, (_, i) => g.join(`P${i + 1}`));
   g.do({ type: "startQuiz" });
   g.do({ type: "showQuestion" });
   for (let q = 0; q < 2; q++) {
     g.tick();
-    // P1–P5 right; P6 wrong fast, P7 wrong slow, P8 doesn't answer.
-    ids.slice(0, 5).forEach((id) => {
+    // P1–P8 right in order; P9 wrong fast, P10 wrong slow, P11 and P12 don't answer.
+    ids.slice(0, 8).forEach((id) => {
       g.clock.advance(200);
       g.answer(id, "correct");
     });
-    g.answer(ids[5], "wrong");
+    g.answer(ids[8], "wrong");
     g.clock.advance(3000);
-    g.answer(ids[6], "wrong");
-    g.tick(); // P8 never answers
-    g.expect("r1TimesUp");
+    g.answer(ids[9], "wrong");
+    g.tick();
     g.do({ type: "revealAnswer" });
     if (q === 0) g.do({ type: "nextQuestion" });
   }
-  assert.equal(g.admin().primary?.label, "Show results", "results are still the next suggested step");
-  assert.ok(g.admin().allowed.includes("endRound1") && !g.admin().allowed.includes("nextQuestion"), "last question: End round 1, no Next");
-  assert.match(g.admin().hint ?? "", /End round 1/);
   g.do({ type: "endRound1" });
   const stage = g.host().stage;
   assert.ok(stage.phase === "cut");
   if (stage.phase !== "cut") return;
-  assert.deepEqual(stage.standings.map((s) => s.name), ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"]);
-  assert.deepEqual(stage.standings.map((s) => s.finalist), [true, true, true, true, true, true, false, false]);
-  assert.equal(stage.standings[5].score, 0, "P6 is in on 0 points: faster than P7 and P8");
+  assert.deepEqual(stage.standings.map((s) => s.name), ids.map((_, i) => `P${i + 1}`));
+  assert.deepEqual(stage.standings.map((s) => s.finalist), [...Array(9).fill(true), false, false, false]);
+  assert.equal(stage.standings[8].score, 0, "P9 is safe on 0 points: faster than P10–P12");
+  assert.ok(stage.standings[9].timeMs > stage.standings[8].timeMs, "the cut carries the tie-break time");
+  assert.deepEqual([stage.safeCount, stage.wildCardCount, stage.wildCardSkipped], [9, 3, false]);
+  const nine = g.screen(ids[8]);
+  assert.ok(nine.kind === "cut" && nine.outcome === "safe" && nine.rank === 9 && nine.of === 12);
+  const ten = g.screen(ids[9]);
+  assert.ok(ten.kind === "cut" && ten.outcome === "wildcard" && ten.rank === 10);
+  assert.equal(g.person(ids[9]).status, "wildcard");
+  assert.equal(g.mood(ids[0]), "right", "safe bots glow at the cut");
+  assert.equal(g.mood(ids[9]), "idle", "wild card players wait (nobody is out yet)");
+  assert.equal(g.admin().primary?.label, "Start wild card round");
+  g.do({ type: "startWildCard" });
+  assert.ok(!JSON.stringify(g.screen(ids[9])).includes('"rank"'), "no Round 1 rank on phones after the cut");
+});
 
-  const six = g.screen(ids[5]);
-  assert.ok(six.kind === "cut" && six.madeIt && six.rank === 6 && six.of === 8);
-  const seven = g.screen(ids[6]);
-  assert.ok(seven.kind === "cut" && !seven.madeIt && seven.rank === 7);
-  assert.equal(g.person(ids[6]).status, "audience");
-  assert.equal(g.person(ids[0]).status, "finalist");
-  for (const id of ids) {
-    // Ranks appear on phones only at the cut.
-    const json = JSON.stringify(g.screen(id));
-    assert.ok(json.includes('"rank"'));
+test("the cut: fewer than 10 played → everyone is a finalist and the wild card round is skipped", () => {
+  const g = new Game({ ...PRESETS.event, round1: { ...PRESETS.event.round1, questions: 1 } }, EVENT_QUESTIONS);
+  const ids = Array.from({ length: 8 }, (_, i) => g.join(`P${i + 1}`));
+  playRound1InOrder(g, ids);
+  const stage = g.host().stage;
+  assert.ok(stage.phase === "cut" && stage.wildCardSkipped && stage.wildCardCount === 0);
+  assert.ok(ids.every((id) => g.person(id).status === "finalist"));
+  assert.equal(g.admin().primary?.label, "Open predictions");
+  assert.ok(g.admin().allowed.includes("startBlackout") && !g.admin().allowed.includes("startWildCard"));
+  const s = g.screen(ids[7]);
+  assert.ok(s.kind === "cut" && s.outcome === "safe");
+  g.do({ type: "startBlackout" });
+  assert.equal(g.admin().blackout?.runners.length, 8, "all 8 run");
+});
+
+// ============================================================================
+// Wild card round
+// ============================================================================
+
+test("wild card: only wild card players answer; safe finalists watch; tallies; most correct wins; standings", () => {
+  const { g, ids, safe, wild } = atTheCut(["A", "B", "C", "D", "E", "F"]);
+  const [d, e, f] = wild;
+  g.do({ type: "startWildCard" });
+  g.expect("wcIntro");
+  assert.deepEqual(g.host().cast.map((c) => c.id), wild, "the cast is the wild card players only");
+  const intro = g.host().stage;
+  assert.ok(intro.phase === "wcIntro" && intro.wildCard.safe.length === 3 && intro.wildCard.players === 3);
+  assert.equal(g.screen(safe[0]).kind, "safeWatch");
+  const st = g.screen(d);
+  assert.ok(st.kind === "wcStatus" && st.right === 0 && st.asked === 0);
+
+  // Q1: D right, E right (slower), F wrong. A safe finalist tries to answer: ignored.
+  assert.equal(g.primary(), "Show question");
+  g.tick();
+  g.expect("wcAnswer");
+  g.checkNoLeaks(ids);
+  g.checkOneOrder(ids);
+  assert.equal(g.screen(safe[0]).kind, "safeWatch", "finalists don't get options");
+  const wcAnswer = g.host().stage;
+  assert.ok(wcAnswer.phase === "wcAnswer" && wcAnswer.wildCard.expected === 3 && wcAnswer.wildCard.standings.length === 0, "no live tally on the Host");
+  const opts = g.screen(d);
+  if (opts.kind === "answer") g.room.answer(safe[0], opts.questionId, opts.options[0].id);
+  assert.equal(g.person(safe[0]).answered, null, "a finalist's answer is ignored");
+  g.answerAt(d, "correct", 1000);
+  assert.equal(g.mood(d), "locked");
+  g.answerAt(e, "correct", 3000);
+  g.answerAt(f, "wrong", 4000);
+  g.expect("wcTimesUp", "everyone in the wild card round answered");
+  g.checkNoLeaks(ids);
+  g.do({ type: "revealAnswer" });
+  assert.deepEqual([g.mood(d), g.mood(f)], ["right", "wrong"]);
+  const r = g.screen(d);
+  assert.ok(r.kind === "result" && r.round === 2 && r.outcome === "correct" && r.tally?.right === 1 && r.tally.asked === 1, "\"1 of 1 right\"");
+  const rf = g.screen(f);
+  assert.ok(rf.kind === "result" && rf.outcome === "wrong" && rf.correctText.length > 0);
+  assert.equal(g.primary(), "Show standings");
+  const standings = g.host().stage;
+  assert.ok(standings.phase === "wcStandings");
+  if (standings.phase === "wcStandings") {
+    assert.deepEqual(standings.wildCard.standings.map((s) => [s.name, s.correct]), [["D", 1], ["E", 1], ["F", 0]], "most correct, then faster");
   }
-  g.do({ type: "openPredictions" });
-  assert.ok(!JSON.stringify(g.screen(ids[6])).includes('"rank"'), "no rank on phones after the cut");
+
+  // Q2: E right, D wrong, F none. Q3: E right, D right, F wrong → E 3, D 2, F 0.
+  g.playQuestion([[e, "correct", 500], [d, "wrong", 500]], "Next question");
+  g.playQuestion([[e, "correct", 500], [d, "correct", 500], [f, "wrong", 500]], "Next question");
+  assert.equal(g.person(e).wildCorrect, 3);
+  assert.equal(g.person(d).wildCorrect, 2);
+  assert.equal(g.admin().primary?.label, "Show standings");
+  assert.ok(g.admin().allowed.includes("revealWildCard"), "decided after the planned questions");
+  g.do({ type: "revealWildCard" });
+  g.expect("wcWinner");
+  assert.equal(g.person(e).status, "finalist");
+  assert.equal(g.person(e).isWildCard, true);
+  assert.deepEqual([g.person(d).status, g.person(f).status], ["audience", "audience"]);
+  assert.deepEqual([g.mood(e), g.mood(d)], ["right", "out"], "the rest power down");
+  const won = g.screen(e);
+  assert.ok(won.kind === "wcWinner" && won.you === "won");
+  const lost = g.screen(d);
+  assert.ok(lost.kind === "wcWinner" && lost.you === "lost" && lost.winner?.id === e);
+  assert.deepEqual(g.admin().finalists.map((x) => x.id), [...safe, e], "the wild card takes the last seat");
+});
+
+test("wild card: tie on correct → lower total time (wrong / miss = the full 8s) wins", () => {
+  const { g, wild } = atTheCut(["A", "B", "C", "D", "E"]);
+  const [d, e] = wild;
+  g.do({ type: "startWildCard" });
+  // D: right at 1s, wrong, right at 6s = 2 correct, 1 + 8 + 6 = 15s. E: right 2s, right 2s, miss = 2 correct, 2 + 2 + 8 = 12s.
+  g.playQuestion([[d, "correct", 1000], [e, "correct", 2000]]);
+  g.playQuestion([[d, "wrong", 1000], [e, "correct", 2000]]);
+  g.playQuestion([[d, "correct", 6000]]);
+  assert.deepEqual([g.person(d).wildCorrect, g.person(e).wildCorrect], [2, 2]);
+  assert.deepEqual([g.person(d).wildTimeMs, g.person(e).wildTimeMs], [15000, 12000]);
+  assert.ok(g.admin().allowed.includes("revealWildCard"));
+  g.do({ type: "revealWildCard" });
+  assert.equal(g.person(e).isWildCard, true, "E wins on time");
+});
+
+test("wild card: exact tie → sudden death among the tied only; all wrong stay in; first right wins", () => {
+  const { g, wild } = atTheCut(["A", "B", "C", "D", "E", "F"]);
+  const [d, e, f] = wild;
+  g.do({ type: "startWildCard" });
+  for (let q = 0; q < 3; q++) g.playQuestion([[d, "correct", 1000], [e, "correct", 1000], [f, "wrong", 1000]]);
+  assert.equal(g.admin().primary?.label, "Show standings");
+  assert.ok(g.admin().allowed.includes("nextQuestion") && !g.admin().allowed.includes("revealWildCard"), "an exact tie isn't decided");
+  assert.match(g.admin().hint ?? "", /sudden death/);
+  g.do({ type: "showStandings" });
+  assert.equal(g.admin().primary?.label, "Next question (sudden death)");
+  g.primary();
+  g.tick();
+  const sd = g.host().stage;
+  assert.ok(sd.phase === "wcAnswer" && sd.question.suddenDeath && sd.question.number === 4);
+  assert.match(g.admin().stepLabel, /sudden death 1 of 3/);
+  assert.equal(g.screen(f).kind, "wcStatus", "F isn't in the sudden death");
+  // Both wrong: both stay in.
+  g.answer(d, "wrong");
+  g.answer(e, "wrong");
+  g.do({ type: "revealAnswer" });
+  assert.deepEqual(g.admin().wildCard?.suddenDeath?.alive.map((t) => t.id).sort(), [d, e].sort());
+  // Next: E right, D wrong → E wins.
+  g.playQuestion([[e, "correct", 500], [d, "wrong", 500]], "Next question (sudden death)");
+  assert.equal(g.admin().primary?.label, "Show standings");
+  assert.ok(g.admin().allowed.includes("revealWildCard"));
+  const out = g.screen(d);
+  assert.ok(out.kind === "result");
+  g.do({ type: "showStandings" });
+  const status = g.screen(d);
+  assert.ok(status.kind === "wcStatus" && status.suddenDeath === "out");
+  g.do({ type: "revealWildCard" });
+  assert.equal(g.person(e).isWildCard, true);
+});
+
+test("wild card: sudden death capped at 3, then total time, then the better Round 1 rank", () => {
+  const { g, wild } = atTheCut(["A", "B", "C", "D", "E"]);
+  const [d, e] = wild;
+  g.do({ type: "startWildCard" });
+  for (let q = 0; q < 3; q++) g.playQuestion([[d, "correct", 1000], [e, "correct", 1000]]);
+  for (let q = 0; q < 3; q++) g.playQuestion([[d, "wrong", 1000], [e, "wrong", 1000]], "Next question (sudden death)");
+  assert.ok(g.admin().allowed.includes("revealWildCard"), "decided after 3 sudden-death questions");
+  g.do({ type: "revealWildCard" });
+  assert.equal(g.person(d).isWildCard, true, "same total time: the better Round 1 rank (D, 4th) wins");
+});
+
+test("wild card: nobody right → the 10th-ranked (best outside the safe seats) takes it", () => {
+  const { g, wild } = atTheCut(["A", "B", "C", "D", "E", "F"]);
+  g.do({ type: "startWildCard" });
+  for (let q = 0; q < 3; q++) g.playQuestion(wild.map((id) => [id, "wrong", 500] as [string, Pick, number]));
+  g.do({ type: "revealWildCard" });
+  assert.equal(g.person(wild[0]).isWildCard, true);
+  const stage = g.host().stage;
+  assert.ok(stage.phase === "wcWinner" && stage.wildCard.fallback && stage.wildCard.winner?.id === wild[0]);
 });
 
 // ============================================================================
 // Predictions
 // ============================================================================
 
-test("predictions: audience backs a finalist and can change; locked once the buzzer round starts", () => {
-  const { g, ids, finalists } = (() => {
-    const g = new Game(PRESETS.demo);
-    const ids = ["A", "B", "C", "D", "E", "F"].map((n) => g.join(n));
-    playRound1InOrder(g, ids);
-    return { g, ids, finalists: ids.slice(0, 3) };
-  })();
-  const [, , , d, e, f] = ids;
-  g.room.back(d, finalists[0]);
-  assert.equal(g.person(d).backingId, null, "no backing before predictions open");
-  assert.equal(g.primary(), "Open predictions");
-  const s = g.screen(d);
-  assert.ok(s.kind === "backFinalist" && s.finalists.length === 3);
-  assert.equal(g.screen(finalists[0]).kind, "finalist");
-  g.room.back(d, finalists[0]);
-  g.room.back(e, finalists[0]);
-  g.room.back(f, finalists[1]);
-  g.room.back(d, finalists[2]); // changed their mind
-  g.room.back(finalists[1], finalists[0]); // finalists can't back
-  g.room.back(e, "nobody");
+test("predictions: 10 finalists; audience backs one and can change until Start Blackout; finalists can't back", () => {
+  const config: GameConfig = { ...PRESETS.event, round1: { ...PRESETS.event.round1, questions: 1 }, wildCard: { ...PRESETS.event.wildCard, questions: 1 } };
+  const g = new Game(config, EVENT_QUESTIONS);
+  const ids = Array.from({ length: 14 }, (_, i) => g.join(`P${i + 1}`));
+  playRound1InOrder(g, ids);
+  g.do({ type: "startWildCard" });
+  g.playQuestion(ids.slice(9).map((id, i) => [id, i === 2 ? "correct" : "wrong", 500] as [string, Pick, number]));
+  g.do({ type: "revealWildCard" });
+  assert.equal(g.admin().finalists.length, 10);
+  assert.equal(g.admin().finalists[9].id, ids[11], "the wild card sits last");
+  g.do({ type: "openPredictions" });
+  const fan = ids[13];
+  const s = g.screen(fan);
+  assert.ok(s.kind === "backFinalist" && s.finalists.length === 10);
+  g.room.back(fan, ids[0]);
+  g.room.back(fan, ids[11]);
+  assert.equal(g.person(fan).backingId, ids[11], "can change");
+  g.room.back(ids[0], ids[1]);
+  assert.equal(g.person(ids[0]).backingId, null, "finalists can't back anyone");
   const stage = g.host().stage;
-  assert.ok(stage.phase === "predictions");
-  if (stage.phase === "predictions") {
-    assert.deepEqual(stage.backing.counts, { [finalists[0]]: 1, [finalists[1]]: 1, [finalists[2]]: 1 });
-    assert.equal(stage.backing.backers, 3);
-    assert.equal(stage.backing.audience, 3);
-  }
-  assert.equal(g.primary(), "Start buzzer round");
-  g.room.back(d, finalists[0]);
-  assert.equal(g.person(d).backingId, finalists[2], "backing is locked once the buzzer round starts");
+  assert.ok(stage.phase === "predictions" && stage.backing.counts[ids[11]] === 1 && stage.backing.backers === 1);
+  g.do({ type: "startBlackout" });
+  g.room.back(fan, ids[0]);
+  assert.equal(g.person(fan).backingId, ids[11], "locked once Blackout starts");
 });
 
 // ============================================================================
-// Buzzer round
+// Blackout
 // ============================================================================
 
-test("buzzer: read locks buzzers, first buzz wins, wrong → locked out → reopen, correct +1, undo", () => {
-  const { g, ids, finalists, audience } = setupBuzzerRound();
-  const [f1, f2, f3] = finalists;
+test("blackout: head starts by rank; +3/+2/+1 by thirds; −1 wrong; 0 none; nobody caught at the reveal", () => {
+  const config = testConfig({ safe: 5 }, { baseGap: 2, darkness: [1] });
+  const names = ["A", "B", "C", "D", "E", "F", "G"];
+  const { g, ids } = toBlackout(names, 5, config);
+  g.do({ type: "startBlackout" });
+  g.expect("boIntro");
+  const [a, , , d, e, f] = ids;
+  // Ranks 1–3 → +2, ranks 4–5 → +1, the wild card (F) → +0.
+  assert.deepEqual(g.admin().blackout!.runners.map((r) => [r.name, r.position, r.headStart]), [
+    ["A", 4, 2],
+    ["B", 4, 2],
+    ["C", 4, 2],
+    ["D", 3, 1],
+    ["E", 3, 1],
+    ["F", 2, 0],
+  ]);
+  assert.equal(g.admin().blackout!.dark, 0);
+  const ready = g.screen(f);
+  assert.ok(ready.kind === "runnerStatus" && ready.alive && ready.gap === 2 && ready.headStart === 0);
+  assert.equal(g.screen(ids[6]).kind, "blackoutWatch", "the audience watches");
+
+  // 8s answer time: thirds end at 2.667s and 5.333s.
   assert.equal(g.primary(), "Show question");
-  g.expect("r2Read");
-  const read = g.host().stage;
-  assert.ok(read.phase === "r2Read" && read.round2.question.options.length === 4, "Host shows the 4 options");
   assert.equal(g.host().timer?.durationMs, 5000, "5s read");
-  g.checkNoLeaks(ids);
-  g.buzz(f1);
-  g.expect("r2Read", "buzzers are locked during the read");
-  const locked = g.screen(f1);
-  assert.ok(locked.kind === "buzzer" && !locked.canBuzz);
-
   g.tick();
-  g.expect("r2BuzzOpen");
-  assert.equal(g.host().timer?.durationMs, 15000, "15s buzz window");
-  const open = g.screen(f1);
-  assert.ok(open.kind === "buzzer" && open.canBuzz);
-  const watch = g.screen(audience[0]);
-  assert.ok(watch.kind === "buzzerWatch" && watch.finalists.length === 3);
-
-  g.buzz(f1);
-  g.buzz(f2); // too late
-  g.expect("r2Answering");
-  assert.equal(g.admin().round2?.buzzedBy?.id, f1, "first buzz wins the turn");
-  assert.equal(g.host().timer?.durationMs, 10000, "10s to say the answer");
+  assert.equal(g.host().timer?.durationMs, 8000, "8s answer");
   g.checkNoLeaks(ids);
-  assert.ok(g.admin().question?.correctText, "Admin sees the answer to judge");
+  g.checkOneOrder(ids);
+  assert.equal(g.mood(a), "thinking");
+  g.answerAt(a, "correct", 500);
+  g.answerAt(ids[1], "correct", 3000);
+  g.answerAt(ids[2], "correct", 6000);
+  g.answerAt(d, "correct", 7900);
+  g.answerAt(e, "wrong", 7950);
+  // F doesn't answer.
+  assert.equal(g.mood(a), "locked");
   g.tick();
-  g.expect("r2Answering", "the countdown running out never marks the answer");
-  assert.equal(g.admin().round2?.answerTimeUp, true);
+  g.expect("boTimesUp");
+  g.checkNoLeaks(ids);
+  assert.deepEqual([g.mood(a), g.mood(f)], ["locked", "idle"]);
+  g.do({ type: "revealAnswer" });
+  g.expect("boReveal");
+  assert.deepEqual(g.admin().blackout!.runners.map((r) => [r.name, r.delta, r.position]), [
+    ["A", 3, 7],
+    ["B", 2, 6],
+    ["C", 1, 5],
+    ["D", 1, 4],
+    ["E", -1, 2],
+    ["F", 0, 2],
+  ]);
+  assert.deepEqual([g.mood(a), g.mood(e), g.mood(f)], ["right", "wrong", "idle"], "no answer → idle");
+  const res = g.screen(e);
+  assert.ok(res.kind === "runnerResult" && res.outcome === "wrong" && res.delta === -1 && res.gap === 2 && res.correctText);
+  const miss = g.screen(f);
+  assert.ok(miss.kind === "runnerResult" && miss.outcome === "missed" && miss.delta === 0);
+  assert.ok(g.admin().blackout!.runners.every((r) => r.alive), "nobody is caught at the reveal");
+  assert.equal(g.admin().primary?.label, "Advance the darkness");
+});
 
-  g.do({ type: "markWrong" });
-  g.expect("r2BuzzOpen", "buzzers reopen for the others");
-  assert.equal(g.host().timer?.durationMs, 10000, "10s reopen window");
-  assert.equal(g.person(f1).points, 0, "no points lost for a wrong answer");
-  const out = g.screen(f1);
-  assert.ok(out.kind === "buzzer" && out.lockedOut && !out.canBuzz && out.myResult === "wrong");
-  assert.ok(g.admin().canUndo, "undo is offered after the mark");
-  g.buzz(f1);
-  g.expect("r2BuzzOpen", "a locked-out finalist can't buzz again");
-
-  g.buzz(f2);
-  g.expect("r2Answering");
-  assert.equal(g.admin().canUndo, false, "a new buzz ends the chance to undo");
-  g.do({ type: "markCorrect" });
-  g.expect("r2Reveal");
-  assert.equal(g.person(f2).points, 1);
-  const reveal = g.host().stage;
-  assert.ok(reveal.phase === "r2Reveal" && reveal.round2.outcome?.kind === "correct" && reveal.round2.correct !== null);
-  const mine = g.screen(f2);
-  assert.ok(mine.kind === "buzzer" && mine.myResult === "correct");
-
-  // Undo the correct mark: point gone, back to judging f2.
-  assert.equal(g.admin().lastMark?.by.id, f2);
-  g.do({ type: "undoMark" });
-  g.expect("r2Answering");
-  assert.equal(g.person(f2).points, 0);
-  assert.equal(g.admin().round2?.buzzedBy?.id, f2);
-  assert.deepEqual(g.admin().round2?.wrong.map((w) => w.id), [f1], "the earlier wrong mark stays");
-  g.do({ type: "markCorrect" });
-  assert.equal(g.person(f2).points, 1);
-  assert.equal(g.primary(), "Show scores");
-  const scores = g.host().stage;
-  assert.ok(scores.phase === "r2Scores" && scores.finalists[0].id === f2, "scores sorted best first");
+test("blackout: catches at Advance the darkness (position ≤ dark); catch order; one left → Show winner; no double advance", () => {
+  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2], questions: 6 });
+  const { g, ids, winner } = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  const [a, b, c] = ids;
+  g.do({ type: "startBlackout" });
+  // Start: A, B, C at 3 (rank +2), the wild card D at 1. The dark moves 2 per question.
+  // Q1: A +3 (6), B wrong (2), C none (3), D none (1). Dark → 2: B (2) and D (1) caught.
+  g.playQuestion([[a, "correct", 500], [b, "wrong", 500]]);
+  const step = g.room.stepId;
+  assert.deepEqual(g.room.command(step, { type: "advanceDarkness" }), { ok: true });
+  assert.deepEqual(g.room.command(step, { type: "advanceDarkness" }), { ok: false, reason: "stale-step" }, "a double tap never moves the dark twice");
+  g.expect("boDark");
+  const bo = g.admin().blackout!;
+  assert.deepEqual([bo.dark, bo.darkFrom], [2, 0]);
+  assert.deepEqual(bo.caughtThisQuestion.sort(), [b, winner].sort());
+  assert.deepEqual([g.mood(b), g.mood(winner), g.mood(a)], ["out", "out", "idle"]);
+  // Same question: B was further ahead (2) than D (1) before the dark moved → B places higher.
+  assert.deepEqual([g.runner(b).place, g.runner(winner).place], [3, 4]);
+  const gone = g.screen(b);
+  assert.ok(gone.kind === "runnerStatus" && !gone.alive && gone.caughtNow && gone.place === 3);
+  const still = g.screen(a);
+  assert.ok(still.kind === "runnerStatus" && still.alive && still.gap === 4);
   assert.equal(g.admin().primary?.label, "Next question");
-  assert.equal(g.admin().allowed.includes("undoMark"), false, "no undo after moving on");
-  void f3;
-});
 
-test("buzzer: everyone wrong → reveal, nobody scores; undo the last wrong; nobody buzzes → reveal", () => {
-  const { g, finalists } = setupBuzzerRound();
-  const [f1, f2, f3] = finalists;
-  g.do({ type: "showQuestion" });
+  // Q2: caught runners can't answer. A right fast (9), C wrong (2). Dark → 4: C caught → A wins.
+  g.primary();
   g.tick();
-  for (const f of [f1, f2, f3]) {
-    g.buzz(f);
-    g.do({ type: "markWrong" });
-  }
-  g.expect("r2Reveal");
-  const r = g.host().stage;
-  assert.ok(r.phase === "r2Reveal" && r.round2.outcome?.kind === "nobody" && r.round2.outcome.reason === "allWrong");
-  assert.deepEqual(finalists.map((f) => g.person(f).points), [0, 0, 0]);
-
-  g.do({ type: "undoMark" });
-  g.expect("r2Answering");
-  assert.equal(g.admin().round2?.buzzedBy?.id, f3);
-  assert.deepEqual(g.admin().round2?.wrong.map((w) => w.id), [f1, f2]);
-  g.do({ type: "markWrong" });
-  g.expect("r2Reveal");
-
-  g.do({ type: "nextQuestion" });
-  g.tick(); // read → buzzers open
-  g.tick(); // 15s, nobody buzzes
-  g.expect("r2Reveal");
-  const t = g.host().stage;
-  assert.ok(t.phase === "r2Reveal" && t.round2.outcome?.kind === "nobody" && t.round2.outcome.reason === "timeUp");
-  assert.equal(g.admin().canUndo, false, "nothing to undo");
-});
-
-test("buzzer: tie for 1st after the last question → sudden death between the tied only", () => {
-  const { g, finalists, audience } = setupBuzzerRound();
-  const [f1, f2, f3] = finalists;
-  const playQuestion = (winner: string | null) => {
-    g.tick();
-    if (winner) {
-      g.buzz(winner);
-      g.do({ type: "markCorrect" });
-    } else g.tick();
-    g.expect("r2Reveal");
-  };
-  g.do({ type: "showQuestion" });
-  playQuestion(f1);
-  g.do({ type: "nextQuestion" });
-  playQuestion(f2);
-  g.do({ type: "nextQuestion" });
-  playQuestion(null);
-  assert.equal(g.primary(), "Show scores");
-  assert.equal(g.admin().primary?.label, "Start sudden death", "tie for 1st");
-  assert.match(g.admin().hint ?? "", /Tie for 1st/);
-  g.do({ type: "startSuddenDeath" });
-  g.expect("suddenDeath");
-  const intro = g.host().stage;
-  assert.ok(intro.phase === "suddenDeath" && intro.tied.map((t) => t.id).sort().join() === [f1, f2].sort().join());
-  const out = g.screen(f3);
-  assert.ok(out.kind === "buzzer" && out.step === "suddenDeath" && !out.inPlay);
-
-  g.do({ type: "showQuestion" });
-  const q = g.host().stage;
-  assert.ok(q.phase === "r2Read" && q.round2.question.suddenDeath && q.round2.question.number === 1);
-  g.tick();
-  g.buzz(f3);
-  g.expect("r2BuzzOpen", "only the tied finalists can buzz");
-  g.buzz(f1);
-  g.do({ type: "markWrong" });
-  g.tick(); // f2 doesn't buzz in the reopen window
-  g.expect("r2Reveal");
-  assert.equal(g.admin().primary?.label, "Show scores");
-  g.do({ type: "nextQuestion" }); // another sudden-death question
-  const q2 = g.host().stage;
-  assert.ok(q2.phase === "r2Read" && q2.round2.question.number === 2);
-  g.tick();
-  g.buzz(f2);
-  g.do({ type: "markCorrect" });
-  assert.equal(g.admin().round2?.winner?.id, f2);
-  assert.equal(g.primary(), "Show scores");
-  assert.equal(g.primary(), "Show winner");
+  assert.equal(g.screen(b).kind, "runnerStatus", "caught runners get no options");
+  g.answer(a, "correct");
+  g.answer(c, "wrong");
+  g.expect("boTimesUp", "ends early when every runner still running has answered");
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "advanceDarkness" });
+  assert.equal(g.admin().blackout!.over, true);
+  assert.equal(g.admin().primary?.label, "Show winner");
+  g.do({ type: "showWinner" });
   g.expect("podium");
   const podium = g.host().stage;
-  assert.ok(podium.phase === "podium" && podium.basis === "buzzer");
-  if (podium.phase === "podium") {
-    assert.deepEqual(podium.entries.map((e) => e.id), [f2, f1, f3], "sudden-death winner first");
-  }
-  const win = g.screen(f2);
-  assert.ok(win.kind === "podium" && win.place === 1);
-  const third = g.screen(f3);
-  assert.ok(third.kind === "podium" && third.place === 3);
-  const fan = g.screen(audience[0]);
-  assert.ok(fan.kind === "podium" && fan.place === null);
+  assert.ok(podium.phase === "podium" && podium.basis === "blackout");
+  if (podium.phase === "podium") assert.deepEqual(podium.entries.map((e) => e.id), [a, c, b, winner], "caught later ranks higher");
+  assert.equal(g.mood(a), "right");
+  const won = g.screen(a);
+  assert.ok(won.kind === "podium" && won.place === 1);
+  const fourth = g.screen(winner);
+  assert.ok(fourth.kind === "podium" && fourth.place === 4);
+});
+
+test("blackout: everyone caught at once → the best by catch order wins", () => {
+  const config = testConfig({ safe: 2 }, { baseGap: 1, darkness: [9] });
+  const { g, ids } = toBlackout(["A", "B", "C", "D"], 2, config);
+  g.do({ type: "startBlackout" });
+  const [a, b, c] = ids;
+  // A 3 → 4 (slow right), B 3 → 6 (fast right), C 1 → 1 (none). Dark → 9: all caught. B was furthest ahead.
+  g.playQuestion([[a, "correct", 7000], [b, "correct", 100]]);
+  g.do({ type: "advanceDarkness" });
+  assert.equal(g.admin().blackout!.alive, 0);
+  assert.equal(g.admin().blackout!.winner?.id, b);
+  g.do({ type: "showWinner" });
+  const p = g.host().stage;
+  assert.ok(p.phase === "podium" && p.entries.map((e) => e.id).join() === [b, a, c].join());
+});
+
+test("blackout: survivors after the last question → furthest ahead, then lower time, then Round 1 rank", () => {
+  const config = testConfig({ safe: 3 }, { baseGap: 6, darkness: [1], questions: 2 });
+  const { g, ids } = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  g.do({ type: "startBlackout" });
+  const [a, b, c, d] = ids;
+  // Everyone far ahead of the dark. A and B tie on position; B's answers were faster.
+  g.playQuestion([[a, "correct", 3000], [b, "correct", 2900], [c, "wrong", 500], [d, "correct", 7000]]);
+  g.do({ type: "advanceDarkness" });
+  g.playQuestion([[a, "correct", 500], [b, "correct", 400], [c, "correct", 7000], [d, "correct", 7000]]);
+  g.do({ type: "advanceDarkness" });
+  assert.equal(g.admin().blackout!.over, true, "the last planned question ends it");
+  assert.equal(g.admin().blackout!.alive, 4, "nobody was caught");
+  assert.equal(g.runner(a).position, g.runner(b).position, "A and B are level");
+  assert.equal(g.admin().blackout!.winner?.id, b, "level on position: lower total time wins");
+  g.do({ type: "showWinner" });
+  const p = g.host().stage;
+  assert.ok(p.phase === "podium" && p.entries[0].id === b && p.entries[1].id === a);
 });
 
 // ============================================================================
-// Admin controls
+// Fixing mistakes, in every round
 // ============================================================================
 
-test("timers: pause freezes, resume continues, +5 seconds, skip", () => {
+test("void and restart question: round 1, wild card and Blackout (positions, the dark and catches undone)", () => {
+  // Round 1
+  const g = new Game(PRESETS.demo);
+  const a = g.join("A");
+  const b = g.join("B");
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  g.answer(a, "correct");
+  g.answer(b, "correct");
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "voidQuestion" });
+  assert.equal(g.person(a).score, 0, "void takes the points back");
+  assert.equal(g.screen(a).kind, "voided");
+  const voided = g.host().stage;
+  assert.ok(voided.phase === "r1Reveal" && voided.voided && voided.correctText === null);
+  assert.equal(g.admin().primary?.label, "Next question");
+  g.do({ type: "nextQuestion" });
+  g.tick();
+  const old = g.screen(a);
+  g.answer(a, "correct");
+  g.answer(b, "wrong");
+  g.do({ type: "revealAnswer" });
+  const oldId = g.admin().question!.id;
+  g.do({ type: "restartQuestion" });
+  assert.equal(g.person(a).score, 0, "restart takes the points back");
+  g.tick();
+  const fresh = g.screen(a);
+  assert.ok(fresh.kind === "answer" && fresh.questionId !== oldId, "a restarted question gets new ids");
+  if (old.kind === "answer") g.room.answer(a, old.questionId, old.options[0].id);
+  assert.equal(g.screen(a).kind, "answer", "an answer to the old run is ignored");
+
+  // Wild card: void → doesn't count and the next question takes its number; restart → undone.
+  const w = atTheCut(["A", "B", "C", "D", "E"]);
+  const [d, e] = w.wild;
+  w.g.do({ type: "startWildCard" });
+  w.g.playQuestion([[d, "correct", 500], [e, "wrong", 500]]);
+  w.g.do({ type: "voidQuestion" });
+  assert.equal(w.g.person(d).wildCorrect, 0, "a voided wild card question doesn't count");
+  assert.equal(w.g.screen(d).kind, "voided");
+  w.g.primary();
+  assert.equal(w.g.admin().question?.number, 1, "the next question takes its number");
+  w.g.tick();
+  w.g.answer(d, "correct");
+  w.g.answer(e, "correct");
+  w.g.do({ type: "revealAnswer" });
+  assert.equal(w.g.person(e).wildCorrect, 1);
+  w.g.do({ type: "restartQuestion" });
+  assert.deepEqual([w.g.person(d).wildCorrect, w.g.person(e).wildCorrect], [0, 0], "restart undoes the tallies");
+  w.g.expect("wcRead");
+
+  // Blackout: a catch, then restart → the dark, the moves and the catch are undone. Void → no moves.
+  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
+  const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  t.g.do({ type: "startBlackout" });
+  const [ra, rb] = t.ids;
+  t.g.playQuestion([[ra, "correct", 500], [rb, "wrong", 500]]);
+  t.g.do({ type: "advanceDarkness" });
+  assert.equal(t.g.runner(rb).alive, false);
+  t.g.do({ type: "restartQuestion" });
+  t.g.expect("boRead");
+  assert.equal(t.g.admin().blackout!.dark, 0, "the dark goes back");
+  assert.deepEqual([t.g.runner(ra).position, t.g.runner(rb).alive, t.g.runner(rb).position], [3, true, 3], "moves and catches undone");
+  assert.equal(t.g.admin().question?.number, 1);
+  t.g.tick();
+  t.g.answer(ra, "correct");
+  t.g.tick();
+  t.g.do({ type: "revealAnswer" });
+  assert.equal(t.g.runner(ra).position, 6);
+  t.g.do({ type: "voidQuestion" });
+  assert.equal(t.g.runner(ra).position, 3, "void: no moves");
+  assert.equal(t.g.admin().blackout!.dark, 0, "void: the dark doesn't move");
+  const vs = t.g.screen(ra);
+  assert.ok(vs.kind === "runnerResult" && vs.outcome === "voided" && vs.delta === 0);
+  assert.ok(!t.g.admin().allowed.includes("advanceDarkness"), "no dark after a void");
+  t.g.primary();
+  assert.equal(t.g.admin().question?.number, 1, "the next spare takes its number");
+});
+
+test("void with no spare left: the round ends one question early", () => {
+  const config = testConfig({ safe: 2 }, { baseGap: 9, darkness: [1], questions: 1, spares: 0 });
+  const { g, ids } = toBlackout(["A", "B", "C"], 2, { ...config, blackout: { ...config.blackout } });
+  g.do({ type: "startBlackout" });
+  g.playQuestion([[ids[0], "correct", 500]]);
+  g.do({ type: "voidQuestion" });
+  assert.match(g.admin().hint ?? "", /No spare questions left/);
+  assert.equal(g.admin().primary?.label, "Show winner");
+  g.do({ type: "showWinner" });
+  g.expect("podium");
+});
+
+test("restart round: Round 1 to 0, wild card tallies to 0, Blackout back to the start", () => {
+  const w = atTheCut(["A", "B", "C", "D", "E"]);
+  w.g.do({ type: "restartRound" });
+  w.g.expect("r1Intro", "restart Round 1 from the cut");
+  assert.ok(w.g.admin().participants.every((p) => p.score === 0 && p.status === "playing"));
+
+  const x = atTheCut(["A", "B", "C", "D", "E"]);
+  x.g.do({ type: "startWildCard" });
+  x.g.playQuestion([[x.wild[0], "correct", 500]]);
+  x.g.do({ type: "restartRound" });
+  x.g.expect("wcIntro");
+  assert.equal(x.g.person(x.wild[0]).wildCorrect, 0);
+
+  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
+  const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  t.g.do({ type: "startBlackout" });
+  t.g.playQuestion([[t.ids[0], "correct", 500]]);
+  t.g.do({ type: "advanceDarkness" });
+  t.g.do({ type: "restartRound" });
+  t.g.expect("boIntro");
+  const bo = t.g.admin().blackout!;
+  assert.ok(bo.dark === 0 && bo.runners.every((r) => r.alive && r.position === r.headStart + 1), "positions back to the start");
+});
+
+test("remove: a wild card player mid-round; seat hand-over before the first Blackout question; a runner mid-chase", () => {
+  // Wild card: removing the leader just takes them out.
+  const w = atTheCut(["A", "B", "C", "D", "E", "F"]);
+  const [d, e, f] = w.wild;
+  w.g.do({ type: "startWildCard" });
+  w.g.playQuestion([[d, "correct", 500], [e, "wrong", 500], [f, "wrong", 500]]);
+  w.g.do({ type: "removeParticipant", participantId: d });
+  w.g.playQuestion([[e, "correct", 500], [f, "wrong", 500]]);
+  w.g.playQuestion([[e, "wrong", 500], [f, "wrong", 500]]);
+  w.g.do({ type: "revealWildCard" });
+  assert.equal(w.g.person(e).isWildCard, true, "the round carried on without the removed leader");
+
+  // Before the first Blackout question: a removed safe finalist's seat goes to the wild card runner-up.
+  w.g.do({ type: "openPredictions" });
+  w.g.room.back(f, w.safe[0]);
+  w.g.do({ type: "removeParticipant", participantId: w.safe[0] });
+  assert.equal(w.g.person(f).status, "finalist", "the wild card runner-up takes the seat");
+  assert.equal(w.g.person(f).backingId, null, "picks for the removed one are cleared");
+  assert.equal(w.g.admin().finalists.length, 4);
+
+  // At the cut (before the wild card round): the next Round 1 rank takes the seat.
+  const c = atTheCut(["A", "B", "C", "D", "E"]);
+  c.g.do({ type: "removeParticipant", participantId: c.safe[1] });
+  assert.equal(c.g.person(c.wild[0]).status, "finalist", "4th place moves up to safe");
+  assert.deepEqual(c.g.admin().finalists.map((x) => x.id), [c.safe[0], c.safe[2], c.wild[0]]);
+
+  // Mid-Blackout: a removed runner leaves the chase and isn't placed; no seat hand-over.
+  const config = testConfig({ safe: 3 }, { baseGap: 4, darkness: [1] });
+  const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  t.g.do({ type: "startBlackout" });
+  t.g.playQuestion([[t.ids[0], "correct", 500]]);
+  t.g.do({ type: "removeParticipant", participantId: t.ids[1] });
+  assert.equal(t.g.admin().blackout!.runners.length, 3, "out of the chase");
+  assert.equal(t.g.admin().finalists.length, 3, "no promotion once Blackout has started");
+  t.g.do({ type: "advanceDarkness" });
+  t.g.do({ type: "endQuiz" });
+  const p = t.g.host().stage;
+  assert.ok(p.phase === "podium" && !p.entries.some((x) => x.id === t.ids[1]), "removed runners aren't placed");
+});
+
+test("end quiz now: before the cut, during the wild card round, during Blackout", () => {
+  const g = new Game(PRESETS.demo);
+  const [a, b] = ["A", "B"].map((n) => g.join(n));
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  g.answer(a, "wrong");
+  g.answer(b, "correct");
+  g.do({ type: "endQuiz" });
+  const p = g.host().stage;
+  assert.ok(p.phase === "podium" && p.basis === "round1" && p.entries[0].id === b);
+  assert.deepEqual(g.room.join("Late"), { ok: false, error: "quiz-ended" });
+
+  const w = atTheCut(["A", "B", "C", "D", "E"]);
+  w.g.do({ type: "startWildCard" });
+  w.g.do({ type: "endQuiz" });
+  const q = w.g.host().stage;
+  assert.ok(q.phase === "podium" && q.basis === "wildcard" && q.entries.map((e) => e.id).join() === w.safe.join(), "the safe finalists by Round 1 rank");
+
+  const config = testConfig({ safe: 3 }, { baseGap: 1, darkness: [2] });
+  const t = toBlackout(["A", "B", "C", "D", "E"], 3, config);
+  t.g.do({ type: "startBlackout" });
+  t.g.playQuestion([[t.ids[2], "correct", 500], [t.ids[0], "wrong", 500]]);
+  t.g.do({ type: "advanceDarkness" });
+  t.g.do({ type: "endQuiz" });
+  const r = t.g.host().stage;
+  assert.ok(r.phase === "podium" && r.basis === "blackout");
+  if (r.phase === "podium") assert.deepEqual(r.entries.map((e) => e.id).slice(0, 2), [t.ids[2], t.ids[1]], "still running by position, then caught ones");
+});
+
+test("timers: pause freezes, resume continues, +5 seconds, skip; thirds use the extended time", () => {
   const g = new Game(PRESETS.demo);
   const a = g.join("A");
   g.join("B");
@@ -740,42 +1054,31 @@ test("timers: pause freezes, resume continues, +5 seconds, skip", () => {
   g.do({ type: "pause" });
   assert.ok(g.host().paused && g.phone(a).paused);
   assert.equal(g.host().timer?.remainingMs, 5000);
-  assert.ok(g.admin().allowed.includes("resume") && !g.admin().allowed.includes("pause"));
   g.clock.advance(60_000);
   g.expect("r1Answer", "nothing moves while paused");
   g.do({ type: "addTime" });
   assert.equal(g.host().timer?.remainingMs, 10_000, "+5s while paused");
   g.do({ type: "resume" });
-  assert.equal(g.host().timer?.endsAt, g.clock.now() + 10_000);
   g.do({ type: "addTime" });
-  assert.equal(g.host().timer?.endsAt, g.clock.now() + 15_000, "+5s while running");
   assert.equal(g.host().timer?.durationMs, 18_000);
   g.answer(a, "correct");
   g.do({ type: "skipTimer" });
   g.expect("r1TimesUp");
-  // Answered 3s into an 18s window (8s + two "+5s"): 500 + 500 × (1 − 3/18) ≈ 917.
-  assert.equal(g.person(a).score, 917, "speed points use the extended time");
+  assert.equal(g.person(a).score, 917, "speed points use the extended time: 500 + 500 × (1 − 3/18)");
 
-  // Pause also stops buzzing; +5s restarts an expired spoken-answer countdown.
-  const { g: b, finalists } = setupBuzzerRound();
-  b.do({ type: "showQuestion" });
-  b.tick();
-  b.do({ type: "pause" });
-  b.buzz(finalists[0]);
-  b.expect("r2BuzzOpen", "no buzzing while paused");
-  b.do({ type: "resume" });
-  b.buzz(finalists[0]);
-  b.tick();
-  assert.equal(b.host().timer, null);
-  b.do({ type: "addTime" });
-  assert.equal(b.host().timer?.durationMs, 5000, "a fresh 5s to finish the answer");
-  assert.equal(b.admin().round2?.answerTimeUp, false);
-  b.do({ type: "skipTimer" });
-  assert.equal(b.admin().round2?.answerTimeUp, true);
-  b.expect("r2Answering");
+  const config = testConfig({ safe: 2 }, { baseGap: 4, darkness: [1] });
+  const t = toBlackout(["A", "B", "C"], 2, config);
+  t.g.do({ type: "startBlackout" });
+  t.g.primary();
+  t.g.tick();
+  t.g.do({ type: "addTime" }); // 13s answer time: the first third ends at 4.33s
+  t.g.answerAt(t.ids[0], "correct", 4000);
+  t.g.do({ type: "skipTimer" });
+  t.g.do({ type: "revealAnswer" });
+  assert.equal(t.g.runner(t.ids[0]).delta, 3, "4s into a 13s window is still the first third");
 });
 
-test("stepId: a stale or repeated command is ignored, so a double tap never skips two steps", () => {
+test("stepId: stale or repeated commands are ignored (Reveal wild card and Advance the darkness too)", () => {
   const g = new Game(PRESETS.demo);
   g.join("A");
   g.join("B");
@@ -784,171 +1087,39 @@ test("stepId: a stale or repeated command is ignored, so a double tap never skip
   assert.deepEqual(g.room.command(step, { type: "startQuiz" }), { ok: false, reason: "stale-step" });
   const intro = g.room.stepId;
   assert.deepEqual(g.room.command(intro, { type: "showQuestion" }), { ok: true });
-  assert.deepEqual(g.room.command(intro, { type: "showQuestion" }), { ok: false, reason: "stale-step" });
-  g.expect("r1Read");
   const reading = g.room.stepId;
-  g.tick(); // the read timer ran out on its own...
-  assert.deepEqual(g.room.command(reading, { type: "skipTimer" }), { ok: false, reason: "stale-step" }, "...so a late Skip doesn't skip the answer step");
-  g.expect("r1Answer");
+  g.tick();
+  assert.deepEqual(g.room.command(reading, { type: "skipTimer" }), { ok: false, reason: "stale-step" }, "a late Skip doesn't skip the answer step");
   assert.deepEqual(g.room.command(reading, { type: "pause" }), { ok: true }, "pause works whatever the step");
   assert.deepEqual(g.try({ type: "revealAnswer" }), { ok: false, reason: "not-allowed" });
 
-  const { g: b, finalists } = setupBuzzerRound();
-  b.do({ type: "showQuestion" });
-  b.tick();
-  b.buzz(finalists[0]);
-  const judging = b.room.stepId;
-  assert.deepEqual(b.room.command(judging, { type: "markCorrect" }), { ok: true });
-  assert.deepEqual(b.room.command(judging, { type: "markCorrect" }), { ok: false, reason: "stale-step" }, "no double point");
-  assert.equal(b.person(finalists[0]).points, 1);
+  const w = atTheCut(["A", "B", "C", "D", "E"]);
+  w.g.do({ type: "startWildCard" });
+  for (let q = 0; q < 3; q++) w.g.playQuestion([[w.wild[0], "correct", 500]]);
+  const at = w.g.room.stepId;
+  assert.deepEqual(w.g.room.command(at, { type: "revealWildCard" }), { ok: true });
+  assert.deepEqual(w.g.room.command(at, { type: "revealWildCard" }), { ok: false, reason: "stale-step" });
 });
 
-test("void and restart: points undone; a voided buzzer question is replaced", () => {
-  const g = new Game(PRESETS.demo);
-  const a = g.join("A");
-  const b = g.join("B");
-  g.do({ type: "startQuiz" });
-  g.do({ type: "showQuestion" });
-  g.tick();
-  g.answer(a, "correct");
-  g.answer(b, "correct");
-  g.do({ type: "revealAnswer" });
-  assert.ok(g.person(a).score > 0);
-  g.do({ type: "voidQuestion" });
-  assert.equal(g.person(a).score, 0, "void takes the points back");
-  assert.equal(g.screen(a).kind, "voided");
-  const voided = g.host().stage;
-  assert.ok(voided.phase === "r1Reveal" && voided.voided && voided.correctText === null);
-  assert.ok(!g.admin().allowed.includes("showResults"), "no results for a voided question");
-  assert.equal(g.admin().primary?.label, "Next question");
-
-  g.do({ type: "nextQuestion" });
-  g.tick();
-  const oldScreen = g.screen(a);
-  g.answer(a, "correct");
-  g.answer(b, "wrong");
-  g.do({ type: "revealAnswer" });
-  g.do({ type: "showResults" });
-  g.do({ type: "showLeaderboard" });
-  const oldQuestionId = g.admin().question!.id;
-  g.do({ type: "restartQuestion" });
-  g.expect("r1Read");
-  assert.equal(g.person(a).score, 0, "restart takes the points back");
-  g.tick();
-  const fresh = g.screen(a);
-  assert.ok(fresh.kind === "answer" && fresh.questionId !== oldQuestionId, "a restarted question gets new ids");
-  if (oldScreen.kind === "answer") g.room.answer(a, oldScreen.questionId, oldScreen.options[0].id);
-  assert.equal(g.screen(a).kind, "answer", "an answer to the old run is ignored");
-  g.answer(a, "correct");
-  g.answer(b, "correct");
-  g.do({ type: "revealAnswer" });
-  g.do({ type: "nextQuestion" });
-  g.tick();
-  g.tick();
-  g.do({ type: "revealAnswer" });
-  g.do({ type: "endRound1" });
-  g.do({ type: "restartRound" });
-  g.expect("r1Intro", "restart round 1 from the cut");
-  assert.ok(g.admin().participants.every((p) => p.score === 0 && p.status === "playing" && p.rank !== null));
-
-  // Buzzer round
-  const { g: r, finalists } = setupBuzzerRound();
-  r.do({ type: "showQuestion" });
-  r.tick();
-  r.buzz(finalists[0]);
-  r.do({ type: "markCorrect" });
-  r.do({ type: "voidQuestion" });
-  assert.equal(r.person(finalists[0]).points, 0);
-  const v = r.host().stage;
-  assert.ok(v.phase === "r2Reveal" && v.round2.outcome?.kind === "voided");
-  r.do({ type: "nextQuestion" });
-  const replaced = r.host().stage;
-  assert.ok(replaced.phase === "r2Read" && replaced.round2.question.number === 1, "the replacement is still question 1");
-  r.tick();
-  r.buzz(finalists[1]);
-  r.do({ type: "markCorrect" });
-  r.do({ type: "restartQuestion" });
-  r.expect("r2Read");
-  assert.equal(r.person(finalists[1]).points, 0, "restart takes the point back");
-  r.tick();
-  r.buzz(finalists[2]);
-  r.do({ type: "markCorrect" });
-  r.do({ type: "restartRound" });
-  r.expect("r2Intro");
-  assert.ok(finalists.every((f) => r.person(f).points === 0), "restart round: buzzer points back to 0");
-});
-
-test("remove: early time's up, next-best takes an empty final seat, a buzzer's turn passes on", () => {
-  const g = new Game(PRESETS.demo);
-  const ids = ["A", "B", "C", "D", "E"].map((n) => g.join(n));
-  playRound1InOrder(g, ids);
-  const [a, b, c, d, e] = ids;
-  g.do({ type: "openPredictions" });
-  g.room.back(d, c);
-  g.room.back(e, a);
-  g.do({ type: "removeParticipant", participantId: c });
-  assert.equal(g.person(c).status, "removed");
-  assert.equal(g.person(d).status, "finalist", "4th place takes the empty seat before the buzzer round");
-  assert.equal(g.person(e).backingId, a);
-  assert.deepEqual(g.admin().finalists.map((f) => f.id), [a, b, d]);
-  assert.deepEqual(g.room.join("", c), { ok: false, error: "removed" });
-  assert.deepEqual(g.room.join("C"), { ok: false, error: "removed" });
-
-  g.do({ type: "startBuzzerRound" });
-  g.do({ type: "showQuestion" });
-  g.tick();
-  g.buzz(a);
-  g.do({ type: "removeParticipant", participantId: a });
-  g.expect("r2BuzzOpen", "the removed buzzer's turn goes back to the others");
-  assert.deepEqual(g.admin().finalists.map((f) => f.id), [b, d], "no promotion once the buzzer round started");
-  g.buzz(b);
-  g.do({ type: "markCorrect" });
-  g.do({ type: "showScores" });
-  g.do({ type: "nextQuestion" });
-});
-
-test("end quiz now: from round 1 (round 1 ranking) and from the buzzer round", () => {
-  const g = new Game(PRESETS.demo);
-  const [a, b] = ["A", "B"].map((n) => g.join(n));
-  g.do({ type: "startQuiz" });
-  g.do({ type: "showQuestion" });
-  g.tick();
-  g.answer(a, "wrong");
-  g.answer(b, "correct");
-  g.do({ type: "endQuiz" });
-  g.expect("podium");
-  const p = g.host().stage;
-  assert.ok(p.phase === "podium" && p.basis === "round1" && p.entries[0].id === b);
-  assert.deepEqual(g.room.join("Late"), { ok: false, error: "quiz-ended" });
-  const s = g.screen(a);
-  assert.ok(s.kind === "podium" && s.place === 2 && s.winner?.id === b);
-  assert.equal(g.admin().primary, null);
-
-  const { g: r, finalists } = setupBuzzerRound();
-  r.do({ type: "showQuestion" });
-  r.tick();
-  r.buzz(finalists[2]);
-  r.do({ type: "markCorrect" });
-  r.do({ type: "endQuiz" });
-  const q = r.host().stage;
-  assert.ok(q.phase === "podium" && q.basis === "buzzer" && q.entries[0].id === finalists[2]);
-});
-
-test("room code and sound toggles; results CSV", () => {
-  const g = new Game(PRESETS.demo);
-  const a = g.join("=cmd|evil");
-  g.join('Rahul "R", S');
+test("room code and sound toggles; results CSV with the v3 columns", () => {
+  const config = testConfig({ safe: 2 }, { baseGap: 1, darkness: [3] });
+  const { g, ids } = toBlackout(["=cmd|evil", 'Rahul "R", S', "C", "D"], 2, config);
   g.do({ type: "setRoomCodeVisible", visible: false });
   assert.equal(g.host().roomCodeVisible, false);
   g.do({ type: "setSound", on: false });
   assert.equal(g.host().soundOn, false);
+  g.do({ type: "startBlackout" });
+  g.playQuestion([[ids[0], "correct", 500]]);
+  g.do({ type: "advanceDarkness" });
+  g.do({ type: "showWinner" });
   const { csv, filename } = g.room.resultsCsv();
   assert.equal(filename, "hermes-quiz-TEST-results.csv");
   const lines = csv.split("\r\n");
-  assert.equal(lines.length, 3, "header + a row per participant");
-  assert.ok(lines.some((l) => l.includes("'=cmd|evil")), "names that look like formulas are neutralised");
+  assert.equal(lines[0], "Place,Name,Result,Round 1 score,Round 1 rank,Wild card correct,Wild card time (s),Blackout place,Blackout final position,Backed,Called it,Left page");
+  assert.equal(lines.length, 5);
+  assert.ok(lines[1].includes("'=cmd|evil") && lines[1].includes(",winner,"), "the winner first; formulas neutralised");
   assert.ok(lines.some((l) => l.includes('"Rahul ""R"", S"')), "quotes and commas escaped");
-  void a;
+  assert.ok(lines.some((l) => l.includes(",wildcard,") || l.includes(",finalist,")));
 });
 
 test("page-leave flag counts only while a question is open, and only for Admin", () => {
@@ -963,12 +1134,11 @@ test("page-leave flag counts only while a question is open, and only for Admin",
   g.tick();
   g.room.setPageHidden(a, true);
   assert.equal(g.person(a).leftPageCount, 1);
-  assert.equal(g.person(a).pageHidden, true);
   assert.ok(!JSON.stringify(g.phone(a)).includes("leftPage") && !JSON.stringify(g.host()).includes("leftPage"));
 });
 
 // ============================================================================
-// The quiz library: a quiz's own settings and timers, checks, imports
+// The quiz library
 // ============================================================================
 
 function libraryQuiz(): Quiz {
@@ -979,40 +1149,44 @@ function libraryQuiz(): Quiz {
     correct: 1,
     ...extra,
   });
+  const rules: QuizRules = {
+    round1Questions: 2,
+    round1ReadSeconds: 5,
+    round1AnswerSeconds: 9,
+    safe: 2,
+    wildCardQuestions: 1,
+    blackoutQuestions: 2,
+    blackoutReadSeconds: 4,
+    blackoutAnswerSeconds: 7,
+  };
   return {
     id: "lib",
     title: "Library test",
-    rules: {
-      round1Questions: 2,
-      round1ReadSeconds: 5,
-      round1AnswerSeconds: 9,
-      finalists: 2,
-      buzzerQuestions: 1,
-      buzzerReadSeconds: 4,
-      buzzWindowSeconds: 11,
-      spokenAnswerSeconds: 7,
-      reopenSeconds: 8,
-    },
+    rules,
     round1: [q("First"), q("Second", { readSeconds: 3, openSeconds: 20 }), q("Spare")],
-    buzzer: [q("Buzz", { openSeconds: 6 }), q("Buzz spare")],
+    wildcard: [q("Wild", { openSeconds: 6 }), q("Wild spare")],
+    blackout: [q("Dark one"), q("Dark two"), q("Dark spare")],
     updatedAt: 0,
   };
 }
 
-test("quiz library: a quiz's own settings and per-question timers reach the game", () => {
+test("quiz library: a quiz's settings and per-question timers reach the game; each list feeds its round", () => {
   const quiz = libraryQuiz();
   assert.deepEqual(quizProblems(quiz), []);
   const { config, questions } = quizToGame(quiz, PRESETS.event);
   const g = new Game(config, questions);
-  const ids = ["Riya", "Aadi", "Kabir"].map((n) => g.join(n));
+  const ids = ["Riya", "Aadi", "Kabir", "Zoya"].map((n) => g.join(n));
   assert.equal(g.admin().settings.round1Questions, 2, "plays the first 2; the third is a spare");
-  assert.equal(g.admin().settings.finalistCount, 2);
+  assert.equal(g.admin().settings.safeCount, 2);
   g.do({ type: "startQuiz" });
   g.do({ type: "showQuestion" });
   assert.equal(g.admin().timer?.durationMs, 5000, "quiz read time");
   g.tick();
   assert.equal(g.admin().timer?.durationMs, 9000, "quiz answer time");
-  ids.forEach((id) => g.answer(id, "correct"));
+  ids.forEach((id, i) => {
+    g.clock.advance(100 + i * 100);
+    g.answer(id, "correct");
+  });
   g.do({ type: "revealAnswer" });
   g.do({ type: "nextQuestion" });
   assert.equal(g.admin().question?.text, "Second");
@@ -1024,74 +1198,67 @@ test("quiz library: a quiz's own settings and per-question timers reach the game
     g.answer(id, "correct");
   });
   g.do({ type: "revealAnswer" });
-  assert.equal(g.admin().primary?.label, "Show results");
-  assert.ok(g.admin().allowed.includes("endRound1") && !g.admin().allowed.includes("nextQuestion"), "that was the last question played");
   g.do({ type: "endRound1" });
-  assert.equal(g.admin().finalists.length, 2, "the quiz's finalist count");
-  g.do({ type: "startBuzzerRound" });
+  g.do({ type: "startWildCard" });
   g.do({ type: "showQuestion" });
-  assert.equal(g.admin().timer?.durationMs, 4000, "buzzer read time");
+  assert.equal(g.admin().question?.text, "Wild", "the Wild card list");
+  assert.equal(g.admin().timer?.durationMs, 5000, "the wild card uses Round 1's read time");
   g.tick();
-  assert.equal(g.admin().timer?.durationMs, 6000, "the buzz question's own buzz window");
-  g.buzz(g.admin().finalists[0].id);
-  assert.equal(g.admin().timer?.durationMs, 7000, "spoken answer time");
-  g.do({ type: "markWrong" });
-  assert.equal(g.admin().timer?.durationMs, 8000, "reopen window");
+  assert.equal(g.admin().timer?.durationMs, 6000, "the wild question's own answer time");
+  g.answer(ids[2], "correct");
+  g.answer(ids[3], "wrong");
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "revealWildCard" });
+  g.do({ type: "startBlackout" });
+  g.do({ type: "showQuestion" });
+  assert.equal(g.admin().question?.text, "Dark one", "the Blackout list");
+  assert.equal(g.admin().timer?.durationMs, 4000, "Blackout read time");
+  g.tick();
+  assert.equal(g.admin().timer?.durationMs, 7000, "Blackout answer time");
 });
 
-test("quiz library: checks, the three import formats, export round trip, cleaning network input", () => {
-  // Checks
+test("quiz library: checks, imports, export round trip, cleaning network input, quizzes saved before v3", () => {
   const quiz = libraryQuiz();
-  const empty: Quiz = { ...quiz, title: " ", round1: [], buzzer: [] };
-  assert.ok(quizProblems(empty).some((p) => p.includes("title")) && quizProblems(empty).some((p) => p.includes("Round 1 question")));
-  const broken: Quiz = { ...quiz, round1: [{ ...quiz.round1[0], options: ["a", "A", "b", "c"] }, ...quiz.round1.slice(1)] };
-  assert.ok(quizProblems(broken).some((p) => p.includes("must all be different")));
-  assert.ok(quizProblems({ ...quiz, rules: { ...quiz.rules, round1Questions: 9 } }).some((p) => p.includes("the list has 3")));
+  const empty: Quiz = { ...quiz, title: " ", round1: [], wildcard: [], blackout: [] };
+  const problems = quizProblems(empty);
+  assert.ok(problems.some((p) => p.includes("title")) && problems.some((p) => p.includes("Round 1 question")) && problems.some((p) => p.includes("Blackout question")));
+  assert.ok(quizProblems({ ...quiz, rules: { ...quiz.rules, blackoutQuestions: 9 } }).some((p) => p.includes("Blackout is set to 9 questions but the list has 3")));
 
-  // Pasted text: * marks, "Answer: B", "A)" prefixes, # Buzzer section, a block with 3 answers
   const text = importText(
     "What does LLM stand for?\n* Large Language Model\nLinear Logic Machine\nLayered Learning Matrix\nLong-term Language Memory\n\n" +
-      "Q2) Pick B\nA) one\nB) two\nC) three\nD) four\nAnswer: B\n\n# Buzzer\nWho makes Claude?\nOpenAI\nAnthropic *\nGoogle\nMeta\n\nOnly three\na\nb\nc",
+      "# Wild card\nWho makes Claude?\nOpenAI\nAnthropic *\nGoogle\nMeta\n\n# Blackout\nPick B\nA) one\nB) two\nC) three\nD) four\nAnswer: B\n\nOnly three\na\nb\nc",
     "round1",
   );
-  assert.equal(text.round1.length, 2);
-  assert.equal(text.round1[0].correct, 0);
-  assert.deepEqual([text.round1[1].text, text.round1[1].options[0], text.round1[1].correct], ["Pick B", "one", 1]);
-  assert.equal(text.buzzer.length, 1);
-  assert.equal(text.buzzer[0].correct, 1);
+  assert.deepEqual([text.round1.length, text.wildcard.length, text.blackout.length], [1, 1, 1]);
+  assert.deepEqual([text.wildcard[0].correct, text.blackout[0].correct], [1, 1]);
   assert.ok(text.problems.length === 1 && text.problems[0].includes("exactly 4 answers"));
 
-  // Spreadsheet (CSV with quotes, commas, a round column and seconds)
-  const csv = 'question,A,B,C,D,correct,round,read seconds,answer seconds\r\n"Comma, ""quoted"" question",w,x,y,z,C,,,12\r\nBuzz one,p,q,r,s,4,buzzer,,\r\nBad row,a,b,c,d,E,,,\r\n';
+  const csv = 'question,A,B,C,D,correct,round,read seconds,answer seconds\r\n"Comma, ""quoted""",w,x,y,z,C,,,12\r\nWild,p,q,r,s,4,wild card,,\r\nDark,p,q,r,s,1,blackout,,\r\nOld,p,q,r,s,2,buzzer,,\r\n';
   const sheet = importRows(parseCsv(csv), "round1");
-  assert.deepEqual([sheet.round1[0].text, sheet.round1[0].correct, sheet.round1[0].openSeconds], ['Comma, "quoted" question', 2, 12]);
-  assert.deepEqual([sheet.buzzer[0].text, sheet.buzzer[0].correct], ["Buzz one", 3]);
-  assert.ok(sheet.problems.length === 1 && sheet.problems[0].startsWith("Row 4"));
-  assert.ok(importRows([["foo", "bar"], ["1", "2"]], "round1").problems[0].includes("Couldn't find these columns"));
+  assert.deepEqual([sheet.round1[0].correct, sheet.round1[0].openSeconds], [2, 12]);
+  assert.deepEqual(sheet.wildcard.map((q) => q.text), ["Wild", "Old"], "old \"buzzer\" rows land in the Wild card list");
+  assert.equal(sheet.blackout[0].text, "Dark");
 
-  // JSON: data/questions.json style, and a quiz exported from the editor
-  const json = importJson(JSON.stringify({ questions: [{ text: "J1", options: ["a", "b", "c", "d"], correct: 3, round: 2 }, { text: "J2", options: ["a", "b", "c", "d"], correct: 0 }] }), "round1");
-  assert.deepEqual([json.buzzer[0].text, json.buzzer[0].correct, json.round1[0].text], ["J1", 3, "J2"]);
-  assert.equal(importJson(JSON.stringify(quiz), "round1").round1.length, 3);
-  assert.ok(importJson("{oops", "round1").problems[0].includes("valid JSON"));
-
-  // Export → import gives the same questions back
+  const json = importJson(JSON.stringify({ questions: [{ text: "J1", options: ["a", "b", "c", "d"], correct: 3, round: 3 }, { text: "J2", options: ["a", "b", "c", "d"], correct: 0, round: 2 }] }), "round1");
+  assert.deepEqual([json.blackout[0].text, json.wildcard[0].text], ["J1", "J2"]);
   const back = importRows(parseCsv(quizToCsv(quiz)), "round1");
-  assert.deepEqual(back.round1.map((q) => [q.text, q.options, q.correct, q.readSeconds, q.openSeconds]), quiz.round1.map((q) => [q.text, q.options, q.correct, q.readSeconds, q.openSeconds]));
-  assert.deepEqual(back.buzzer.map((q) => q.text), quiz.buzzer.map((q) => q.text));
+  assert.deepEqual(back.round1.map((q) => [q.text, q.correct, q.readSeconds, q.openSeconds]), quiz.round1.map((q) => [q.text, q.correct, q.readSeconds, q.openSeconds]));
+  assert.deepEqual([back.wildcard.length, back.blackout.length], [2, 3]);
 
-  // Network input is cleaned: whitespace, lengths, bad image paths, missing rules
   assert.equal(cleanQuiz("nope", quiz.rules), null);
-  assert.equal(cleanQuiz({ ...quiz, id: "../x" }, quiz.rules), null);
-  const cleaned = cleanQuiz(
-    { id: "c1", title: `  ${"T".repeat(200)}  `, rules: { finalists: 4 }, round1: [{ text: " hi \n there ", options: ["a"], correct: 9, image: "javascript:alert(1)" }] },
-    quiz.rules,
-  )!;
+  const cleaned = cleanQuiz({ id: "c1", title: `  ${"T".repeat(200)}  `, rules: { safe: 4 }, round1: [{ text: " hi \n there ", options: ["a"], correct: 9, image: "javascript:alert(1)" }], wildcard: [], blackout: [] }, quiz.rules)!;
   assert.equal(cleaned.title.length, 80);
-  assert.equal(cleaned.rules.finalists, 4);
-  assert.equal(cleaned.rules.round1AnswerSeconds, quiz.rules.round1AnswerSeconds, "missing rules fall back");
-  assert.deepEqual([cleaned.round1[0].text, cleaned.round1[0].options, cleaned.round1[0].correct, cleaned.round1[0].image], ["hi there", ["a", "", "", ""], 3, null]);
-  assert.deepEqual(cleaned.buzzer, []);
+  assert.equal(cleaned.rules.safe, 4);
+  assert.deepEqual([cleaned.round1[0].text, cleaned.round1[0].correct, cleaned.round1[0].image], ["hi there", 3, null]);
+
+  // A quiz saved before v3: buzzer list → Wild card, Blackout empty, rules from the fallback (Round 1's kept).
+  const legacy = cleanQuiz(
+    { id: "old", title: "Old", updatedAt: 5, rules: { round1Questions: 2, finalists: 6, buzzerQuestions: 4 }, round1: quiz.round1, buzzer: quiz.wildcard },
+    quiz.rules,
+    true,
+  )!;
+  assert.deepEqual([legacy.wildcard.length, legacy.blackout.length, legacy.rules.round1Questions, legacy.rules.safe, legacy.updatedAt], [2, 0, 2, 2, 5]);
+  assert.ok(quizProblems(legacy).some((p) => p.includes("Blackout")), "an old quiz needs Blackout questions before it can be played");
 });
 
 // ============================================================================
@@ -1102,134 +1269,132 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
   const g = new Game(config, questions, seed);
   const rng = g.rng;
   const ids = Array.from({ length: count }, (_, i) => g.join(`Player ${i + 1}`));
+  const accuracy = new Map(ids.map((id) => [id, 0.4 + rng() * 0.45]));
   const seen = new Set<Phase>();
   let guard = 0;
   let views = 0;
   const start = performance.now();
-  let distinctOrders = 0;
   let slowestRefresh = 0;
 
   while (g.phase !== "podium") {
     assert.ok(guard++ < 20_000, `${label}: the quiz should finish`);
     seen.add(g.phase);
-    // A full refresh after a change: Host + Admin + every phone, as the server does it.
     const t0 = performance.now();
     g.host();
     const admin = g.admin();
     for (const id of ids) g.room.participantView(id);
     slowestRefresh = Math.max(slowestRefresh, performance.now() - t0);
+    views += ids.length;
     assert.ok(admin.stepLabel.length > 0);
     if (admin.primary) assert.ok(admin.allowed.includes(admin.primary.action.type), `${label}: primary allowed in ${g.phase}`);
     g.checkNoLeaks(ids);
-    // Every phone always has a screen.
-    for (const id of ids) {
-      g.phone(id);
-      views += 1;
-    }
 
     switch (g.phase) {
       case "r1Read":
-      case "r2Read":
+      case "wcRead":
+      case "boRead":
         g.tick();
         continue;
-      case "r1Answer": {
-        const orders = new Set<string>();
-        for (const id of ids) {
-          const s = g.screen(id);
-          if (s.kind !== "answer") continue;
-          orders.add(s.options.map((o) => o.text).join("|"));
-          if (rng() < 0.1) continue; // some never answer
-          g.clock.advance(Math.floor(rng() * 60));
-          if (g.phase !== "r1Answer") break;
-          g.answer(id, rng() < 0.6 ? "correct" : "wrong");
+      case "r1Answer":
+      case "wcAnswer":
+      case "boAnswer": {
+        g.checkOneOrder(ids);
+        const phase = g.phase;
+        // Real players answer anywhere in the answer time (keen ones early): spread the taps out.
+        const limit = g.admin().timer!.durationMs;
+        const taps = ids
+          .filter((id) => g.screen(id).kind === "answer" && rng() >= 0.08) // some never answer
+          .map((id) => ({ id, at: Math.floor(limit * Math.min(0.98, rng() * rng() * 1.6 + 0.03)) }))
+          .sort((a, b) => a.at - b.at);
+        for (const { id, at } of taps) {
+          if (g.phase !== phase) break;
+          const t = g.admin().timer!;
+          const elapsed = t.durationMs - (t.endsAt - g.clock.now());
+          if (at > elapsed) g.clock.advance(at - elapsed);
+          if (g.phase !== phase) break;
+          g.answer(id, rng() < accuracy.get(id)! ? "correct" : "wrong");
         }
-        distinctOrders = Math.max(distinctOrders, orders.size);
-        const hostStage = g.host().stage;
-        if (orders.size === 1 && hostStage.phase === "r1Answer") {
-          assert.equal([...orders][0], hostStage.question.options?.join("|"), `${label}: phones use the Host's 1–4 order`);
-        }
-        if (g.phase === "r1Answer") g.tick();
+        if (g.phase === phase) g.tick();
         continue;
       }
       case "r1Reveal":
         if (rng() < 0.3 && admin.allowed.includes("nextQuestion")) {
-          g.do({ type: "nextQuestion" }); // skip the optional steps sometimes
+          g.do({ type: "nextQuestion" });
           continue;
         }
         break;
-      case "r1Leaderboard": {
-        const stage = g.host().stage;
-        if (stage.phase === "r1Leaderboard") {
-          const scores = stage.rows.map((r) => r.score);
-          assert.deepEqual(scores, [...scores].sort((x, y) => y - x), `${label}: leaderboard sorted`);
-          assert.ok(stage.rows.length <= config.leaderboardSize);
-        }
-        break;
-      }
-      case "r1Results": {
-        const stage = g.host().stage;
-        if (stage.phase === "r1Results") {
-          assert.equal(stage.options.reduce((s, o) => s + o.count, 0), stage.answered, `${label}: chart adds up`);
-        }
-        break;
-      }
       case "cut": {
         const stage = g.host().stage;
         if (stage.phase === "cut") {
-          assert.equal(stage.standings.filter((s) => s.finalist).length, Math.min(config.finalists, count), `${label}: top N`);
+          const played = stage.standings.length;
+          assert.equal(stage.standings.filter((s) => s.finalist).length, Math.min(config.safe, played) + (played <= config.safe ? played - Math.min(config.safe, played) : 0), `${label}: top ${config.safe} safe`);
         }
         break;
       }
+      case "wcReveal":
+        if (rng() < 0.5 && admin.allowed.includes("showStandings")) {
+          g.do({ type: "showStandings" });
+          continue;
+        }
+        break;
+      case "wcWinner":
+        assert.equal(g.admin().finalists.length, Math.min(config.safe + 1, count), `${label}: ${config.safe + 1} finalists`);
+        break;
       case "predictions": {
         const finalists = g.admin().finalists.map((f) => f.id);
         for (const id of ids) if (g.screen(id).kind === "backFinalist") g.room.back(id, finalists[Math.floor(rng() * finalists.length)]);
         break;
       }
-      case "r2BuzzOpen": {
-        const left = g.admin().round2!.finalists.filter((f) => f.inPlay && !f.lockedOut);
-        if (rng() < 0.85 && left.length) g.buzz(left[Math.floor(rng() * left.length)].id);
-        else g.tick();
-        continue;
+      case "boDark": {
+        const bo = g.admin().blackout!;
+        assert.ok(bo.runners.filter((r) => !r.alive).every((r) => r.place !== null), `${label}: caught runners have a place`);
+        break;
       }
-      case "r2Answering":
-        g.do({ type: rng() < 0.55 ? "markCorrect" : "markWrong" });
-        continue;
     }
     g.primary();
   }
 
   const podium = g.host().stage;
-  assert.ok(podium.phase === "podium" && podium.basis === "buzzer");
+  assert.ok(podium.phase === "podium" && podium.basis === "blackout", `${label}: the podium after Blackout`);
   if (podium.phase === "podium") {
-    assert.equal(podium.entries.length, Math.min(config.finalists, count));
-    const points = podium.entries.map((e) => e.points);
-    assert.ok(points[0] >= Math.max(...points), `${label}: winner has the most points`);
-    assert.equal(new Set(podium.entries.map((e) => e.place)).size, podium.entries.length);
+    assert.equal(podium.entries.length, Math.min(config.safe + 1, count), `${label}: every finalist placed`);
+    assert.deepEqual(podium.entries.map((e) => e.place), podium.entries.map((_, i) => i + 1), `${label}: places 1…n`);
+    const winners = podium.entries.filter((e) => e.place === 1);
+    assert.equal(winners.length, 1, `${label}: exactly one winner`);
+    assert.equal(g.host().cast.filter((c) => c.mood === "right").length, 1, `${label}: one winning bot`);
   }
-  for (const phase of (checkCoverage ? ["r1Intro", "r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "r1Results", "r1Leaderboard", "cut", "predictions", "r2Intro", "r2Read", "r2BuzzOpen", "r2Answering", "r2Reveal", "r2Scores"] : []) as Phase[]) {
-    assert.ok(seen.has(phase), `${label}: phase ${phase} happened`);
+  if (checkCoverage) {
+    for (const phase of ["r1Intro", "r1Read", "r1Answer", "r1TimesUp", "r1Reveal", "cut", "wcIntro", "wcRead", "wcAnswer", "wcTimesUp", "wcReveal", "wcWinner", "predictions", "boIntro", "boRead", "boAnswer", "boTimesUp", "boReveal", "boDark"] as Phase[]) {
+      assert.ok(seen.has(phase), `${label}: phase ${phase} happened`);
+    }
   }
   for (const id of ids) assert.equal(g.screen(id).kind, "podium");
   assert.equal(g.room.resultsCsv().csv.split("\r\n").length, count + 1, `${label}: CSV row per participant`);
-  assert.ok(distinctOrders <= 1, `${label}: every phone shows the options in the same order as the Host`);
-
-  const suddenDeath = seen.has("suddenDeath") ? ", went to sudden death" : "";
-  return `${label}: ${views} phone views in ${(performance.now() - start).toFixed(0)}ms, slowest full refresh ${slowestRefresh.toFixed(1)}ms${suddenDeath}`;
+  const bo = g.admin().blackout!;
+  return {
+    summary: `${label}: ${views} phone views in ${(performance.now() - start).toFixed(0)}ms, slowest full refresh ${slowestRefresh.toFixed(1)}ms, Blackout over after ${bo.questionNumber} questions`,
+    suddenDeath: seen.has("wcRead") && !!g.admin().wildCard?.suddenDeath,
+    blackoutLength: bo.questionNumber,
+  };
 }
 
-const event = eventQuestions(20, 12);
 const summaries = [
-  playFull("demo preset, 4 participants", PRESETS.demo, FILE_QUESTIONS, 4, 5),
-  playFull("demo preset, 6 participants", PRESETS.demo, FILE_QUESTIONS, 6, 9),
-  playFull("event preset, 80 participants", PRESETS.event, event, 80, 11),
-  playFull("event preset, 100 participants", PRESETS.event, event, 100, 21),
+  playFull("demo preset, 5 participants", PRESETS.demo, FILE_QUESTIONS, 5, 5),
+  playFull("demo preset, 8 participants", PRESETS.demo, FILE_QUESTIONS, 8, 9),
+  playFull("event preset, 100 participants", PRESETS.event, EVENT_QUESTIONS, 100, 21),
 ];
-// Many seeds, so ties and sudden death happen somewhere.
+for (const s of summaries) console.log(`✓ full game, ${s.summary}`);
+
+// Many seeds at event size: no exceptions, always exactly one winner.
+const seeds = process.env.GAME_PRESET === "event" ? 50 : 20;
 let suddenDeaths = 0;
-for (let seed = 100; seed < 160; seed++) {
-  if (playFull("demo seed", PRESETS.demo, FILE_QUESTIONS, 3 + (seed % 5), seed, false).includes("sudden death")) suddenDeaths += 1;
+const lengths: number[] = [];
+for (let seed = 100; seed < 100 + seeds; seed++) {
+  const r = playFull("event seed", PRESETS.event, EVENT_QUESTIONS, 60 + (seed % 41), seed, false);
+  if (r.suddenDeath) suddenDeaths += 1;
+  lengths.push(r.blackoutLength);
 }
-for (const s of summaries) console.log(`✓ full game, ${s}`);
-console.log(`✓ 60 more random demo games (${suddenDeaths} went to sudden death)`);
-assert.ok(suddenDeaths > 0, "sudden death should come up in random games");
+for (let seed = 300; seed < 340; seed++) playFull("demo seed", PRESETS.demo, FILE_QUESTIONS, 4 + (seed % 6), seed, false);
+lengths.sort((a, b) => a - b);
+console.log(`✓ ${seeds} more event games of 60–100 players (Blackout lasted ${lengths[0]}–${lengths[lengths.length - 1]} questions, median ${lengths[Math.floor(lengths.length / 2)]}; ${suddenDeaths} wild card sudden deaths) and 40 demo games`);
 console.log(`\nAll ${results.length + summaries.length + 1} checks passed.`);

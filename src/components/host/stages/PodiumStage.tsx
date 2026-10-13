@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * The podium: 1st, 2nd and 3rd on server-rack plinths that rise in turn (3rd,
+ * The podium after Blackout: 1st, 2nd and 3rd on server-rack plinths that rise in turn (3rd,
  * 2nd, then 1st), the winner hops (mood from the server), confetti in the bots'
- * own colours, the other finalists below, and how many of the audience called it.
+ * own colours, the other finalists below, and how many of the audience who
+ * backed someone called it.
  */
 import NumberFlow from "@number-flow/react";
 import { motion } from "motion/react";
@@ -28,6 +29,10 @@ export function PodiumStage({ view, stage }: { view: HostView; stage: PodiumData
     return () => window.clearTimeout(t);
   }, [stage.entries]);
 
+  /** Under each bot: Blackout, how it ended for them; otherwise the Round 1 score. */
+  const detail = (e: PodiumEntry) =>
+    stage.basis === "blackout" && e.position !== null ? (e.caughtOnQuestion ? `caught Q${e.caughtOnQuestion}` : e.place === 1 ? "escaped" : `step ${e.position}`) : `${e.round1Score} pts`;
+
   const plinth = (e: PodiumEntry | undefined, place: 1 | 2 | 3) => {
     if (!e) return <div className="w-[20rem]" />;
     const p = PLINTH[place];
@@ -40,9 +45,7 @@ export function PodiumStage({ view, stage }: { view: HostView; stage: PodiumData
           <span className="host-name max-w-[20rem] truncate" style={{ fontSize: place === 1 ? "3.4rem" : "2.6rem" }}>
             {e.name}
           </span>
-          <span className="font-term text-[3.4rem] leading-none text-amber">
-            {e.points} {stage.basis === "buzzer" ? (e.points === 1 ? "pt" : "pts") : ""}
-          </span>
+          <span className="font-term text-[3.4rem] leading-none text-amber">{detail(e)}</span>
         </motion.div>
         {/* A server-rack plinth: dark rack with LED dots, the place in terminal digits. */}
         <motion.div
@@ -83,12 +86,12 @@ export function PodiumStage({ view, stage }: { view: HostView; stage: PodiumData
           ))}
         </motion.ul>
       )}
-      {stage.basis === "buzzer" && (
+      {stage.basis === "blackout" && stage.backing.backers > 0 && (
         <motion.p className="host-count" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 2.8 }}>
           <b>
             <NumberFlow value={stage.calledIt} />
           </b>{" "}
-          of {stage.backing.audience} called it
+          of {stage.backing.backers} called it
         </motion.p>
       )}
     </div>

@@ -22,8 +22,6 @@ interface ParticipantStore {
    * tap never matches the next question.
    */
   tapped: { questionId: string; optionId: string; text: string } | null;
-  /** The question this phone buzzed on (shown instantly, before the server confirms). */
-  buzzedOn: string | null;
   /** A bot change is on its way to the server. */
   botPending: boolean;
   /** Why the last bot change was refused (someone took it first, quiz started). */
@@ -34,7 +32,6 @@ interface ParticipantStore {
   /** Lobby: change this participant's bot. */
   setBot: (look: BotLook) => void;
   answer: (questionId: string, option: { id: string; text: string }) => void;
-  buzz: (questionId: string) => void;
   back: (finalistId: string) => void;
   leave: () => void;
 }
@@ -47,7 +44,6 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
   notice: null,
   resuming: false,
   tapped: null,
-  buzzedOn: null,
   botPending: false,
   botNotice: null,
 
@@ -147,16 +143,11 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
     getSocket().emit("participant:answer", { questionId, optionId: option.id });
   },
 
-  buzz: (questionId) => {
-    set({ buzzedOn: questionId });
-    getSocket().emit("participant:buzz", { questionId });
-  },
-
   back: (finalistId) => getSocket().emit("participant:back", { finalistId }),
 
   leave: () => {
     saveParticipantSession(null);
-    set({ view: null, notice: null, tapped: null, buzzedOn: null });
+    set({ view: null, notice: null, tapped: null });
     // Reconnect fresh so the server forgets this socket's seat.
     const socket = getSocket();
     socket.disconnect();

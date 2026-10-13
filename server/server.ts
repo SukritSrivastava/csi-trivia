@@ -71,6 +71,7 @@ const IMAGE_TYPES: [string, (b: Buffer) => boolean][] = [
 export async function startGameServer(options: GameServerOptions): Promise<RunningGameServer> {
   /** New on every start: screens compare it to spot a restart (server:hello). */
   const BOOT_ID = randomUUID();
+  const startedAt = Date.now();
   const library = options.library ?? new MemoryLibrary();
   await ensureDemoQuiz(library, options.config, options.questionsFile);
   const log = options.log ?? (() => {});
@@ -117,8 +118,9 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
   const httpServer = createServer((req, res) => {
     const url = (req.url ?? "").split("?")[0];
     if (url === "/health") {
-      res.writeHead(200, { "content-type": "text/plain", "access-control-allow-origin": "*" });
-      res.end("ok");
+      // For waking the hosted server before the event (and for deploy checks).
+      res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: true, rooms: rooms.roomCount, uptimeS: Math.round((Date.now() - startedAt) / 1000) }));
       return;
     }
     if (url === IMAGE_UPLOAD_PATH && req.method === "OPTIONS") {
@@ -183,11 +185,16 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
   });
 
   const fallbackRules = defaultRules(options.config);
+  /** Quizzes as stored, cleaned up (and upgraded, if saved before v3). */
+  const readQuiz = (raw: unknown) => cleanQuiz(raw, fallbackRules, true);
+  const getQuiz = async (id: string) => readQuiz(await library.get(id));
+  const listQuizzes = async () => (await library.list()).map(readQuiz).filter((q): q is Quiz => !!q);
   const summary = (q: Quiz): QuizSummary => ({
     id: q.id,
     title: q.title,
     round1: q.round1.length,
-    buzzer: q.buzzer.length,
+    wildcard: q.wildcard.length,
+    blackout: q.blackout.length,
     updatedAt: q.updatedAt,
     problems: quizProblems(q),
   });
@@ -229,7 +236,7 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
     });
     socket.on("admin:openRoom", (payload, ack) =>
       withLibrary<OpenRoomResult>(socket, ack, { ok: false, error: "not-signed-in" }, async () => {
-        const quiz = await library.get(str(payload?.quizId, 40));
+        const quiz = await getQuiz(str(payload?.quizId, 40));
         if (!quiz) return { ok: false, error: "not-found" };
         const problems = quizProblems(quiz);
         if (problems.length) return { ok: false, error: "not-ready", problems };
@@ -237,9 +244,9 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
       }),
     );
     socket.on("library:list", (ack) =>
-      withLibrary<QuizSummary[] | null>(socket, ack, null, async () => (await library.list()).sort((a, b) => b.updatedAt - a.updatedAt).map(summary)),
+      withLibrary<QuizSummary[] | null>(socket, ack, null, async () => (await listQuizzes()).sort((a, b) => b.updatedAt - a.updatedAt).map(summary)),
     );
-    socket.on("library:get", (payload, ack) => withLibrary<Quiz | null>(socket, ack, null, () => library.get(str(payload?.id, 40))));
+    socket.on("library:get", (payload, ack) => withLibrary<Quiz | null>(socket, ack, null, () => getQuiz(str(payload?.id, 40))));
     socket.on("library:create", (payload, ack) =>
       withLibrary<SaveQuizResult>(socket, ack, saveFailed, async () => {
         const quiz: Quiz = {
@@ -247,7 +254,8 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
           title: str(payload?.title, QUIZ_LIMITS.title).trim() || "New quiz",
           rules: fallbackRules,
           round1: [],
-          buzzer: [],
+          wildcard: [],
+          blackout: [],
           updatedAt: Date.now(),
         };
         await library.save(quiz);
@@ -257,7 +265,7 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
     );
     socket.on("library:duplicate", (payload, ack) =>
       withLibrary<SaveQuizResult>(socket, ack, saveFailed, async () => {
-        const original = await library.get(str(payload?.id, 40));
+        const original = await getQuiz(str(payload?.id, 40));
         if (!original) return { ok: false, error: "not-found" };
         const quiz: Quiz = { ...structuredClone(original), id: newId(), title: `${original.title} (copy)`.slice(0, QUIZ_LIMITS.title), updatedAt: Date.now() };
         await library.save(quiz);
@@ -269,7 +277,7 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
         const quiz = cleanQuiz(payload, fallbackRules);
         if (!quiz) return { ok: false, error: "invalid" };
         await library.save(quiz);
-        log(`[library] saved "${quiz.title}" (${quiz.round1.length} + ${quiz.buzzer.length} questions)`);
+        log(`[library] saved "${quiz.title}" (${quiz.round1.length} + ${quiz.wildcard.length} + ${quiz.blackout.length} questions)`);
         return { ok: true, quiz };
       }),
     );
@@ -296,7 +304,6 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
     socket.on("participant:answer", (payload) =>
       rooms.asParticipant(socket, (room, id) => room.answer(id, str(payload?.questionId, 40), str(payload?.optionId, 40))),
     );
-    socket.on("participant:buzz", (payload) => rooms.asParticipant(socket, (room, id) => room.buzz(id, str(payload?.questionId, 40))));
     socket.on("participant:back", (payload) => rooms.asParticipant(socket, (room, id) => room.back(id, str(payload?.finalistId, 40))));
     socket.on("participant:visibility", (payload) =>
       rooms.asParticipant(socket, (room, id) => room.setPageHidden(id, payload?.hidden === true)),
