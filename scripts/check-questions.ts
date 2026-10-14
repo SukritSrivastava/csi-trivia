@@ -190,7 +190,7 @@ if (questions.length) {
     } else if (got.length < r.planned + r.spares) {
       warnings.push(`${r.name}: only ${got.length - r.planned} spare question(s) for voids${r.round === 2 ? " and sudden death" : ""}; ${r.spares} recommended.`);
     }
-    lines.push(r.round === 3 ? `  Blackout plays until one runner is left: ${got.length} available (needs ${r.planned}, ${r.planned + r.spares}+ is safer)` : `  ${r.name} plays ${r.planned} (${got.length} available)`);
+    lines.push(r.round === 3 ? `  Blackout will play up to ${got.length} questions on autopilot, until one runner is left (needs ${r.planned}, ${r.planned + r.spares}+ is safer)` : `  ${r.name} plays ${r.planned} (${got.length} available)`);
   }
   const tagged = (n: 1 | 2 | 3 | null) => questions.filter((q) => q.round === n).length;
   console.log(`  ${questions.length} questions: ${tagged(1)} tagged Round 1, ${tagged(2)} wild card, ${tagged(3)} Blackout, ${tagged(null)} any round`);

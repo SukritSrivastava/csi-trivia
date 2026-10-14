@@ -1,6 +1,7 @@
-# Backend notes
+# Server notes
 
-For whoever works on the game server. The contract is [`src/shared/protocol.ts`](../src/shared/protocol.ts)
+For whoever works on the game server. **The game server is `server/`** (decided 12 Oct 2026: it is
+what runs on Render on the night; the first prototype is kept in `archive/ws-backend-v1/`). The contract is [`src/shared/protocol.ts`](../src/shared/protocol.ts)
 (every type is commented); the working reference that implements all of it is [`server/`](../server):
 
 | File | What it does |
@@ -11,6 +12,26 @@ For whoever works on the game server. The contract is [`src/shared/protocol.ts`]
 | `server/library.ts` | saved quizzes (Supabase tables `quizzes`, `quiz_images`, or `data/library/` without a database) |
 | `server/db.ts` | results to Supabase (`rooms`, `players`, `game_history`) |
 | `server/config.ts` | the `demo` and `event` presets |
+
+## Run it, deploy it, watch it
+
+```powershell
+$env:DATABASE_URL="off"; npm run dev        # website on :3000 + game server on :3001 (demo preset, tsx watch)
+npm run dev:event                            # the same with the event preset
+npm run start:game                           # production: no watch; PORT from the env (Render sets it)
+```
+
+- Production (Render, `render.yaml`): `npm ci`, then `npm run start:game`, health check `/health`
+  (JSON `{ ok, rooms, uptimeS }`). Env: `GAME_PRESET=event`, `ADMIN_PIN` (**required with the event
+  preset**: the server refuses to start on `1234` unless `ALLOW_DEFAULT_PIN=1`, for local rehearsals),
+  `PUBLIC_WEB_URL` (the Vercel address, for the QR code), `CORS_ORIGIN` (the same), `DATABASE_URL`
+  (Supabase, optional), `PORT` (set by Render). Step by step: [`docs/DEPLOY.md`](DEPLOY.md).
+- Logs: Render dashboard → the service → **Logs** (live tail). Every line starts with the room code:
+  rooms opened and closed, quizzes saved, database errors (a database error never stops a quiz).
+  Locally they print in the `npm run dev` window, prefixed `[game]`.
+- Rooms live in memory. A restart (a redeploy, a crash, the free plan going to sleep with no one
+  connected) loses every open room; every screen then says "The quiz server restarted, so the
+  quiz has to start again" (`server:hello` `bootId` changes).
 
 The rules of the game are [`docs/SPEC.md`](SPEC.md). To change the contract: edit `protocol.ts`
 first, implement it in `server/`, then follow the TypeScript errors into the screens. After any
@@ -59,8 +80,10 @@ when its room is closed.
 its button was drawn from. If the step has moved on, the server does nothing and replies
 `stale-step`. That's what makes a double tap, or two Admin devices pressing Next together, move
 exactly one step, and never moves the dark twice (`advanceDarkness`) or reveals the wild card twice. Exceptions (they do the same thing
-however often they arrive): `STEP_INDEPENDENT_ACTIONS` = pause, resume, removeParticipant,
-setRoomCodeVisible, setSound, endQuiz.
+however often they arrive): `STEP_INDEPENDENT_ACTIONS` = resume, removeParticipant,
+setRoomCodeVisible, setSound, endQuiz. **Pause and Skip carry the stepId too** (v3.1): during the
+Blackout autopilot the step changes every few seconds by itself, so a Pause aimed at a step that
+has already passed is ignored (Admin re-sends it once from the step on screen).
 
 `AdminView.primary` is the big button (action + label), `allowed` is every action the server will
 accept now, and `hint` is the line under the button. The Admin UI only renders these.
@@ -119,6 +142,44 @@ accept now, and `hint` is the line under the button. The Admin UI only renders t
    - removed: `out`. `locked` never says whether the answer was right, so the cast can't leak it.
 11. **Only send what changed.** With 100 phones, views are cached per step and sent only to sockets
     whose view actually changed (`simulate` times this: about 0.5 ms for a full refresh of 100 phones).
+
+## The Blackout autopilot loop
+
+`server/quiz.ts`, all on the server's own clock (`Clock`), so it keeps running if every Admin phone
+drops. Every step and hold is an ordinary timer, so Pause / Resume / Skip / +5 s work on it; every
+step gets a new `stepId`.
+
+```
+startBlackout → boIntro (introMs 6 s) → nextBlackoutQuestion()
+  boRead (5 s) → boAnswer (10 s; ends early when every runner still running has answered)
+  → boTimesUp (1.5 s) → boReveal (runners move; 3 s + 0.15 s × runners)
+  → advanceDarkness → boDark (the dark moves darkness[q], last value repeats; catches;
+                              2.5 s + 0.25 s × steps + 1.5 s if anyone was caught)
+  → afterDark(): one or none left, or out of questions → winnerMoment() → boWinner (7 s) → podium
+                 else → nextBlackoutQuestion()
+void (read / answer / time's up) → boReveal "cancelled" (3 s) → afterDark()
+restartQuestion (until the dark moves) → back to boRead with fresh ids
+remove a runner leaving ≤ 1 → winnerMoment() at once
+```
+
+Holds live in `config.blackout.holds` (the Host's animations are timed to fit inside them, ≤ 80%).
+Admin gets `AdminView.autopilot` (step, `nextInMs`, `nextLabel`, `questionsLeft`) and `darkPreview`
+(who the dark would catch: Admin only). Phones get `runnerStatus.nextUp` and the hold's `timer`.
+
+## Scoring in one place
+
+Round 1: `round1Points(elapsed, limit)` in `server/config.ts` = `round(200 − 100 × elapsed/limit)`,
+clamped; wrong or none = 0 (`R1_MAX_POINTS`, `R1_MIN_POINTS`). Answer times are measured on the
+server (from the answer step's start to the tap's arrival).
+
+## Adding persistence later (without changing the contract)
+
+`quiz.ts` has no I/O: it calls `room.recorder` (`QuizRecorder`: `round1Scored`, `round1Unscored`)
+and exposes `snapshot()` (the phase and everyone's standing). `server/db.ts` implements both against
+Supabase today. To survive a restart, add a recorder that also writes `snapshot()` after each step
+and a loader that rebuilds a `QuizRoom` from it on boot; the views and events stay exactly as in
+`protocol.ts`, so no screen changes. Keep writes off the hot path (queue them, never await them in
+`quiz.ts`), as `db.ts` does.
 
 ## Checking your work
 

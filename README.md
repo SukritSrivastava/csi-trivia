@@ -177,6 +177,9 @@ rather write them in a file first, use this shape and import it as JSON, or put 
   use pictures with a light or solid background: dark lines on a transparent background vanish.
 - How many: the event plays **20 Round 1**, **5 wild card** (+3 for sudden death) and Blackout until
   one runner is left: **at least 12 Blackout questions, 15+ to be safe**. About **50** in all.
+- **Blackout plays the round-3 questions in file order** (then untagged ones nobody used), one
+  after another on autopilot, until one runner is left. Put the easiest first: the first few
+  decide who survives the early dark.
 
 Then run **`npm run check-questions -- --preset event`**: it checks 4 options, valid `correct`,
 duplicate ids, missing images, images that won't read on the dark card, and whether there are
@@ -193,19 +196,37 @@ Step by step, from scratch: [`docs/DEPLOY.md`](docs/DEPLOY.md). Don't deploy fro
 | `NEXT_PUBLIC_SOCKET_URL` | Vercel (build time) | the game server's address, e.g. `https://hermes-quiz-game.onrender.com`. Without it, screens look for port 3001 on the same computer (fine on a laptop, wrong when deployed). Redeploy the website after changing it. |
 | `PUBLIC_WEB_URL` | Render | the website's address, e.g. `https://hermes-quiz-nine.vercel.app`. The QR code and join link on the projector point at `<this>/play`. |
 | `CORS_ORIGIN` | Render | which websites may connect, comma-separated: the Vercel address (add a custom domain here too). Unset = any site may connect. |
-| `ADMIN_PIN` | Render | the quizmaster's PIN (Admin and the projector). Never in the repo: it's public. Default `1234` is for laptops only. |
-| `GAME_PRESET` | Render | `event` for the night (20 Round 1, top 9 safe, 5 wild card, 12 Blackout) or `demo`. New quizzes start with these settings; each quiz's own Settings win. The Blackout tuning always comes from the preset. |
+| `ADMIN_PIN` | Render | the quizmaster's PIN (Admin and the projector). Never in the repo: it's public. **Required with `GAME_PRESET=event`**: the server refuses to start on the default `1234` (set `ALLOW_DEFAULT_PIN=1` only for a local rehearsal). |
+| `GAME_PRESET` | Render | `event` for the night (20 Round 1, top 9 safe, 5 wild card, Blackout on autopilot with at least 12 questions) or `demo`. New quizzes start with these settings; each quiz's own Settings win. The Blackout tuning and holds always come from the preset. |
 | `DATABASE_URL` | Render | Supabase **Session pooler** connection string. Unset or `off` = nothing saved (the quiz still runs). |
 | `PORT` | Render sets it | the game server listens on it (`GAME_PORT` locally, default 3001). |
 
 **CORS:** the game server only accepts connections from `CORS_ORIGIN`. If phones show "Can't
 reach the quiz", check it matches the website's address exactly (`https://…`, no trailing slash).
 
+**Deploy, in PowerShell terms** (only after Sukrit says "push"; full detail in [`docs/DEPLOY.md`](docs/DEPLOY.md)):
+
+```powershell
+git checkout main; git merge frontend; git push     # Render and Vercel deploy from main
+npm run deploy                                      # redeploys both (keys in .env.local), then checks /health
+```
+
+1. Render (game server): New → Blueprint → this repo (`render.yaml`: `npm ci`, `npm run start:game`,
+   health check `/health`). Set `ADMIN_PIN`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, optionally `DATABASE_URL`.
+2. Vercel (website): import the repo, set `NEXT_PUBLIC_SOCKET_URL` to the Render address, deploy.
+3. Back on Render: `PUBLIC_WEB_URL` and `CORS_ORIGIN` = the Vercel address (no trailing slash), so the
+   QR code is right and the phones may connect.
+4. Check: `/health` says ok; `/admin` signs in; a phone joins by the QR.
+
 **Wake the free server before the event.** Render's free plan sleeps after 15 minutes without
-traffic, and the first visit then takes about a minute. 30 minutes before doors open: open
-https://hermes-quiz-game.onrender.com/health until it says `ok`, then open `/admin` and `/host`.
-Their open connections keep it awake for the whole quiz. Never redeploy on the day: a restart
-closes every open room. (Render's paid Starter plan never sleeps, if you'd rather not depend on this.)
+traffic, and the first visit then takes about a minute. **10 minutes before doors open** (and
+again 30 minutes before, to be safe): open https://hermes-quiz-game.onrender.com/health until it
+says `ok`, then open `/admin` and `/host`. Their open connections keep it awake for the whole quiz.
+
+**If it restarts mid-quiz** (a redeploy, a crash): rooms live in memory, so the quiz is lost. Every
+screen says "The quiz server restarted, so the quiz has to start again"; open the quiz again in
+Admin and everyone rejoins with the new code. Never redeploy on the day. (Render's paid Starter
+plan never sleeps, if you'd rather not depend on waking it.)
 
 ## Docs
 
@@ -213,7 +234,7 @@ closes every open room. (Render's paid Starter plan never sleeps, if you'd rathe
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | the game rules, step by step |
 | [`docs/RUN-SHEET.md`](docs/RUN-SHEET.md) | the quizmaster's checklist and script for the night, and emergency moves |
-| [`docs/BACKEND-NOTES.md`](docs/BACKEND-NOTES.md) | every event and view, who sends what, and what the server must enforce |
+| [`docs/SERVER-NOTES.md`](docs/SERVER-NOTES.md) | for the server teammate: running and deploying it, every event and view, the stepId rule, the Blackout autopilot loop, what the server must enforce |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | what's live where, and how to update or redo the deployment |
 | [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md) | the full handoff: constraints, architecture, API, to-do |
 | [`docs/BUILD-PHASES.md`](docs/BUILD-PHASES.md) | the 5 build phases |

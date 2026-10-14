@@ -216,7 +216,13 @@ export async function ensureDemoQuiz(store: LibraryStore, config: GameConfig, qu
   const quizzes = await store.list();
   const demo = quizzes.find((q) => q.id === DEMO_QUIZ_ID);
   // Rebuilt when it was saved before v3 (no Blackout list) or before v3.1 (too few Blackout questions for the autopilot).
-  const outdated = !!demo && (isLegacyQuiz(demo) || (Array.isArray(demo.blackout) ? demo.blackout.length : 0) < config.blackout.minQuestions);
+  // …or built for the other preset (switching between `npm run dev` and the event preset locally).
+  const outdated =
+    !!demo &&
+    (isLegacyQuiz(demo) ||
+      (Array.isArray(demo.blackout) ? demo.blackout.length : 0) < config.blackout.minQuestions ||
+      demo.rules?.safe !== config.safe ||
+      demo.rules?.round1Questions !== config.round1.questions);
   if (quizzes.length > 0 && !outdated) return;
   const all = loadQuestions(questionsFile);
   const toLib = (q: QuizQuestion) => ({ ...blankQuestion(), text: q.text, options: q.options, correct: q.correct, image: q.image });

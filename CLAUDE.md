@@ -6,8 +6,8 @@ skills, agents, plugins, API). This file is the short version.**
 Hermes Quiz: a live MCQ quiz for 60–100 people (event: Thu 16 Oct 2026). Rules: **`docs/SPEC.md` v3.1
 (14 Oct night: three rounds; Round 1 scores 200→100; Blackout on autopilot; no glow)**. Build plan: v5,
 three phases (pasted in chat 14 Oct; Phase 1 the engine and Phase 2 rules update + Admin + phones are
-done; Phase 3 is the Host). `docs/BUILD-PHASES.md` holds the earlier v4 plan (done).
-Quizmaster: `docs/RUN-SHEET.md`. Backend teammate: `docs/BACKEND-NOTES.md`.
+done; Phase 3, the Host + sound + event-proofing, is done). `docs/BUILD-PHASES.md` holds the earlier v4 plan (done).
+Quizmaster: `docs/RUN-SHEET.md`. Backend teammate: `docs/SERVER-NOTES.md`.
 
 Screen names, used everywhere: **Host** (`/host`, projector, no game controls), **Participant**
 (`/play`, phones), **Admin** (`/admin`, quizmaster, PIN). Flow: lobby → Round 1 (everyone, 8s
@@ -105,9 +105,15 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   sized by count), `Clock`, `Panel`, `Heading`, `contentTop(castCount)`, `useMoods(view)` (moods only
   from `HostView.cast`). `stages/`: Lobby, Round1Stages (intro, `QuestionStage` for every round's
   questions, Results, Leaderboard, `TypeOut` banner), CutStage, WildCardStages (intro, standings,
-  winner, predictions), BlackoutStages (a plain lane track: intro, reveal with moves, the dark;
-  Phase 2 turns it into the bots running toward the camera), PodiumStage. `sound.ts`: Web Audio beeps, unlocked by a click; plays only if
-  `view.soundOn` and the Host's own mute is off. Live counters are plain numbers (NumberFlow only for
+  winner with the power-down sweep, predictions, `SafeCorner`), **`BlackoutScene`** (v5 Phase 3: one
+  persistent scene for every Blackout step, `stageKey` "blackout"; a 1920×1080 stage scaled to the
+  screen with an SVG corridor of rack rows (one row = one step), runners' gaps mapped to depth, lanes by
+  seat; every beat is a CSS keyframe (`bo-*` in globals.css, each defined twice -a/-b so a new step
+  restarts it without remounting) timed inside the server's holds; `[data-paused]` freezes them; a
+  remount uses negative delays from the timer so a refreshed Host lands mid-beat; ranking strip; no
+  cast strip and no `<Corridor />` during Blackout), PodiumStage. `sound.ts`: Web Audio, unlocked by a
+  click; plays only if `view.soundOn` and the Host's own mute is off; the Blackout hum (`humOn/humOff`),
+  clunk / thud / swell, sweep / seat, all triggered by step changes in `useGameSounds`. Live counters are plain numbers (NumberFlow only for
   scores/percentages, which change once). `npm run host-shots` screenshots every Host state.
 - Phones (phase 3; copy and Blackout reworked in v5 Phase 2): `src/components/play/` (`PlayApp`: connect,
   wake lock, page visibility, header with the round name (ROUND 1 / WILD CARD / BLACKOUT) + "Q1 of 3 · 5s"
@@ -158,7 +164,13 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   winning the wild card, a wild card loser, "Too slow: no move", a wrong move back, a catch, "You called
   it!") and screenshot every phone state; `compare.png` = design | app.
 - `npm run drills` (against `npm run dev` or `npm run preview`): failure drills on all three screens,
-  including a game-server restart (it touches `server/index.ts`, so `tsx watch` must be running).
+  including Blackout (a Slow 4G runner, Host and Admin reloads mid-chase, pause and Skip in the dark's
+  hold) and a game-server restart (it touches `server/index.ts`, so `tsx watch` must be running).
+- `npm run blackout-shots` (with `npm run dev`): a 10-runner chase screenshotted beat by beat at 1920×1080
+  and 1366×768, fps during the reveal and the dark, pause, a Host refresh, animation time vs hold.
+- `GAME_PRESET=event` refuses to start with the default PIN 1234 (set `ADMIN_PIN`; `ALLOW_DEFAULT_PIN=1`
+  for a local rehearsal). `npm run dev:event` passes `--preset event` and is exempt. The local "Demo quiz"
+  rebuilds itself when the preset changes.
 - `npm run rehearsal -- --gpu` (against `npm run build; npm run preview` with `GAME_PRESET=event`, database
   off): 100 bots + 4 phone tabs + Host 1920 + Admin at phone size, lobby to podium (wild card, Blackout)
   with a void, a restart question and a refresh; prints Host fps, memory and Admin→view latency.

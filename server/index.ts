@@ -7,7 +7,8 @@
  *
  * Environment (all optional):
  *   GAME_PRESET     demo (default) or event
- *   ADMIN_PIN       quizmaster PIN for /admin (default 1234)
+ *   ADMIN_PIN       quizmaster PIN for /admin (default 1234; required when GAME_PRESET=event,
+ *                   unless ALLOW_DEFAULT_PIN=1 for a local rehearsal)
  *   GAME_PORT       default: PORT (set by Render), else 3001
  *   WEB_PORT        default 3000 (only used to print the right links)
  *   PUBLIC_WEB_URL  the site's address once deployed (for the join link)
@@ -46,6 +47,21 @@ try {
 const GAME_PORT = Number(process.env.GAME_PORT ?? process.env.PORT ?? 3001);
 const WEB_PORT = Number(process.env.WEB_PORT ?? 3000);
 const ADMIN_PIN = process.env.ADMIN_PIN ?? "1234";
+
+// On the night (GAME_PRESET=event, as on Render) the default PIN would let anyone run the quiz:
+// refuse to start with it unless ALLOW_DEFAULT_PIN=1 (a local rehearsal). `npm run dev:event` passes
+// --preset event instead and is exempt.
+if (process.env.GAME_PRESET?.trim().toLowerCase() === "event" && ADMIN_PIN === "1234" && process.env.ALLOW_DEFAULT_PIN !== "1") {
+  console.error(
+    [
+      "",
+      "  GAME_PRESET=event needs a real quizmaster PIN: set ADMIN_PIN (not 1234).",
+      "  For a local rehearsal only, set ALLOW_DEFAULT_PIN=1.",
+      "",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
 
 const lanIp = getLanAddresses()[0] ?? "localhost";
 const webUrl = (process.env.PUBLIC_WEB_URL ?? `http://${lanIp}:${WEB_PORT}`).replace(/\/$/, "");

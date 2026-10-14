@@ -36,7 +36,7 @@ on the **Hermes AI agent**. The **event is Thursday 16 Oct 2026**.
 
 **Where we are (14 Oct, night):** SPEC v3.1 (three rounds; 200→100 scoring; Blackout on autopilot;
 no glow). v5 Phase 1 (the engine) and Phase 2 (the rules update, Admin and the phones) are done;
-Phase 3 is the Host (projector) for the new rounds. The live deployment still runs the v2
+Phase 3 (the Host, sound and event-proofing) is done too. The live deployment still runs the v2
 buzzer-round version until Sukrit says "push".
 
 ### Read these, in this order
@@ -111,6 +111,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 14 Oct | If time runs short, **sound is the first thing to cut**. |
 | 14 Oct (night) | **Round 1 scoring 200 → 100:** correct = `round(200 − 100 × elapsed/limit)` (clamped), wrong or none 0; ties unchanged (lower total time, a miss = the full 8 s). Constants `R1_MAX_POINTS` / `R1_MIN_POINTS` in `server/config.ts`. |
 | 14 Oct (night) | **Blackout on autopilot:** Start Blackout is the only click; the server runs intro (6 s) → read 5 s → answer **10 s** → time's up 1.5 s → reveal (3 s + 0.15 s per runner) → the dark (2.5 s + 0.25 s per step + 1.5 s if caught) → next question … → winner moment (7 s) → podium. Plays **every** round-3 question (then untagged unused ones) until one runner is left: no fixed count, no spares; the event needs ≥ 12 (warns < 15). `DARKNESS_STEPS` repeats its last value. Admin keeps Pause/Resume, Skip, +5 s (answer only), Void, Restart question (until the dark moves), Restart round, End quiz now, Remove. `advanceDarkness` / `showWinner` and Show/Reveal/Next in Blackout → `not-allowed`. Pause and Skip are step-bound (a stale one is ignored). Retuned: event BASE_GAP 6, `[1,2,2,3]`; demo BASE_GAP 2, `[1,2]`. *Replaces the "two clicks per question" row above.* |
+| 14 Oct (late night) | The Host draws Blackout as one persistent scene (no cast strip, its own corridor) whose CSS beats fit inside the server's holds; `GAME_PRESET=event` refuses the default PIN (`ALLOW_DEFAULT_PIN=1` for local rehearsals); the server notes are `docs/SERVER-NOTES.md` (was BACKEND-NOTES). |
 | 14 Oct (night) | **No glow** (Sukrit): no text-shadow halos, blurred/coloured-spread box-shadows, drop-shadow/blur halos, radial blooms or glow keyframes. Flat fills, 1–2 px borders, colour/opacity changes; zero-blur offsets, dark scrims and the vignette stay. Where "glow" was used: mint outline / mint text / mint fill. `public/finaldesign.html` updated the same way (approved). `npm run check-glow` (`scripts/no-glow.ts`) is an end-of-phase check. |
 | 12 Oct | **Backend = option 1 (§8.9):** the game server in `server/` is the real backend; the teammate's Postgres/Supabase tables (`archive/ws-backend-v1/db.js`) are wired in via `server/db.ts` when `DATABASE_URL` is set. Frontend contract unchanged. |
 
@@ -179,7 +180,7 @@ data/questions.json         the questions (MCQ, 4 options, correct = index, roun
 docs/SPEC.md                game rules v3.1 (source of truth for rules)
 docs/BUILD-PHASES.md        the build prompts (v4, done; the v5 three-phase plan came in chat on 14 Oct)
 docs/RUN-SHEET.md           the quizmaster's checklist and script for the night
-docs/BACKEND-NOTES.md       every event and view, what the server must enforce
+docs/SERVER-NOTES.md       for the server teammate: run/deploy/logs, every event and view, the autopilot loop
 docs/DEPLOY.md              live addresses; Supabase + Render + Vercel, step by step
 render.yaml                 Render Blueprint for the game server
 server/index.ts             starts the game server (npm run dev:game / start:game): env, preset, database
@@ -199,6 +200,8 @@ scripts/play-shots.ts       npm run play-shots: phones play a whole game, screen
 scripts/host-shots.ts       npm run host-shots: every projector state at 1920×1080 and 1366×768
 scripts/drills.ts           npm run drills: failure drills (refresh, Wi-Fi, locked phone, Slow 4G, two Admins, restart)
 scripts/rehearsal.ts        npm run rehearsal: 100 bots + 4 phones + Host + Admin, fps and memory
+scripts/blackout-shots.ts   npm run blackout-shots: the Blackout autopilot beat by beat, fps, animation vs hold
+scripts/no-glow.ts          npm run check-glow: fails on any glow in src/ and public/finaldesign.html
 scripts/db-check.ts         npm run db-check: a game over sockets with an in-memory Postgres; checks the saved rows
 scripts/admin-run.ts        npm run admin-run: Playwright runs a whole game from Admin + screenshots
 scripts/deploy.ts           npm run deploy: Render + Vercel
@@ -308,12 +311,12 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
   (answer times in seconds, 10 s window); `simulate` (37 checks; 50 × 100-player event games reach the
   podium after one click), `smoke` (one click, pause/resume, a double Skip); `check-glow`; every glow
   removed from `src/` and `public/finaldesign.html`.
+- ✅ **v5 Phase 3 (14 Oct, late night):** the Host: `BlackoutScene` (bots running toward the camera, rack rows dying, CSS beats inside the server holds, pause freezes, refresh resumes mid-beat, ranking strip), the wild card sweep, SAFE corner, round-1 intro, cut lighting, predictions grid; sound (hum, clunk, thud, swell, sweep, seat); event-proofing: Blackout drills, `blackout-shots`, the 100-bot event rehearsal (58–60 fps everywhere, flat memory), the event-preset PIN guard, `SERVER-NOTES.md`, README deploy + writing questions, the run sheet.
 - ✅ **v5 Phase 2, Admin (14 Oct, night):** main-path big button + "or:" chips (`AdminView.optional`), countdown button, AUTOPILOT strip, PAUSE / alarm-red RESUME, the cut table (`AdminView.cut`), wild card SAFE row / standings / sudden death / winner, predictions with counts and %, the Blackout distance ladder with deltas, the catch preview and fast controls, podium, answer counts after the reveal (`AdminQuestion.options[].count`, `.voided`), next-up answer, sign-in with the room code and a PIN lockout message, toast, S shortcut, titles on disabled controls; `admin-run` 81 checks at three sizes.
 - ✅ **v5 Phase 2, Participant (14 Oct, night):** round name in the header, every B4 screen's copy (200 points, "Not out yet", "Too slow", sudden death, "BACKING", the Blackout intro with the head start, gaps on question screens, "Still running" + "Next question in 3", ESCAPED!, the audience's pick), `QuizSettings.round1MaxPoints`; `play-shots`, `drills` pass; event rehearsal with 80 bots.
 - ✅ **v5 Phase 1, the engine (14 Oct):** SPEC v3; contract (`protocol.ts`: `wc*` and `bo*` phases, `McqQuestion`, `WildCardState`, `BlackoutState`, `Runner`, new phone screens, new Admin actions); `server/quiz.ts` (wild card with sudden death and the fallback, Blackout with catches and catch order, seat hand-over, void/restart/restart round/end quiz in every round); `npm run tune-blackout`; `simulate` (33 checks, 50 event seeds), `smoke` (whole three-round game over sockets), `bots` (every round, accuracy); quiz library with three lists (old quizzes upgraded); `/health` JSON; the existing Host / phone / Admin screens extended to the new flow (plain stages for the wild card and Blackout); play-shots, host-shots, admin-run (68 checks) and drills pass.
 
 ### Next
-1. ⬜ **v5 Phase 3:** the Host (projector) for the wild card round and the Blackout autopilot in the approved look (the bots running toward the camera, rack lights dying behind them).
 2. ⬜ **Write 50 questions** (20 Round 1, 5 + 3 wild card, **15+ Blackout**: it plays until one runner is left) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
 3. ⬜ **Push and deploy** (only when Sukrit says "push"); the live site runs the v2 buzzer game until then.
 
@@ -367,7 +370,7 @@ Copilot and Gemini read automatically. The full version is here.
 | **Participant screen agent** | `src/app/play/**`, `src/components/play/**`, `src/stores/participantStore.ts` | contract | Prompt 3 verified |
 | **Host screen agent** | `src/app/host/**`, `src/components/host/**`, `src/stores/hostStore.ts`, sounds | contract | Prompt 4 verified |
 | **Design-system agent** | `src/app/globals.css`, `src/app/layout.tsx`, `src/components/ui/**`, `public/finaldesign.html` (read-only unless Sukrit approves a change) | screens' logic | screens still match the reference |
-| **QA / event-proofing agent** | `scripts/**`, `docs/RUN-SHEET.md`, `docs/BACKEND-NOTES.md` | product code except bug fixes it reports | Prompt 5 verified |
+| **QA / event-proofing agent** | `scripts/**`, `docs/RUN-SHEET.md`, `docs/SERVER-NOTES.md` | product code except bug fixes it reports | Prompt 5 verified |
 | **Backend agent (teammate's side)** | `server/db.ts`, `server/index.ts`, `server/config.ts`, `render.yaml`, `docs/DEPLOY.md` (rules in `server/quiz.ts` with the contract agent) | `src/**` | `simulate`, `smoke` and `db-check` pass; the live server's `/health` is ok |
 
 ### 6.3 Hand-off protocol between agents or models

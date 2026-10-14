@@ -2,8 +2,11 @@
  * Failure drills on all three screens, against `npm run dev` (database off):
  * two phones racing for the same bot, a phone on Slow 4G, a refresh mid-question,
  * Wi-Fi cut for 10 s, a phone locked for 30 s, the Host and Admin tabs reloaded
- * mid-game, two Admin devices pressing Next at once, and finally a game-server
- * restart (every screen must say so clearly). Screenshots in screenshots/drills.
+ * mid-game, two Admin devices pressing Next at once; then Blackout on autopilot:
+ * a Slow 4G runner answering inside the 10 s, the Host and Admin reloaded
+ * mid-chase (the autopilot keeps running on the server), pause / resume and
+ * Skip in the dark's hold; and finally a game-server restart (every screen must
+ * say so clearly). Screenshots in screenshots/drills.
  *
  *   $env:DATABASE_URL="off"; npm run dev          (another terminal)
  *   npm run drills
@@ -199,10 +202,15 @@ async function main() {
     await send({ type: "revealAnswer" });
     await riya.page.getByTestId("result-correct").waitFor();
 
-    // ---- Question 2: Kabir's phone is locked for 30 s (hidden, then offline).
+    // ---- Question 2: Kabir's phone is locked for 30 s (hidden, then offline). Riya and Zoya answer right.
     await send({ type: "nextQuestion" });
     await phase("r1Read");
     await lockPhone(kabir.page, kabir.ctx, true);
+    void (async () => {
+      await phase("r1Answer");
+      const right = admin!.question!.correctText;
+      for (const p of [riya, zoya]) await p.page.getByTestId("option").filter({ hasText: right }).click({ timeout: 6000 }).catch(() => {});
+    })();
     await sleep(800);
     check(look("Kabir").pageHidden || !look("Kabir").connected, "Admin sees the locked phone (page hidden or offline)");
     await phase("r1Answer");
@@ -223,6 +231,64 @@ async function main() {
     await host.page.getByText(/paused/i).first().waitFor();
     check(true, "Paused: the phone band and the Host both show it");
     await send({ type: "resume" });
+    await phase("r1TimesUp", 20_000);
+    await send({ type: "revealAnswer" });
+
+    // ---- Blackout on autopilot.
+    await send({ type: "endRound1" });
+    await phase("cut");
+    if (admin!.allowed.includes("startWildCard")) {
+      await send({ type: "startWildCard" });
+      await send({ type: "showQuestion" });
+      for (let i = 0; i < 8; i++) {
+        await phase("wcTimesUp", 30_000);
+        await send({ type: "revealAnswer" });
+        if (admin!.allowed.includes("revealWildCard")) break;
+        await send({ type: "nextQuestion" });
+      }
+      await send({ type: "revealWildCard" });
+    }
+    await send({ type: "startBlackout" });
+    const finalists = new Set(admin!.finalists.map((f) => f.name));
+    console.log(`  … Blackout: ${[...finalists].join(", ")} run`);
+
+    // A runner on Slow 4G answers inside the 10 s (the server measures it).
+    const slowRunner = finalists.has("Zoya") ? zoya : null;
+    await phase("boAnswer", 20_000);
+    if (slowRunner) {
+      await slowRunner.page.getByTestId("screen-answer").waitFor({ timeout: 8000 });
+      const tap = Date.now();
+      await slowRunner.page.getByTestId("option").first().click();
+      await until("Zoya's answer on the server", (v) => v.participants.find((p) => p.name === "Zoya")?.answered === true, 10_000);
+      check(true, `Slow 4G runner: the answer reached the server ${Date.now() - tap} ms after the tap, inside the 10 s`);
+    } else check(true, "Slow 4G runner: Zoya didn't make the final this time (skipped)");
+
+    // Reload the Host and an Admin in the middle of the chase: the server's autopilot keeps going.
+    await phase("boReveal", 30_000);
+    const stepAtReload = admin!.stepId;
+    await host.page.reload();
+    await host.page.getByTestId("blackout-scene").waitFor({ timeout: 20_000 });
+    // No command is sent: if the step moves on, the server's autopilot is running by itself.
+    await until("the autopilot to move on", (v) => v.stepId > stepAtReload, 15_000);
+    check(true, `Host reload mid-Blackout: back in the scene, and the autopilot carried on by itself (step ${stepAtReload} → ${admin!.stepId})`);
+    await adminPhone.page.reload();
+    await adminPhone.page.getByTestId("autopilot").waitFor({ timeout: 20_000 });
+    check(true, "Admin reload mid-Blackout: back on the autopilot strip, still signed in");
+    await shot(host, "04-blackout-after-reload");
+
+    // Pause and resume in the dark's hold, then Skip it.
+    await phase("boDark", 30_000);
+    await send({ type: "pause" });
+    const frozen = admin!.timer!.remainingMs ?? 0;
+    await sleep(2000);
+    check(admin!.phase === "boDark" && admin!.timer!.remainingMs === frozen, "Pause in the dark's hold: nothing moves on");
+    await host.page.getByText(/paused/i).first().waitFor();
+    await shot(host, "05-blackout-paused");
+    await send({ type: "resume" });
+    await send({ type: "skipTimer" });
+    check(admin!.phase !== "boDark", `Skip in the dark's hold: the next step started at once (${admin!.phase})`);
+    await send({ type: "endQuiz" });
+    await phase("podium");
 
     // ---- The game server restarts.
     console.log("  … restarting the game server (touching server/index.ts)");

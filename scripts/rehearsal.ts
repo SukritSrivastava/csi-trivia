@@ -272,7 +272,8 @@ async function main() {
       }
       await tap();
     }
-    await sleep(1500);
+    // The wild card reveal: the wall powers down in a sweep, then the winner zooms in.
+    await measure("wild card sweep");
     await shot("06-wildcard-winner");
     check(admin!.finalists.length === 10, `the wild card makes ${admin!.finalists.length} finalists`);
 
@@ -287,14 +288,37 @@ async function main() {
     let restarted = false;
     let measuredReveal = false;
     let measuredDark = false;
+    let paused = false;
+    let hostReloaded = false;
     for (const giveUp = Date.now() + 300_000; Date.now() < giveUp && now() !== "podium"; ) {
       const p = now();
+      if (p === "boRead" && measuredDark && !hostReloaded) {
+        // The projector tab is refreshed mid-chase: it signs back in and lands on the current step.
+        hostReloaded = true;
+        await host.page.reload();
+        await host.page.getByTestId("blackout-scene").waitFor({ timeout: 20_000 });
+        check(true, "Host refresh mid-Blackout: back in the scene at the current step");
+        continue;
+      }
       // Blackout runs on autopilot: only the fixes are clicked, never the big button (it's Pause).
       if (p === "boRead" || p === "boIntro" || p === "boTimesUp" || p === "boWinner") {
         await sleep(200);
         continue;
       }
       if (p === "boAnswer") {
+        if (!paused && restarted) {
+          // Pause and resume with Admin's big button mid-answer: the clock freezes, then carries on.
+          paused = true;
+          await adminPage.page.getByTestId("primary").click();
+          await until("paused", (v) => v.paused, 5000);
+          const frozen = admin!.timer!.remainingMs;
+          await sleep(1500);
+          check(admin!.paused && admin!.timer!.remainingMs === frozen && now() === "boAnswer", "pause in Blackout (big button): the autopilot froze");
+          await sleep(700);
+          await adminPage.page.getByTestId("primary").click();
+          await until("resumed", (v) => !v.paused, 5000);
+          check(true, "resume (big button): the autopilot carried on");
+        }
         await answerOpenPhones();
         await phase("boTimesUp", 20_000);
         continue;

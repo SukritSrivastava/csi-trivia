@@ -16,7 +16,7 @@ Blackout on autopilot; no glow**),
 7. Answers in every round: one order on the Host and every phone, numbered 1–4. Every answer is marked by the server (no judging).
 8. Windows PowerShell only (no bash-only commands).
 9. `npm run typecheck`, `npm run build`, `npm run simulate`, `npm run smoke` and `npm run check-glow` must pass.
-10. Do the next unfinished phase (v5 plan, 14 Oct: Phase 1 engine and Phase 2 rules update + Admin + phones done; Phase 3 the Host next); report and update docs/PROJECT-RULES.md §4 when done. Never `git push` unless Sukrit says "push".
+10. Do the next unfinished phase (v5 plan, 14 Oct: all three phases done: engine, rules update + Admin + phones, Host + sound + event-proofing); report and update docs/PROJECT-RULES.md §4 when done. Never `git push` unless Sukrit says "push".
 
 <!-- BEGIN:nextjs-agent-rules -->
 

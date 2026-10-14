@@ -10,8 +10,12 @@ Admin and the projector (ask Sukrit; it's not written anywhere public).
 
 ## 1. Setup checklist (start 45 minutes before)
 
+**Bring:** the laptop **and its charger**, an HDMI cable (and a USB-C/HDMI adapter if the laptop needs
+one), your phone and its charger, a second phone for the backup Admin and the Wi-Fi test.
+
 **Wake the game server (it sleeps on the free plan)**
 - [ ] Open https://hermes-quiz-game.onrender.com/health. Wait until it says `ok` (up to a minute).
+- [ ] Open it again **10 minutes before doors open**. Once `/admin` and `/host` are open, they keep it awake.
 
 **Laptop and projector**
 - [ ] Laptop on charge, sleep and screensaver off, notifications off (Focus / Do not disturb).
@@ -30,7 +34,9 @@ Admin and the projector (ask Sukrit; it's not written anywhere public).
 - [ ] Admin → Controls → Sound on/off is the room switch; the projector's own mute button is the local one.
 
 **Your Admin (on your phone)**
-- [ ] Open `/admin` on your phone, enter the PIN.
+- [ ] Open `/admin` on your phone, enter the PIN (a long one, set on Render; never 1234).
+- [ ] **Backup Admin:** sign in on a second phone too (or the laptop in a separate window that is
+      *not* on the projector). Two Admins at once is safe: a double press only ever moves one step.
 - [ ] Phone on charge or above 60%, auto-lock set to "Never" for the evening, brightness up.
 - [ ] Find the quiz → **Open room**. The projector shows the room by itself within a few seconds.
 - [ ] Keep the laptop's Admin tab closed or in another window: never on the projector (Admin shows the answers).
@@ -46,13 +52,19 @@ Admin and the projector (ask Sukrit; it's not written anywhere public).
 ## 2. Running it: what to say, what to tap
 
 The big button at the bottom of Admin always says what it does next. The line above it says what
-happens. On a laptop: Space = big button, P = Pause. Nothing is judged by hand: every answer is a
-tap on a phone and the server marks it (rules: `docs/SPEC.md` v3).
+happens. Optional steps are small "or: …" chips just above it. On a laptop: Space = big button,
+P = Pause, S = Skip (Blackout). Nothing is judged by hand: every answer is a tap on a phone and the
+server marks it (rules: `docs/SPEC.md` v3.1).
+
+**How long:** about **30–35 minutes** from Start quiz to the podium, plus the lobby (5–10 minutes
+while people join and build bots). Round 1 ≈ 10 min (20 questions × ~24 s plus a little talking),
+the cut and the wild card round ≈ 4 min, predictions ≈ 1 min, Blackout ≈ 4–5 min (runs itself,
+about 10 questions), podium and prizes ≈ 3 min. Budget **45 minutes** for the slot.
 
 | Step | Say | Tap |
 |---|---|---|
 | **Lobby** | "Scan the QR code or go to the address on screen, and type the room code. Use your real name, it goes on the projector. Then **build your bot**: pick a colour and a head, and press LOCK IN. Two people with the same name: add your surname initial." | wait. Admin shows how many joined. Hide the room code (Controls) once everyone's in, if latecomers are a problem. |
-| **Start** | "Round 1. Everyone plays. You'll see each question up here first, then the answers appear on your phone. Faster right answers score more. The top 9 are safe for the final; everyone else gets a wild card shot." | **Start quiz** |
+| **Start** | "Round 1. Everyone plays. You'll see each question up here first, then the answers appear on your phone. Answer fast: up to 200 points a question. The top 9 go to Blackout; everyone else gets a wild card shot." | **Start quiz** |
 | **Question** | (read it out) "Eyes up." | **Show question**. 8 s to read, then 8 s to answer on phones. The numbers 1–4 on the projector match the phones. |
 | **Time's up** | "Time!" | wait for the clock (or **Skip timer**) |
 | **Reveal** | "The answer is…" | **Reveal answer**. Phones say CORRECT or WRONG. |
@@ -64,8 +76,9 @@ tap on a phone and the server marks it (rules: `docs/SPEC.md` v3).
 | **Reveal wild card** | "And the last seat goes to…" | **Reveal wild card**. The projector shows the winner; the rest power down. |
 | **Predictions** | "Audience: on your phone, back the finalist you think will escape. If they win, you called it." | The chip **or: Open predictions**, give it 20–30 s (optional; the big button is Start Blackout) |
 | **Blackout** | "Blackout. The lights are dying behind our 10 finalists. Right answers move you forward, faster moves you further; wrong ones move you back. Each question the dark moves on, and if it reaches you, you power down. Last bot running escapes." | **Start Blackout**. That's the last click: Blackout runs on **autopilot** from here to the podium. |
-| Each Blackout question (automatic) | Read the question out while it shows (5 s), then commentate: "Let's see who moved." … "Here comes the dark…" Admin's autopilot strip shows what comes next and when ("REVEAL · 3"), and a red line shows who the dark will catch. | Nothing to click. The big button is **PAUSE** (tap it if you need to talk; **RESUME** carries on from the same moment). |
-| **Podium** | "Our last bot running is…" Then: "(N) of you called it." | Comes by itself after the winner moment. Admin shows the final order to read out. Controls → **Results CSV** for the prizes. |
+| Each Blackout question (automatic, ~23 s) | **Read (5 s):** read the question out. **Answer (10 s):** "Ten seconds, runners!" **Reveal:** "Let's see who moved… a dash for (name)!" **The dark:** "Here comes the dark…" then, if someone's caught, "(name) is out!" or "Everyone survives!" Admin's autopilot strip shows the step and what's next ("RUNNERS MOVE · 3 → next: the dark moves"), and a red line shows who the dark will catch (only you see it: build the tension). | Nothing to click. The big button is **PAUSE** (tap it if you need to talk; **RESUME**, red, carries on from the same moment). |
+| **Winner** (automatic) | "The lights are coming back on… (name) escapes!" | Nothing: the winner moment holds 7 s, then the podium shows by itself. |
+| **Podium** | "Our last bot running is…" Then: "(N) of you called it." | Admin shows the final order to read out. The big button is **Download results** (CSV) for the prizes. |
 
 ---
 
@@ -75,11 +88,14 @@ tap on a phone and the server marks it (rules: `docs/SPEC.md` v3).
 |---|---|
 | **Need a moment** (noise, a question about the rules) | Controls → **Pause** (or P). Every clock freezes; phones and the projector say PAUSED. **Resume** when ready. |
 | **A question is wrong or confusing** | Controls → **Void question** (tap twice). It doesn't count: no points, no tally, in Blackout nobody moves and the dark stays; the next question takes its number. Phones say CANCELLED. **Restart question** replays it from the start instead (in Blackout it also undoes the dark and any catches). |
-| **A Blackout question is wrong or confusing** | Under the runners: **Void question** (tap twice) while it's being read or answered: nobody moves, the dark stays, the next question comes by itself. **Restart question** (until the dark moves) replays it. **Skip** ends a wait now. |
+| **A Blackout question is wrong or confusing** | Under the runners: **Void question** (tap twice) while it's being read or answered: nobody moves, the dark stays, the next question comes by itself. **Restart question** (until the dark moves) replays it. |
+| **A Blackout wait feels too long** (the room is ready) | **Skip** under the runners (or S on a laptop) ends the current wait now; the autopilot carries on. |
+| **Pause mid-Blackout** | The big button (**PAUSE**). The projector freezes mid-animation and says PAUSED; **RESUME** carries on from the same moment. |
 | **Someone is being silly / wrong name** | People tab → find them → **Remove** (tap twice). They can't rejoin; their bot powers down. A finalist removed before the first Blackout question is replaced by the next best (the wild card runner-up). |
 | **A phone can't join** | Check the 4-letter code. "Name taken": add a surname initial. On Wi-Fi with a login page: switch to mobile data. Still stuck: type the address by hand (it's under the QR). People can join until Round 1 ends (they play from the next question); after that they join as audience and can back a finalist. |
 | **A phone froze or was locked** | Nothing to do: when they open it again it rejoins and catches up. If not, refresh the page; they keep their score and bot. |
-| **The projector tab got refreshed or closed** | Open `/host` again. It signs back in by itself (or enter the PIN) and shows the room exactly where it was. Press F11, click once for sound. |
-| **Your Admin phone died** | Open `/admin` on the laptop or another phone, enter the PIN, pick the open room. Nothing is lost. Two Admins at once is safe: a double press only moves one step. |
+| **The projector tab got refreshed or closed** | Open `/host` again. It signs back in by itself (or enter the PIN) and shows the room exactly where it was (in Blackout: the current step, animation already in place). Press F11, click once for sound. |
+| **A player refreshed their phone** | Nothing to do: it rejoins as the same player, same bot, same score (a runner keeps their place in the chase). |
+| **Your Admin phone died** | Open `/admin` on the backup phone or the laptop, enter the PIN, pick the open room. Nothing is lost. **In Blackout the chase keeps running on its own** (the server drives it); just pick it up from the backup. Two Admins at once is safe: a double press only moves one step. |
 | **"The quiz server restarted, so the quiz has to start again"** | The game server restarted (rare; never redeploy on the day). The current game is lost. Admin → the quiz → **Open room**, everyone rejoins with the new code. |
 | **The projector says "Reconnecting to the game server…"** | Check the laptop's internet. It reconnects by itself and comes back to the same step. |
