@@ -20,8 +20,10 @@
  *
  * Bots join a few at a time, pick a random bot look in the lobby, answer in all
  * three rounds whenever they're allowed to (Round 1, the wild card round,
- * Blackout), and back a random finalist. If the game server restarts they
- * reconnect and rejoin. Stop them with Ctrl+C.
+ * Blackout), and back a random finalist. Multi-correct questions: they tick a few
+ * options (biased toward the right ones by --accuracy when they know them) and
+ * lock in; about 1 in 8 leave their ticks unlocked for the server to send at
+ * time's up. If the game server restarts they reconnect and rejoin. Stop them with Ctrl+C.
  */
 import { io, type Socket } from "socket.io-client";
 import {
@@ -61,12 +63,12 @@ if (!room) {
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
 
-/** The right answer for the current question, read from an Admin view (null if we can't see it). */
-let correctText: string | null = null;
+/** The right answer(s) for the current question, read from an Admin view (empty if we can't see them). */
+let correctTexts = new Set<string>();
 let canSeeAnswers = false;
 const watcher: Client = io(url, { transports: ["websocket"], reconnectionDelayMax: 3000 });
 watcher.on("admin:state", (v: AdminView) => {
-  correctText = v.question?.correctText ?? null;
+  correctTexts = new Set(v.question?.options.filter((o) => o.correct).map((o) => o.text) ?? []);
 });
 watcher.on("connect", () => {
   watcher.emit("admin:auth", { roomCode: room!, pin }, (r) => {
@@ -140,10 +142,11 @@ class Bot {
       const msLeft = view.timer ? view.timer.endsAt - view.serverNow : 6000;
       const latest = Math.max(400, msLeft - 300);
       const at = slow ? rand(300, latest) : 300 + Math.min(latest, rand(0, latest) * rand(0.3, 1));
+      if (s.multi) return this.multi(s.questionId, at);
       this.later(at, () => {
         const now = this.view?.screen;
         if (now?.kind !== "answer" || now.questionId !== s.questionId) return;
-        const right = canSeeAnswers && correctText ? now.options.find((o) => o.text === correctText) : undefined;
+        const right = canSeeAnswers && correctTexts.size ? now.options.find((o) => correctTexts.has(o.text)) : undefined;
         const wrong = now.options.filter((o) => o !== right);
         const choice = right ? (Math.random() < this.accuracy ? right : pick(wrong)) : pick(now.options);
         this.socket.emit("participant:answer", { questionId: s.questionId, optionId: choice.id });
@@ -156,6 +159,32 @@ class Bot {
     }
 
     if (s.kind === "removed") this.stop();
+  }
+
+  /**
+   * A multi-correct question: tick options one by one (each right one with this
+   * bot's accuracy, each wrong one with the opposite chance, at least one), then
+   * LOCK IN by `at`. About 1 in 8 never locks in: the server sends their ticks at time's up.
+   */
+  private multi(questionId: string, at: number) {
+    const now = this.view?.screen;
+    if (now?.kind !== "answer") return;
+    const ticks = now.options.filter((o) =>
+      canSeeAnswers && correctTexts.size ? Math.random() < (correctTexts.has(o.text) ? this.accuracy : 1 - this.accuracy) * 0.9 : Math.random() < 0.5,
+    );
+    if (ticks.length === 0) ticks.push(pick(now.options));
+    const leaveDraft = Math.random() < 0.12;
+    ticks.forEach((_, i) =>
+      this.later((at * (i + 1)) / (ticks.length + 1), () => {
+        const s = this.view?.screen;
+        if (s?.kind === "answer" && s.questionId === questionId) this.socket.emit("participant:select", { questionId, optionIds: ticks.slice(0, i + 1).map((o) => o.id) });
+      }),
+    );
+    if (leaveDraft) return;
+    this.later(at, () => {
+      const s = this.view?.screen;
+      if (s?.kind === "answer" && s.questionId === questionId) this.socket.emit("participant:answer", { questionId, optionIds: ticks.map((o) => o.id) });
+    });
   }
 
   stop() {

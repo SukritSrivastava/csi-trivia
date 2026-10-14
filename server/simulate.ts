@@ -5,6 +5,9 @@
  * browser, runs in a few seconds. Run: npm run simulate
  */
 import assert from "node:assert/strict";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   type AdminAction,
   BOT_HEADS,
@@ -18,10 +21,10 @@ import {
   type Quiz,
   type QuizRules,
 } from "../src/shared/protocol";
-import { blankQuestion, cleanQuiz, importJson, importRows, importText, parseCsv, quizProblems, quizToCsv } from "../src/shared/quiz";
-import { darknessStep, type GameConfig, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
+import { blankQuestion, cleanQuiz, importJson, importRows, importText, isMultiCorrect, parseCsv, questionProblems, quizProblems, quizToCsv } from "../src/shared/quiz";
+import { darknessStep, type GameConfig, MULTI_ANSWER_MS, MULTI_WRONG_PENALTY, multiPoints, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
 import { quizToGame } from "./library";
-import { loadQuestions, type QuizQuestion } from "./questions";
+import { loadQuestions, pickRound, type QuizQuestion } from "./questions";
 import { type Clock, QuizRoom } from "./quiz";
 
 // ============================================================================
@@ -78,7 +81,9 @@ function seeded(seed: number) {
   };
 }
 
-const FILE_QUESTIONS = loadQuestions();
+/** The file's single-answer questions (the tests written before multi-correct play these, as they always did). */
+const ALL_FILE_QUESTIONS = loadQuestions();
+const FILE_QUESTIONS = ALL_FILE_QUESTIONS.filter((q) => !isMultiCorrect(q));
 
 /** A made-up question set with this many questions tagged for each round. */
 function questionSet(r1: number, wc: number, bo: number): QuizQuestion[] {
@@ -210,11 +215,21 @@ class Game {
     assert.equal(this.phase, phase, why);
   }
 
-  /** Taps an option on `id`'s phone: the right one or a wrong one. */
+  /**
+   * Taps an option on `id`'s phone: the right one or a wrong one. On a
+   * multi-correct question: ticks every right option (or one wrong one) and locks in.
+   */
   answer(id: string, pick: Pick) {
     const s = this.screen(id);
     assert.equal(s.kind, "answer", `${this.person(id).name} should see options in ${this.phase}`);
     if (s.kind !== "answer") return;
+    if (s.multi) {
+      const right = new Set(this.admin().question!.options.filter((o) => o.correct).map((o) => o.text));
+      // "wrong": one wrong option (all 4 right: just one of them, a partial answer).
+      const ids = pick === "correct" ? s.options.filter((o) => right.has(o.text)).map((o) => o.id) : [(s.options.find((o) => !right.has(o.text)) ?? s.options[0]).id];
+      this.room.lockIn(id, s.questionId, ids);
+      return;
+    }
     const correctText = this.admin().question!.correctText;
     const option = s.options.find((o) => (pick === "correct" ? o.text === correctText : o.text !== correctText))!;
     this.room.answer(id, s.questionId, option.id);
@@ -251,9 +266,11 @@ class Game {
     for (const id of ids) {
       const json = JSON.stringify(this.phone(id));
       assert.ok(!json.includes('"correct'), `phone view leaks the answer in ${this.phase}: ${json.slice(0, 300)}`);
+      // Multi-correct: the right numbers and texts only ever come with the result.
+      assert.ok(!json.includes('"rightNumbers"') && !json.includes('"rightTexts"'), `phone view leaks the right options in ${this.phase}`);
     }
     const hostJson = JSON.stringify(this.host());
-    assert.ok(!/"correct(Text|Index)?":(?!null)/.test(hostJson), `host view leaks the answer in ${this.phase}`);
+    assert.ok(!/"correct(Text|Index|Indexes)?":(?!null)/.test(hostJson), `host view leaks the answer in ${this.phase}`);
     const bo = this.host().stage;
     if ("blackout" in bo) assert.ok(bo.blackout.runners.every((r) => r.delta === null), `no moves shown before the reveal (${this.phase})`);
   }
@@ -1444,6 +1461,337 @@ test("quiz library: checks, imports, export round trip, cleaning network input, 
 });
 
 // ============================================================================
+// Multi-correct questions (Round 1)
+// ============================================================================
+
+/** A Round 1 question with these right options (2+ = multi-correct). */
+function r1Question(id: string, correct: number | number[], extra: Partial<QuizQuestion> = {}): QuizQuestion {
+  return { id, round: 1, text: `Question ${id}?`, image: null, options: [`${id} A`, `${id} B`, `${id} C`, `${id} D`], correct, ...extra };
+}
+
+/** Option ids on `id`'s phone: `right` of the right options and `wrong` of the wrong ones. */
+function multiPicks(g: Game, id: string, right: number, wrong: number): { questionId: string; ids: string[] } {
+  const s = g.screen(id);
+  assert.ok(s.kind === "answer" && s.multi, `${g.person(id).name} should see a multi-correct question in ${g.phase}`);
+  if (s.kind !== "answer") throw new Error("unreachable");
+  const rightTexts = new Set(g.admin().question!.options.filter((o) => o.correct).map((o) => o.text));
+  const r = s.options.filter((o) => rightTexts.has(o.text)).slice(0, right);
+  const w = s.options.filter((o) => !rightTexts.has(o.text)).slice(0, wrong);
+  assert.equal(r.length + w.length, right + wrong, "enough options to pick from");
+  return { questionId: s.questionId, ids: [...r, ...w].map((o) => o.id) };
+}
+
+/** Moves the fake clock to `elapsedMs` into the answer step. */
+function at(g: Game, elapsedMs: number) {
+  const t = g.admin().timer!;
+  const elapsed = t.durationMs - (t.endsAt - g.clock.now());
+  assert.ok(elapsedMs >= elapsed, `already ${elapsed}ms in`);
+  g.clock.advance(elapsedMs - elapsed);
+}
+
+/** Ticks and locks in `right` right and `wrong` wrong options at `elapsedMs`. */
+function lockAt(g: Game, id: string, right: number, wrong: number, elapsedMs: number) {
+  at(g, elapsedMs);
+  const { questionId, ids } = multiPicks(g, id, right, wrong);
+  g.room.select(id, questionId, ids);
+  g.room.lockIn(id, questionId, ids);
+}
+
+test("multi-correct scoring: S × (found/total − 0.25 × wrong), the worked examples, never below 0", () => {
+  assert.deepEqual([MULTI_WRONG_PENALTY, MULTI_ANSWER_MS], [0.25, 15_000]);
+  const L = MULTI_ANSWER_MS;
+  // [elapsed, found, total, wrong] → points (docs/SPEC.md "Multi-correct questions", the table)
+  const table: [number, number, number, number, number][] = [
+    [0, 4, 4, 0, 200], // 4 right, all 4 ticked, instant
+    [0, 2, 4, 0, 100], // 4 right, 2 found
+    [0, 1, 2, 0, 100], // 2 right, 1 found
+    [0, 1, 2, 1, 50], // 2 right, 1 found, 1 wrong
+    [L, 4, 4, 0, 100], // 4 right, all found at the last moment
+    [0, 2, 2, 2, 100], // ticked all 4 when 2 are right: 50% of S
+    [L / 2, 2, 2, 0, 150], // half the time: S = 150
+    [L / 2, 1, 2, 1, 38], // 150 × 0.25 = 37.5 → 38 (rounded once, at the end)
+    [0, 2, 3, 0, 133], // 2 of 3, instant: 133.3 → 133
+    [0, 0, 2, 2, 0], // only wrong ones: floors at 0
+    [0, 1, 3, 2, 0], // 1/3 − 0.5 < 0: floors at 0
+    [L * 2, 2, 2, 0, 100], // elapsed clamped to the limit
+  ];
+  for (const [elapsed, found, total, wrong, points] of table) {
+    assert.equal(multiPoints(elapsed, L, found, total, wrong), points, `${found}/${total} found, ${wrong} wrong at ${elapsed}ms`);
+  }
+  for (let found = 0; found <= 4; found++) for (let wrong = 0; wrong <= 4 - found; wrong++) for (const e of [0, 3000, L]) {
+    assert.ok(multiPoints(e, L, found, 4, wrong) >= 0, "never below 0");
+  }
+});
+
+test("multi-correct in a room: 15 s, ticks are drafts, LOCK IN, partial credit, time's-up draft, outcomes, moods, ranks", () => {
+  const g = new Game(testConfig({ round1: { ...PRESETS.demo.round1, questions: 1 } }), [r1Question("m", [0, 2])]);
+  const names = ["Perfect", "Half", "HalfWrong", "AllFour", "Wrong", "Late", "Draft", "Nothing", "Unticked"];
+  const [perfect, half, halfWrong, allFour, wrong, late, draft, nothing, unticked] = names.map((n) => g.join(n));
+  const ids = [perfect, half, halfWrong, allFour, wrong, late, draft, nothing, unticked];
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  assert.equal(g.host().timer?.durationMs, 8000, "the read time is unchanged");
+  const reading = g.host().stage;
+  assert.ok(reading.phase === "r1Read" && reading.question.multi && reading.question.options === null);
+  assert.equal(g.screen(perfect).kind, "eyesUp");
+  g.checkNoLeaks(ids);
+  g.tick();
+  g.expect("r1Answer");
+  assert.equal(g.host().timer?.durationMs, MULTI_ANSWER_MS, "a multi-correct question gets 15 s to answer");
+  g.checkNoLeaks(ids);
+  g.checkOneOrder(ids);
+  const s0 = g.screen(perfect);
+  assert.ok(s0.kind === "answer" && s0.multi && s0.multi.selectedIds.length === 0 && !s0.multi.locked, "no ticks yet");
+  assert.ok(g.admin().question?.multi && g.admin().question?.correctNumbers.length === 2, "Admin sees both right answers");
+
+  // A single-answer tap does nothing on a multi-correct question; an empty lock-in neither.
+  if (s0.kind === "answer") {
+    g.room.answer(perfect, s0.questionId, s0.options[0].id);
+    g.room.lockIn(perfect, s0.questionId, []);
+    g.room.select(perfect, s0.questionId, ["not-an-option"]);
+  }
+  assert.equal(g.admin().counts.answered, 0, "taps and empty lock-ins aren't answers");
+
+  lockAt(g, perfect, 2, 0, 0);
+  lockAt(g, half, 1, 0, 0);
+  lockAt(g, halfWrong, 1, 1, 0);
+  lockAt(g, allFour, 2, 2, 0);
+  lockAt(g, wrong, 0, 1, 0);
+  // Draft: ticks both right ones and never locks in. Unticked: ticks one, then unticks it.
+  const d = multiPicks(g, draft, 2, 0);
+  g.room.select(draft, d.questionId, d.ids.slice(0, 1));
+  g.room.select(draft, d.questionId, d.ids);
+  const u = multiPicks(g, unticked, 1, 0);
+  g.room.select(unticked, u.questionId, u.ids);
+  g.room.select(unticked, u.questionId, []);
+  assert.deepEqual([g.admin().counts.answered, g.admin().counts.ticking], [5, 1], "5 locked in, 1 still ticking (drafts aren't answers)");
+  assert.equal(g.mood(draft), "thinking", "a draft is still thinking");
+  assert.equal(g.mood(perfect), "locked");
+  const draftScreen = g.screen(draft);
+  assert.ok(draftScreen.kind === "answer" && draftScreen.multi?.selectedIds.length === 2 && !draftScreen.multi.locked, "the draft is on the phone");
+
+  // The lock freezes: a later toggle or a second lock-in changes nothing.
+  const p = multiPicks(g, perfect, 0, 2);
+  g.room.select(perfect, p.questionId, p.ids);
+  g.room.lockIn(perfect, p.questionId, p.ids);
+  const locked = g.screen(perfect);
+  assert.ok(locked.kind === "answer" && locked.multi?.locked && locked.multi.selectedIds.length === 2, "ticks frozen after LOCK IN");
+  g.checkNoLeaks(ids);
+
+  lockAt(g, late, 2, 0, MULTI_ANSWER_MS - 1);
+  g.expect("r1Answer", "drafts don't end the step early");
+  g.tick();
+  g.expect("r1TimesUp");
+  const sent = g.screen(draft);
+  assert.ok(sent.kind === "lockedIn" && sent.sentAtTimeUp && sent.choiceNumbers?.length === 2, "time's up sends the draft");
+  const lockedUp = g.screen(halfWrong);
+  assert.ok(lockedUp.kind === "lockedIn" && !lockedUp.sentAtTimeUp && lockedUp.choiceNumbers?.length === 2 && lockedUp.timeUp);
+  assert.equal(g.screen(nothing).kind, "timesUp", "no ticks: no answer");
+  assert.equal(g.screen(unticked).kind, "timesUp", "ticked then unticked: no answer");
+  g.checkNoLeaks(ids);
+  assert.deepEqual(
+    ids.map((id) => g.person(id).score),
+    [200, 100, 50, 100, 0, 100, 100, 0, 0],
+    "Perfect 200, Half 100, HalfWrong 50, AllFour 100, Wrong 0, Late 100, Draft 100 (at the full time), none 0",
+  );
+
+  g.do({ type: "revealAnswer" });
+  const outcome = (id: string) => {
+    const s = g.screen(id);
+    return s.kind === "result" ? s.outcome : s.kind;
+  };
+  assert.deepEqual(ids.map(outcome), ["correct", "partial", "partial", "partial", "wrong", "correct", "correct", "missed", "missed"]);
+  const res = g.screen(halfWrong);
+  assert.ok(res.kind === "result" && res.multi?.found === 1 && res.multi.total === 2 && res.multi.wrongPicks === 1 && res.multi.rightNumbers.length === 2 && res.multi.rightTexts.length === 2);
+  assert.ok(res.kind === "result" && res.multi && res.correctText === res.multi.rightTexts.join("; "));
+  // Bots: happy with at least half of what a perfect answer then would have scored.
+  assert.deepEqual(ids.map((id) => g.mood(id)), ["right", "right", "wrong", "right", "wrong", "right", "right", "wrong", "wrong"]);
+  const reveal = g.host().stage;
+  assert.ok(reveal.phase === "r1Reveal" && reveal.correctIndexes?.length === 2 && reveal.correctIndex === reveal.correctIndexes[0]);
+  g.do({ type: "showResults" });
+  const results = g.host().stage;
+  assert.ok(results.phase === "r1Results");
+  if (results.phase === "r1Results") {
+    assert.deepEqual(results.options.filter((o) => o.correct).length, 2, "both right options marked");
+    // Every tick counts: 2+1+2+4+1+2+2 = 14 picks.
+    assert.equal(results.options.reduce((n, o) => n + o.count, 0), 14);
+  }
+  g.do({ type: "showLeaderboard" });
+  const board = g.host().stage;
+  assert.ok(board.phase === "r1Leaderboard");
+  if (board.phase === "r1Leaderboard") {
+    // 100 points each: lower answer time first (Half, AllFour at 0 s; Late and Draft at the full time).
+    assert.deepEqual(board.rows.filter((r) => r.score === 100).map((r) => r.name), ["Half", "AllFour", "Late", "Draft"]);
+    // 0 points each: Wrong answered at 0 s; no ticks counts as the full time.
+    assert.deepEqual(board.rows.filter((r) => r.score === 0).map((r) => r.name), ["Wrong", "Nothing", "Unticked"]);
+  }
+});
+
+test("multi-correct: early end waits for lock-ins; refresh restores the ticks; pause, +5 s, own timer", () => {
+  const g = new Game(testConfig({ round1: { ...PRESETS.demo.round1, questions: 2 } }), [r1Question("m1", [1, 3]), r1Question("m2", [0, 1, 2], { openMs: 9000 })]);
+  const [a, b, c] = ["A", "B", "C"].map((n) => g.join(n));
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  const pa = multiPicks(g, a, 2, 0);
+  g.room.select(a, pa.questionId, pa.ids);
+  lockAt(g, b, 1, 0, 1000);
+  g.expect("r1Answer", "A only has a draft (and C nothing): the step waits");
+  // A refreshes (drops and rejoins): the ticks come back.
+  g.room.disconnect(a);
+  assert.ok(g.room.join("", a).ok);
+  const back = g.screen(a);
+  assert.ok(back.kind === "answer" && back.multi?.selectedIds.length === 2 && back.multi.selectedIds.every((x) => pa.ids.includes(x)), "refresh restores the draft");
+
+  // Pause freezes the timer; a lock-in while paused is ignored; +5 s extends the limit used for S.
+  at(g, 3000);
+  g.do({ type: "pause" });
+  const frozen = g.admin().timer!.remainingMs;
+  g.clock.advance(4000);
+  assert.equal(g.admin().timer!.remainingMs, frozen, "paused: the clock stands still");
+  g.room.lockIn(a, pa.questionId, pa.ids);
+  assert.equal(g.admin().counts.answered, 1, "no lock-in while paused");
+  g.do({ type: "resume" });
+  g.do({ type: "addTime" });
+  assert.equal(g.admin().timer!.durationMs, MULTI_ANSWER_MS + 5000);
+  at(g, 10_000);
+  g.room.lockIn(a, pa.questionId, pa.ids);
+  g.expect("r1Answer", "C hasn't locked in yet");
+  lockAt(g, c, 0, 1, 11_000);
+  g.expect("r1TimesUp", "everyone locked in: time's up straight away");
+  // S = round(200 − 100 × 10/20) = 150; A found both: 150. B found 1 of 2 at 1 s: round(195 × 0.5) = 98.
+  assert.deepEqual([g.person(a).score, g.person(b).score], [150, 98]);
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "nextQuestion" });
+  g.tick();
+  assert.equal(g.admin().timer?.durationMs, 9000, "a multi-correct question's own answer time beats the 15 s default");
+});
+
+test("multi-correct: void and restart undo points, answers and drafts; restart gives fresh ids", () => {
+  const g = new Game(testConfig({ round1: { ...PRESETS.demo.round1, questions: 2 } }), [r1Question("m1", [0, 1]), r1Question("s2", 2)]);
+  const [a, b, c] = ["A", "B", "C"].map((n) => g.join(n));
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  lockAt(g, a, 2, 0, 0);
+  const pb = multiPicks(g, b, 1, 0);
+  g.room.select(b, pb.questionId, pb.ids);
+  const firstId = pb.questionId;
+  const firstOptions = (g.screen(c) as { options: { id: string }[] }).options.map((o) => o.id);
+
+  // Restart mid-answer: fresh ids, no answers, no drafts.
+  g.do({ type: "restartQuestion" });
+  g.tick();
+  const fresh = g.screen(b);
+  assert.ok(fresh.kind === "answer" && fresh.questionId !== firstId && fresh.multi?.selectedIds.length === 0, "drafts cleared, new question id");
+  assert.ok(fresh.kind === "answer" && fresh.options.every((o) => !firstOptions.includes(o.id)), "new option ids");
+  assert.equal(g.admin().counts.answered, 0);
+  g.room.lockIn(a, firstId, firstOptions.slice(0, 1));
+  assert.equal(g.admin().counts.answered, 0, "a lock-in for the old run is ignored");
+
+  lockAt(g, a, 2, 0, 0);
+  lockAt(g, b, 1, 0, 0);
+  g.tick();
+  assert.deepEqual([g.person(a).score, g.person(b).score], [200, 100]);
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "voidQuestion" });
+  assert.deepEqual([g.person(a).score, g.person(b).score, g.person(c).score], [0, 0, 0], "void takes the points back");
+  assert.equal(g.screen(a).kind, "voided");
+  g.do({ type: "nextQuestion" });
+  g.tick();
+  g.answer(a, "correct");
+  g.answer(b, "correct");
+  g.answer(c, "wrong");
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "endRound1" });
+  const cut = g.host().stage;
+  // The voided question doesn't count for time either: C (wrong at 0 s) is behind A and B.
+  assert.ok(cut.phase === "cut" && cut.standings.map((s) => s.name).join() === "A,B,C");
+});
+
+test("multi-correct: removed players and late joiners; the cut mixes multi and single points", () => {
+  const g = new Game(testConfig({ round1: { ...PRESETS.demo.round1, questions: 3 } }), [r1Question("s1", 0), r1Question("m2", [1, 2, 3]), r1Question("s3", 1)]);
+  const [a, b, c, d] = ["A", "B", "C", "D"].map((n) => g.join(n));
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  g.answerAt(a, "correct", 0); // 200
+  g.answerAt(b, "wrong", 0); // 0
+  g.answerAt(c, "correct", 4000); // 150
+  g.answerAt(d, "correct", 8000 - 1); // 100
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "nextQuestion" });
+  g.tick();
+  const late = g.join("Late");
+  assert.equal(g.screen(late).kind, "nextQuestion", "joined mid-question: plays from the next one");
+  g.room.select(late, (g.screen(a) as { questionId: string }).questionId, []);
+  lockAt(g, a, 1, 0, 0); // 200 × 1/3 = 67
+  lockAt(g, b, 3, 0, 0); // 200
+  lockAt(g, c, 3, 1, 0); // 200 × (1 − 0.25) = 150
+  const pd = multiPicks(g, d, 3, 0);
+  g.room.select(d, pd.questionId, pd.ids);
+  g.do({ type: "removeParticipant", participantId: d });
+  g.expect("r1TimesUp", "D was the last one; removed with a draft, the step ends");
+  assert.equal(g.admin().counts.expected, 3, "a removed player isn't expected");
+  g.do({ type: "revealAnswer" });
+  g.do({ type: "nextQuestion" });
+  g.tick();
+  for (const id of [a, b, c, late]) g.answerAt(id, "correct", 0);
+  g.do({ type: "revealAnswer" });
+  assert.deepEqual([a, b, c, late].map((id) => g.person(id).score), [467, 400, 500, 200], "single and multi points add up");
+  g.do({ type: "endRound1" });
+  const cut = g.host().stage;
+  assert.ok(cut.phase === "cut" && cut.standings.map((s) => `${s.name}:${s.score}`).join() === "C:500,A:467,B:400,Late:200");
+});
+
+test("multi-correct: only Round 1; editor/server checks, the question file, imports and exports take lists", () => {
+  const multi: LibraryQuestion = { ...blankQuestion(), text: "Pick two", options: ["a", "b", "c", "d"], correct: [0, 2] };
+  assert.deepEqual(questionProblems(multi, "Q", "round1"), []);
+  assert.ok(questionProblems(multi, "Q", "wildcard")[0].includes("only Round 1"));
+  assert.ok(questionProblems(multi, "Q", "blackout")[0].includes("only Round 1"));
+  assert.ok(questionProblems({ ...multi, correct: [] }, "Q")[0].includes("pick the right answer"));
+  const quiz = libraryQuiz();
+  assert.deepEqual(quizProblems({ ...quiz, round1: [multi, ...quiz.round1] }, 3), [], "fine in Round 1");
+  assert.ok(quizProblems({ ...quiz, wildcard: [multi, ...quiz.wildcard] }, 3).some((p) => p.startsWith("Wild card, question 1") && p.includes("only Round 1")));
+  assert.ok(quizProblems({ ...quiz, blackout: [...quiz.blackout, multi] }, 3).some((p) => p.startsWith("Blackout, question 4")));
+
+  // The room never puts a multi-correct question in the wild card or Blackout (even an untagged one, even reusing).
+  const mixed = [r1Question("m", [0, 1], { round: null }), r1Question("s", 2, { round: null })];
+  for (const round of [2, 3] as const) {
+    assert.deepEqual(pickRound(mixed, round, 4, new Set(), true).map((q) => q.id), ["s", "s", "s", "s"], `round ${round} skips multi-correct`);
+  }
+  assert.deepEqual(pickRound(mixed, 1, 2, new Set()).map((q) => q.id), ["m", "s"], "Round 1 takes it");
+  // The question file: lists allowed, but only for round 1.
+  const file = path.join(tmpdir(), `hermes-multi-${process.pid}.json`);
+  writeFileSync(file, JSON.stringify({ questions: [{ id: "x", round: 2, text: "X", options: ["a", "b", "c", "d"], correct: [0, 1] }] }));
+  assert.throws(() => loadQuestions(file), /Round 1 only/);
+  writeFileSync(file, JSON.stringify({ questions: [{ id: "x", round: 1, text: "X", options: ["a", "b", "c", "d"], correct: [2, 0] }, { id: "y", text: "Y", options: ["a", "b", "c", "d"], correct: [3] }] }));
+  assert.deepEqual(loadQuestions(file).map((q) => q.correct), [[0, 2], 3], "lists sorted; a one-entry list reads as a number");
+  rmSync(file);
+  assert.ok(ALL_FILE_QUESTIONS.filter((q) => isMultiCorrect(q)).length >= 2, "the demo data has multi-correct questions");
+
+  // Imports: text (two *, or "Answer: A, C"), sheet lists ("1,3", "1 3", "A;C"), JSON lists.
+  const text = importText("Two stars\n* one\ntwo\n* three\nfour\n\nAnswer line\none\ntwo\nthree\nfour\nAnswer: B, D\n\n# Wild card\nNot here\n* a\n* b\nc\nd", "round1");
+  assert.deepEqual(text.round1.map((q) => q.correct), [[0, 2], [1, 3]]);
+  assert.deepEqual(text.wildcard.length, 0);
+  assert.ok(text.problems.length === 1 && text.problems[0].includes("Round 1 only"), "a multi question in the Wild card section is refused");
+  const csv = 'question,A,B,C,D,correct,round\r\nM1,p,q,r,s,"1,3",\r\nM2,p,q,r,s,1 3,\r\nM3,p,q,r,s,"A;C",\r\nS,p,q,r,s,B,\r\nW,p,q,r,s,"A,B",wild card\r\nBad,p,q,r,s,"1,9",\r\n';
+  const sheet = importRows(parseCsv(csv), "round1");
+  assert.deepEqual(sheet.round1.map((q) => q.correct), [[0, 2], [0, 2], [0, 2], 1]);
+  assert.equal(sheet.problems.length, 2, "the wild card multi row and the bad list are reported");
+  const json = importJson(JSON.stringify({ questions: [{ text: "J", options: ["a", "b", "c", "d"], correct: [1, 3], round: 1 }, { text: "K", options: ["a", "b", "c", "d"], correct: [1, 3], round: 3 }] }), "round1");
+  assert.deepEqual([json.round1[0].correct, json.blackout.length, json.problems.length], [[1, 3], 0, 1]);
+  // Export writes "A,C" and reads back the same.
+  const withMulti: Quiz = { ...quiz, round1: [multi, ...quiz.round1] };
+  const csvOut = quizToCsv(withMulti);
+  assert.ok(csvOut.includes('"A,C"'));
+  assert.deepEqual(importRows(parseCsv(csvOut), "round1").round1.map((q) => q.correct), withMulti.round1.map((q) => q.correct));
+  // cleanQuiz: lists cleaned (sorted, no repeats); one entry is a plain number; garbage reads as before.
+  const cleaned = cleanQuiz({ id: "m", title: "M", rules: {}, round1: [{ ...multi, correct: [2, 0, 2] }, { ...multi, correct: [1] }, { ...multi, correct: [7] }, { ...multi, correct: 2 }], wildcard: [], blackout: [] }, quiz.rules)!;
+  assert.deepEqual(cleaned.round1.map((q) => q.correct), [[0, 2], 1, 0, 2]);
+});
+
+// ============================================================================
 // Full games
 // ============================================================================
 
@@ -1504,6 +1852,12 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
           const elapsed = t.durationMs - (t.endsAt - g.clock.now());
           if (at > elapsed) g.clock.advance(at - elapsed);
           if (g.phase !== phase) break;
+          const s = g.screen(id);
+          // Multi-correct: some tick but never lock in (the server sends their draft at time's up).
+          if (s.kind === "answer" && s.multi && rng() < 0.15) {
+            g.room.select(id, s.questionId, s.options.slice(0, 1 + Math.floor(rng() * 3)).map((o) => o.id));
+            continue;
+          }
           g.answer(id, rng() < accuracy.get(id)! ? "correct" : "wrong");
         }
         if (g.phase === phase) g.tick();
@@ -1571,10 +1925,17 @@ function playFull(label: string, config: GameConfig, questions: QuizQuestion[], 
   };
 }
 
+/** The event set with 4 multi-correct questions mixed into Round 1 (questions 3, 8, 13 and 18). */
+const MULTI_EVENT_QUESTIONS = EVENT_QUESTIONS.map((q, i) =>
+  q.round === 1 && [2, 7, 12, 17].includes(i) ? { ...q, correct: i === 17 ? [0, 1, 2, 3] : [i % 4, (i + 2) % 4] } : q,
+);
+
 const summaries = [
   playFull("demo preset, 5 participants", PRESETS.demo, FILE_QUESTIONS, 5, 5),
   playFull("demo preset, 8 participants", PRESETS.demo, FILE_QUESTIONS, 8, 9),
+  playFull("demo preset (the Demo quiz's file, 2 multi-correct in Round 1), 6 participants", PRESETS.demo, ALL_FILE_QUESTIONS, 6, 13),
   playFull("event preset, 100 participants", PRESETS.event, EVENT_QUESTIONS, 100, 21),
+  playFull("event preset, 100 participants, 4 multi-correct questions in Round 1", PRESETS.event, MULTI_EVENT_QUESTIONS, 100, 31),
 ];
 for (const s of summaries) console.log(`✓ full game, ${s.summary}`);
 

@@ -7,7 +7,7 @@
  */
 import { useRef, useState } from "react";
 import { downloadText } from "@/lib/image";
-import { importJson, importRows, importText, type ImportResult, type ListName, parseCsv, TEMPLATE_CSV } from "@/shared/quiz";
+import { correctList, importJson, importRows, importText, type ImportResult, isMultiCorrect, type ListName, parseCsv, TEMPLATE_CSV } from "@/shared/quiz";
 import { ControlButton, Panel } from "../parts";
 
 type Mode = "text" | "sheet" | "json";
@@ -171,7 +171,8 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
         <Panel title="JSON">
           <p className="mb-2 text-[14px] leading-snug text-fog">
             A quiz downloaded from here, the repo&apos;s <span className="text-mint">data/questions.json</span>, or a list of{" "}
-            <span className="text-mint">{"{ text, options: [4], correct: 0–3, round }"}</span>.
+            <span className="text-mint">{"{ text, options: [4], correct: 0–3, round }"}</span>. Round 1 questions may have several right answers:{" "}
+            <span className="text-mint">{"correct: [0, 2]"}</span>.
           </p>
           <ControlButton onClick={() => fileInput.current?.click()} disabled={busy} className="mb-2 w-full">
             {fileName ? "Pick another file" : "Choose a .json file"}
@@ -208,7 +209,8 @@ export function ImportPanel({ target, onAdd, onCancel }: { target: ListName; onA
               .map(([tag, q]) => (
               <li key={q.id} className="text-[14px] leading-snug">
                 <span className="mr-2 font-term text-lg leading-none text-amber">{tag}</span>
-                <span className="text-ghost">{q.text}</span> <span className="text-mint">✓ {q.options[q.correct]}</span>
+                <span className="text-ghost">{q.text}</span> <span className="text-mint">✓ {correctList(q.correct).map((i) => q.options[i]).join(" · ")}</span>
+                {isMultiCorrect(q) && <span className="ml-2 text-amber">multi</span>}
               </li>
             ))}
             {count > 8 && <li className="text-[14px] text-fog">…and {count - 8} more.</li>}

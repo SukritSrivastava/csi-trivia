@@ -91,7 +91,8 @@ class Phone {
     this.socket.on("participant:state", (v) => {
       if (beforeReveal(v.screen)) {
         leakChecks += 1;
-        assert.ok(!JSON.stringify(v).includes('"correct'), `${this.name}'s phone got the answer early: ${v.screen.kind}`);
+        const json = JSON.stringify(v);
+        assert.ok(!json.includes('"correct') && !json.includes('"rightNumbers"'), `${this.name}'s phone got the answer early: ${v.screen.kind}`);
       }
       this.view.push(v);
     });
@@ -263,9 +264,28 @@ async function main() {
     await Promise.all(phones.map((p) => p.until("r1Intro")));
     step("Start quiz → Round 1 intro on every phone");
 
+    /** Multi-correct: the option ids to tick (every right one, or one wrong one). */
+    const multiIds = (s: Extract<ParticipantScreen, { kind: "answer" }>, correct: boolean) => {
+      const right = new Set(admin.value!.question!.options.filter((o) => o.correct).map((o) => o.text));
+      return correct ? s.options.filter((o) => right.has(o.text)).map((o) => o.id) : [s.options.find((o) => !right.has(o.text))!.id];
+    };
+    /** Multi-correct: ticks (a draft, saved on the server) without locking in. */
+    const tick = async (phone: Phone, ids: string[]) => {
+      const s = phone.screen;
+      if (s.kind !== "answer") throw new Error(`${phone.name} has no options`);
+      phone.socket.emit("participant:select", { questionId: s.questionId, optionIds: ids });
+      await phone.until((x) => x.kind === "answer" && x.multi?.selectedIds.length === ids.length, "ticks saved on the server");
+    };
     const answer = async (phone: Phone, correct: boolean) => {
       const s = (await phone.until("answer")).screen;
       if (s.kind !== "answer") return;
+      if (s.multi) {
+        const ids = multiIds(s, correct);
+        await tick(phone, ids);
+        phone.socket.emit("participant:answer", { questionId: s.questionId, optionIds: ids });
+        await phone.until((x) => (x.kind === "answer" && !!x.multi?.locked) || x.kind === "lockedIn", "locked in (multi)");
+        return;
+      }
       const correctText = admin.value!.question!.correctText;
       const option = s.options.find((o) => (correct ? o.text === correctText : o.text !== correctText))!;
       phone.socket.emit("participant:answer", { questionId: s.questionId, optionId: option.id });
@@ -303,8 +323,16 @@ async function main() {
       await Promise.all(phones.map((p) => p.until("answer")));
 
       if (q === 2) {
-        // Zoya's phone drops mid-question and comes back with its saved id.
+        // The Demo quiz's question 2 is multi-correct: "SELECT ALL THAT APPLY" on the Host, ticks on the phones.
+        const multiQ = admin.value!.question!;
+        assert.ok(multiQ.multi && multiQ.correctNumbers.length >= 2, "the Demo quiz's question 2 is multi-correct");
+        const hostQ = host.value!.stage;
+        assert.ok("question" in hostQ && hostQ.question.multi, "the Host knows it's multi-correct (not how many)");
+        assert.ok(!/"correct(Text|Index|Indexes)?":(?!null)/.test(JSON.stringify(host.value)), "the Host has no answer before the reveal");
+        // Zoya ticks one, then her phone drops mid-question and comes back with its saved id: the tick is still there.
         // Pause first: otherwise the 3 phones still connected answer and time's up comes early.
+        const zs = zoya.screen;
+        if (zs.kind === "answer") await tick(zoya, multiIds(zs, true).slice(0, 1));
         await command({ type: "pause" });
         await admin.until((v) => v.paused, "paused");
         await zoya.until((s) => s.kind === "answer" && zoya.view.value!.paused, "paused banner on the phone");
@@ -321,21 +349,36 @@ async function main() {
         assert.deepEqual(rejoin, { ok: true, participantId: zoya.id, roomCode: created.roomCode, status: "playing" });
         const back = (await zoya.until("answer", "same question after reconnecting")).screen;
         assert.ok(back.kind === "answer" && before.kind === "answer" && back.questionId === before.questionId);
+        assert.equal(back.kind === "answer" ? back.multi?.selectedIds.length : -1, 1, "her tick came back after reconnecting");
         await command({ type: "resume" });
         await admin.until((v) => !v.paused, "resumed");
-        step("Paused; Zoya's phone dropped mid-question, rejoined and got the same question back; resumed");
+        step("Multi-correct question: paused; Zoya ticked one, her phone dropped, rejoined: same question, tick restored; resumed");
       }
       await answer(riya, true);
       await answer(aadi, q !== 2);
       await answer(kabir, false);
       await answer(zoya, true);
-      await answer(dev, false);
+      if (q === 2) {
+        // Dev ticks one right option and never locks in: the server sends it at time's up.
+        const ds = (await dev.until("answer")).screen;
+        if (ds.kind === "answer") await tick(dev, multiIds(ds, true).slice(0, 1));
+        await admin.until((v) => v.counts.ticking === 1 && v.counts.answered === 4, "4 locked in, Dev still ticking");
+        const sent = await dev.until((s) => s.kind === "lockedIn", "Dev's ticks sent at time's up");
+        assert.ok(sent.screen.kind === "lockedIn" && sent.screen.sentAtTimeUp && sent.screen.choiceNumbers?.length === 1);
+      } else await answer(dev, false);
       await phase("r1TimesUp");
       await command({ type: "revealAnswer" });
       await phase("r1Reveal");
       const outcomes = await Promise.all(phones.map((p) => p.until("result")));
       const got = outcomes.map((v) => (v.screen.kind === "result" ? v.screen.outcome : ""));
-      assert.deepEqual(got, ["correct", q !== 2 ? "correct" : "wrong", "wrong", "correct", "wrong"]);
+      assert.deepEqual(got, ["correct", q !== 2 ? "correct" : "wrong", "wrong", "correct", q === 2 ? "partial" : "wrong"]);
+      if (q === 2) {
+        const devResult = dev.screen;
+        assert.ok(devResult.kind === "result" && devResult.multi?.found === 1 && devResult.multi.rightNumbers.length >= 2, "Dev: partly right, with every right answer listed");
+        const reveal = (await host.until((v) => v.stage.phase === "r1Reveal", "the Host's reveal")).stage;
+        assert.ok(reveal.phase === "r1Reveal" && (reveal.correctIndexes?.length ?? 0) >= 2, "the Host marks every right option");
+        step("Multi-correct: 4 locked in over sockets, Dev's unlocked tick sent at time's up (partly right), every right option revealed");
+      }
       if (q === 1) {
         await command({ type: "showResults" });
         await host.until((v) => v.stage.phase === "r1Results", "results chart");

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { correctList, isMultiCorrect, packCorrect } from "../src/shared/quiz";
 
 /** One MCQ as written in data/questions.json. */
 export interface QuizQuestion {
@@ -10,8 +11,8 @@ export interface QuizQuestion {
   /** Path under /public (e.g. "/questions/hexagon.svg"), shown on the Host only. */
   image: string | null;
   options: [string, string, string, string];
-  /** Index (0–3) of the right option. */
-  correct: number;
+  /** Index (0–3) of the right option, or 2–4 indexes for a multi-correct question (Round 1 only). */
+  correct: number | number[];
   /** This question's own read time (ms), overriding the quiz's. From the quiz library only. */
   readMs?: number;
   /** This question's own answer time (ms), overriding the quiz's. From the quiz library only. */
@@ -63,8 +64,16 @@ export function loadQuestions(file = QUESTIONS_FILE): QuizQuestion[] {
       problems.push(`${where}: the 4 options must all be different.`);
     }
 
-    if (typeof q.correct !== "number" || !Number.isInteger(q.correct) || q.correct < 0 || q.correct > 3) {
-      problems.push(`${where}: "correct" must be 0, 1, 2 or 3 (the index of the right option).`);
+    const correctRaw = q.correct;
+    const isIndex = (n: unknown) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 3;
+    if (Array.isArray(correctRaw)) {
+      if (correctRaw.length === 0 || !correctRaw.every(isIndex) || new Set(correctRaw).size !== correctRaw.length) {
+        problems.push(`${where}: "correct" as a list must hold 0–3 indexes, each once (like [0, 2]).`);
+      } else if (correctRaw.length >= 2 && round !== 1) {
+        problems.push(`${where}: several right answers are allowed in Round 1 only: set "round": 1.`);
+      }
+    } else if (!isIndex(correctRaw)) {
+      problems.push(`${where}: "correct" must be 0, 1, 2 or 3 (the index of the right option), or a list like [0, 2] for a Round 1 question with several right answers.`);
     }
 
     const image = q.image === undefined || q.image === null || q.image === "" ? null : q.image;
@@ -79,7 +88,7 @@ export function loadQuestions(file = QUESTIONS_FILE): QuizQuestion[] {
         text: (q.text as string).trim(),
         image: image as string | null,
         options: (options as string[]).map((o) => o.trim()) as QuizQuestion["options"],
-        correct: q.correct as number,
+        correct: packCorrect(correctList(correctRaw as number | number[])),
       });
     }
   });
@@ -98,14 +107,16 @@ export function loadQuestions(file = QUESTIONS_FILE): QuizQuestion[] {
  * fresh opaque ids. Without it, the list is simply as long as it can be.
  */
 export function pickRound(all: QuizQuestion[], round: 1 | 2 | 3, count: number, used: Set<string>, reuse = false): QuizQuestion[] {
-  const tagged = all.filter((q) => q.round === round && !used.has(q.id));
-  const untagged = all.filter((q) => q.round === null && !used.has(q.id));
+  // Multi-correct questions are Round 1 only: the wild card and Blackout never take one.
+  const fits = (q: QuizQuestion) => round === 1 || !isMultiCorrect(q);
+  const tagged = all.filter((q) => q.round === round && !used.has(q.id) && fits(q));
+  const untagged = all.filter((q) => q.round === null && !used.has(q.id) && fits(q));
   const picked = [...tagged, ...untagged].slice(0, count);
   for (const q of picked) used.add(q.id);
   if (picked.length < count && reuse && all.length > 0) {
-    const pool = all.filter((q) => q.round === round || q.round === null);
-    const source = pool.length ? pool : all;
-    for (let i = 0; picked.length < count; i++) picked.push(source[i % source.length]);
+    const pool = all.filter((q) => (q.round === round || q.round === null) && fits(q));
+    const source = pool.length ? pool : all.filter(fits);
+    for (let i = 0; source.length && picked.length < count; i++) picked.push(source[i % source.length]);
   }
   return picked;
 }

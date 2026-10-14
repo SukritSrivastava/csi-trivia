@@ -63,7 +63,8 @@ import {
   type WildCardStanding,
   type WildCardState,
 } from "../src/shared/protocol";
-import { darknessStep, type GameConfig, R1_MAX_POINTS, round1Points } from "./config";
+import { correctList } from "../src/shared/quiz";
+import { darknessStep, type GameConfig, multiPoints, R1_MAX_POINTS, round1Points } from "./config";
 import { pickRound, type QuizQuestion } from "./questions";
 
 // ============================================================================
@@ -165,7 +166,18 @@ interface Run {
   hostOrder: number[];
   /** Who may answer: Round 1 decides per participant (late joiners); later rounds fix the list here. */
   players: Set<string>;
-  answers: Map<string, { optionIndex: number; elapsedMs: number }>;
+  /** The right option index(es) into question.options. */
+  correct: Set<number>;
+  /** Round 1 with 2+ right options: players tick, then lock in (docs/SPEC.md "Multi-correct questions"). */
+  multi: boolean;
+  /**
+   * Answers (single: the first tap; multi: the first lock-in, or the draft sent at time's up).
+   * `picks`: every option ticked (multi only; optionIndex is then the first of them).
+   * `auto`: a multi draft the server sent when time ran out (never locked in).
+   */
+  answers: Map<string, Answer>;
+  /** Multi only: each player's current ticks before they lock in. Not answers. */
+  drafts: Map<string, number[]>;
   /** Answer time for this question, including any "+5 seconds". */
   limitMs: number;
   /** Round 1: points and time applied per participant, so a void can undo them. */
@@ -174,6 +186,23 @@ interface Run {
   voided: boolean;
   /** Wild card / Blackout: the round's state before this question, restored by void or restart. */
   before: WildSnapshot | BlackoutSnapshot | null;
+}
+
+interface Answer {
+  optionIndex: number;
+  elapsedMs: number;
+  picks: number[] | null;
+  auto: boolean;
+}
+
+/** How a multi-correct answer did (docs/SPEC.md "Multi-correct questions"). */
+interface MultiMark {
+  found: number;
+  total: number;
+  wrong: number;
+  /** The speed score S of the lock-in (200 → 100). */
+  speed: number;
+  points: number;
 }
 
 interface WildSnapshot {
@@ -219,8 +248,11 @@ export interface QuizRecorder {
 
 export interface AnswerRecord {
   participantId: string;
-  /** Index into the question's options as written in the quiz; null = no answer. */
+  /** Index into the question's options as written in the quiz; null = no answer. Multi-correct: the first pick. */
   optionIndex: number | null;
+  /** Multi-correct: every option picked. null for a single-answer question or no answer. */
+  optionIndexes: number[] | null;
+  /** Multi-correct: perfect (every right option, no wrong one). */
   correct: boolean;
   points: number;
   elapsedMs: number | null;
@@ -457,18 +489,63 @@ export class QuizRoom {
     this.changed();
   }
 
-  /** Every round: the first tap counts; anyone who can't answer this question is ignored. */
+  /** Every round: the first tap counts; anyone who can't answer this question is ignored. Single-answer questions only. */
   answer(id: string, questionId: string, optionId: string) {
     const p = this.find(id);
     const run = this.run;
-    if (!p || !run || !ANSWER_PHASES.includes(this.phase) || this.paused || !this.timer) return;
+    if (!p || !run || run.multi || !ANSWER_PHASES.includes(this.phase) || this.paused || !this.timer) return;
     if (run.id !== questionId || !this.canAnswer(p, run) || run.answers.has(id)) return;
     const optionIndex = run.optionIds.indexOf(optionId);
     if (optionIndex === -1) return;
-    const elapsedMs = Math.min(run.limitMs, Math.max(0, this.timer.durationMs - (this.timer.endsAt - this.clock.now())));
-    run.answers.set(id, { optionIndex, elapsedMs });
+    run.answers.set(id, { optionIndex, elapsedMs: this.elapsedNow(run), picks: null, auto: false });
     this.changed();
     this.endAnswerIfEveryoneAnswered();
+  }
+
+  /**
+   * Multi-correct: the player's current ticks (a draft, not an answer). Kept so a
+   * refresh brings them back and time's up can send them. Ignored after lock-in.
+   */
+  select(id: string, questionId: string, optionIds: string[]) {
+    const p = this.find(id);
+    const run = this.run;
+    if (!p || !run || !run.multi || !ANSWER_PHASES.includes(this.phase) || !this.timer) return;
+    if (run.id !== questionId || !this.canAnswer(p, run) || run.answers.has(id)) return;
+    const picks = this.picksOf(run, optionIds);
+    if (!picks) return;
+    const before = run.drafts.get(id) ?? [];
+    if (before.join() === picks.join()) return;
+    if (picks.length) run.drafts.set(id, picks);
+    else run.drafts.delete(id);
+    this.changed();
+  }
+
+  /** Multi-correct: LOCK IN. The first lock-in counts (at the server's time); at least one option. */
+  lockIn(id: string, questionId: string, optionIds: string[]) {
+    const p = this.find(id);
+    const run = this.run;
+    if (!p || !run || !run.multi || !ANSWER_PHASES.includes(this.phase) || this.paused || !this.timer) return;
+    if (run.id !== questionId || !this.canAnswer(p, run) || run.answers.has(id)) return;
+    const picks = this.picksOf(run, optionIds);
+    if (!picks || picks.length === 0) return;
+    run.answers.set(id, { optionIndex: picks[0], elapsedMs: this.elapsedNow(run), picks, auto: false });
+    run.drafts.delete(id);
+    this.changed();
+    this.endAnswerIfEveryoneAnswered();
+  }
+
+  /** Option ids → option indexes (ascending, no repeats); null if any id isn't this question's. */
+  private picksOf(run: Run, optionIds: string[]): number[] | null {
+    if (!Array.isArray(optionIds) || optionIds.length > run.optionIds.length) return null;
+    const picks = optionIds.map((oid) => run.optionIds.indexOf(oid));
+    if (picks.some((i) => i < 0)) return null;
+    return [...new Set(picks)].sort((a, b) => a - b);
+  }
+
+  /** How far into the answer step we are (ms), as the server measures it. */
+  private elapsedNow(run: Run) {
+    const t = this.timer!;
+    return Math.min(run.limitMs, Math.max(0, t.durationMs - (t.endsAt - this.clock.now())));
   }
 
   /** Audience backs a finalist during predictions. */
@@ -662,6 +739,7 @@ export class QuizRoom {
     const players = new Set<string>();
     if (round === 2) for (const id of this.sudden ? this.sudden.alive : this.wildPlayerIds()) players.add(id);
     if (round === 3) for (const p of this.runners()) if (p.runner!.alive) players.add(p.id);
+    const correct = new Set(correctList(question.correct));
     this.run = {
       id: randomId(),
       round,
@@ -672,7 +750,11 @@ export class QuizRoom {
       optionIds: question.options.map(() => randomId()),
       hostOrder: shuffle([0, 1, 2, 3], this.random),
       players,
+      correct,
+      // Only Round 1 plays a question as multi-correct (the editor and the server keep them out of the other lists).
+      multi: round === 1 && correct.size >= 2,
       answers: new Map(),
+      drafts: new Map(),
       limitMs: this.answerMsFor(round, question),
       applied: new Map(),
       scored: false,
@@ -697,6 +779,7 @@ export class QuizRoom {
 
   private timesUp() {
     const run = this.run!;
+    if (run.multi) this.sendDrafts(run);
     if (run.round === 1) this.scoreRound1(run);
     if (run.round === 3) return this.go("boTimesUp", this.config.blackout.holds.timesUpMs, () => this.reveal());
     this.go(run.round === 1 ? "r1TimesUp" : "wcTimesUp");
@@ -725,19 +808,46 @@ export class QuizRoom {
 
   private answerMsFor(round: RoundNumber, question: QuizQuestion) {
     if (question.openMs) return question.openMs;
+    if (round === 1 && correctList(question.correct).length >= 2) return this.config.round1.multiAnswerMs;
     return round === 1 ? this.config.round1.answerMs : round === 2 ? this.config.wildCard.answerMs : this.config.blackout.answerMs;
   }
 
+  /** Right: the right option (single), or every right option and no wrong one (multi). */
   private isCorrect(run: Run, id: string) {
     const a = run.answers.get(id);
-    return !!a && a.optionIndex === run.question.correct;
+    if (!a) return false;
+    if (!run.multi) return run.correct.has(a.optionIndex);
+    const m = this.multiMark(run, a);
+    return m.found === m.total && m.wrong === 0;
+  }
+
+  /** A multi-correct answer, marked: right options found, wrong ones ticked, the speed score and the points. */
+  private multiMark(run: Run, a: Answer): MultiMark {
+    const picks = a.picks ?? [a.optionIndex];
+    const found = picks.filter((i) => run.correct.has(i)).length;
+    const wrong = picks.length - found;
+    const total = run.correct.size;
+    return { found, total, wrong, speed: round1Points(a.elapsedMs, run.limitMs), points: multiPoints(a.elapsedMs, run.limitMs, found, total, wrong) };
+  }
+
+  /** Multi-correct, time's up: anyone with ticks who never locked in has them sent, at the full time. */
+  private sendDrafts(run: Run) {
+    for (const [id, picks] of run.drafts) {
+      const p = this.find(id);
+      if (!p || run.answers.has(id) || !this.canAnswer(p, run) || picks.length === 0) continue;
+      run.answers.set(id, { optionIndex: picks[0], elapsedMs: run.limitMs, picks, auto: true });
+    }
+    run.drafts.clear();
   }
 
   // ==========================================================================
   // Round 1
   // ==========================================================================
 
-  /** correct = round(200 − 100 × elapsed / limit) (round1Points in config.ts); wrong or none = 0. */
+  /**
+   * correct = round(200 − 100 × elapsed / limit) (round1Points in config.ts); wrong or none = 0.
+   * Multi-correct: S × (found / total − 0.25 × wrong), never below 0 (multiPoints); elapsed = the lock-in.
+   */
   private scoreRound1(run: Run) {
     const rankBefore = new Map(this.round1Ranking().map((p, i) => [p.id, i + 1]));
     const records: AnswerRecord[] = [];
@@ -748,7 +858,8 @@ export class QuizRoom {
       let timeMs = run.limitMs;
       if (a) {
         timeMs = a.elapsedMs;
-        if (a.optionIndex === run.question.correct) points = round1Points(a.elapsedMs, run.limitMs);
+        if (run.multi) points = this.multiMark(run, a).points;
+        else if (run.correct.has(a.optionIndex)) points = round1Points(a.elapsedMs, run.limitMs);
       }
       p.prevRank = p.hasRank ? rankBefore.get(p.id) ?? null : null;
       p.hasRank = true;
@@ -759,7 +870,8 @@ export class QuizRoom {
       records.push({
         participantId: p.id,
         optionIndex: a ? a.optionIndex : null,
-        correct: !!a && a.optionIndex === run.question.correct,
+        optionIndexes: a?.picks ?? null,
+        correct: this.isCorrect(run, p.id),
         points,
         elapsedMs: a ? a.elapsedMs : null,
       });
@@ -996,7 +1108,7 @@ export class QuizRoom {
       if (!p || !r || !r.alive || p.status !== "finalist") continue;
       const a = run.answers.get(id);
       let delta = 0;
-      if (a && a.optionIndex === run.question.correct) {
+      if (a && run.correct.has(a.optionIndex)) {
         delta = a.elapsedMs < limit / 3 ? 3 : a.elapsedMs < (2 * limit) / 3 ? 2 : 1;
         r.timeMs += a.elapsedMs;
       } else {
@@ -1451,6 +1563,11 @@ export class QuizRoom {
       if (run.voided) return "idle";
       if (phase === "boDark") return "idle";
       if (run.round === 3 && !answered) return "idle";
+      // Multi-correct: happy with at least half of what a perfect answer at that moment would have scored.
+      if (run.multi && answered) {
+        const m = this.multiMark(run, run.answers.get(p.id)!);
+        return m.points >= 0.5 * m.speed ? "right" : "wrong";
+      }
       return this.isCorrect(run, p.id) ? "right" : "wrong";
     }
 
@@ -1468,7 +1585,7 @@ export class QuizRoom {
 
   /** Round 1 tie-break time: time over the questions played, plus the full time for those before joining. */
   private round1TieTime(p: Participant) {
-    const answerMs = (index: number) => this.round1Questions[index]?.openMs ?? this.config.round1.answerMs;
+    const answerMs = (index: number) => (this.round1Questions[index] ? this.answerMsFor(1, this.round1Questions[index]) : this.config.round1.answerMs);
     let missedBeforeJoining = 0;
     for (const [index, scored] of this.r1Scored) if (scored && index < p.firstQuestion) missedBeforeJoining += answerMs(index);
     return p.playedTimeMs + missedBeforeJoining;
@@ -1626,6 +1743,10 @@ export class QuizRoom {
     const startBlackout: PrimaryAction = { action: { type: "startBlackout" }, label: "Start Blackout" };
     const answeredLine = () => {
       const c = this.answerCounts();
+      if (c && this.run?.multi) {
+        const ticking = this.tickingCount();
+        return `Multi-correct: ${c.answered} of ${c.expected} locked in${ticking ? `, ${ticking} still ticking` : ""}.`;
+      }
       return c ? `${c.answered} of ${c.expected} answered.` : null;
     };
     const run = this.run;
@@ -1639,7 +1760,7 @@ export class QuizRoom {
       case "r1Intro":
         return {
           primary: { action: { type: "showQuestion" }, label: "Show question" },
-          hint: `Question 1 goes up. ${(this.round1Questions[0]?.readMs ?? this.config.round1.readMs) / 1000}s to read, then ${(this.round1Questions[0]?.openMs ?? this.config.round1.answerMs) / 1000}s to answer.`,
+          hint: `Question 1 goes up. ${(this.round1Questions[0]?.readMs ?? this.config.round1.readMs) / 1000}s to read, then ${(this.round1Questions[0] ? this.answerMsFor(1, this.round1Questions[0]) : this.config.round1.answerMs) / 1000}s to answer.`,
         };
       case "r1Read":
       case "wcRead":
@@ -1881,6 +2002,18 @@ export class QuizRoom {
     });
   }
 
+  /** Multi-correct answer step: players with ticks who haven't locked in yet (Admin's "ticking now"). */
+  private tickingCount(): number | null {
+    const run = this.run;
+    if (!run?.multi || !ANSWER_PHASES.includes(this.phase)) return null;
+    let n = 0;
+    for (const [id, picks] of run.drafts) {
+      const p = this.find(id);
+      if (p && picks.length && !run.answers.has(id) && this.canAnswer(p, run)) n += 1;
+    }
+    return n;
+  }
+
   private mcqQuestion(run: Run): McqQuestion {
     const count = run.round === 1 ? this.round1Questions.length : run.round === 2 ? this.config.wildCard.questions : null;
     return {
@@ -1889,6 +2022,7 @@ export class QuizRoom {
       number: run.number,
       count,
       suddenDeath: run.suddenDeath,
+      multi: run.multi,
       text: run.question.text,
       image: run.question.image,
       // Shown from the answer step on, numbered 1–4 in this order (the same on every phone).
@@ -1898,8 +2032,21 @@ export class QuizRoom {
 
   /** After a reveal only: the right answer and where it is in the 1–4 order. */
   private revealOf(run: Run): Reveal {
-    if (run.voided) return { correctText: null, correctIndex: null, voided: true };
-    return { correctText: run.question.options[run.question.correct], correctIndex: run.hostOrder.indexOf(run.question.correct), voided: false };
+    if (run.voided) return { correctText: null, correctIndex: null, correctIndexes: null, voided: true };
+    const slots = this.correctSlots(run);
+    return { correctText: this.correctTextOf(run), correctIndex: slots[0], correctIndexes: slots, voided: false };
+  }
+
+  /** The right options' places in the 1–4 order (0–3), ascending. */
+  private correctSlots(run: Run): number[] {
+    return run.hostOrder.map((i, slot) => (run.correct.has(i) ? slot : -1)).filter((slot) => slot >= 0);
+  }
+
+  /** The right answer's text; multi-correct: every right text in 1–4 order, joined with "; ". */
+  private correctTextOf(run: Run): string {
+    return this.correctSlots(run)
+      .map((slot) => run.question.options[run.hostOrder[slot]])
+      .join("; ");
   }
 
   /** The phone's answer buttons: the Host's order, so "2" means the same thing on every screen. */
@@ -1907,13 +2054,14 @@ export class QuizRoom {
     return run.hostOrder.map((i) => ({ id: run.optionIds[i], text: run.question.options[i] }));
   }
 
+  /** How many picked each option (multi-correct: every option ticked counts). */
   private optionResults(run: Run): OptionResult[] {
     const counts = [0, 0, 0, 0];
     for (const [id, a] of run.answers) {
       const p = this.find(id);
-      if (p && p.status !== "removed") counts[a.optionIndex] += 1;
+      if (p && p.status !== "removed") for (const i of a.picks ?? [a.optionIndex]) counts[i] += 1;
     }
-    return run.hostOrder.map((i, slot) => ({ number: slot + 1, text: run.question.options[i], count: counts[i], correct: i === run.question.correct }));
+    return run.hostOrder.map((i, slot) => ({ number: slot + 1, text: run.question.options[i], count: counts[i], correct: run.correct.has(i) }));
   }
 
   private leaderboard(): LeaderRow[] {
@@ -2062,7 +2210,9 @@ export class QuizRoom {
       const q = this.questionsFor(round)[index];
       if (!q) return null;
       const count = round === 1 ? this.round1Questions.length : round === 2 ? this.config.wildCard.questions : null;
-      return { round, number, count, suddenDeath, text: q.text, image: q.image, correctText: q.options[q.correct] };
+      const correctTexts = correctList(q.correct).map((i) => q.options[i]);
+      const multi = round === 1 && correctTexts.length >= 2;
+      return { round, number, count, suddenDeath, text: q.text, image: q.image, correctText: correctTexts.join("; "), correctTexts, multi };
     };
     const run = this.run;
     const phase = this.phase;
@@ -2205,15 +2355,34 @@ export class QuizRoom {
     const answer = run.answers.get(p.id);
     const gap = run.round === 3 && p.runner ? p.runner.position - this.dark : null;
     const base = { round: run.round, questionNumber: run.number, questionCount: this.mcqQuestion(run).count, suddenDeath: run.suddenDeath, gap };
-    const locked = (timeUp: boolean): ParticipantScreen => ({
-      kind: "lockedIn",
-      round: run.round,
-      choiceNumber: run.hostOrder.indexOf(answer!.optionIndex) + 1,
-      choiceText: run.question.options[answer!.optionIndex],
-      timeUp,
-      gap,
-    });
+    const locked = (timeUp: boolean): ParticipantScreen => {
+      // Multi-correct: every pick, by its number on screen.
+      const numbers = answer!.picks ? answer!.picks.map((i) => run.hostOrder.indexOf(i) + 1).sort((a, b) => a - b) : null;
+      return {
+        kind: "lockedIn",
+        round: run.round,
+        choiceNumber: numbers ? numbers[0] : run.hostOrder.indexOf(answer!.optionIndex) + 1,
+        choiceText: numbers ? numbers.map((n) => run.question.options[run.hostOrder[n - 1]]).join("; ") : run.question.options[answer!.optionIndex],
+        choiceNumbers: numbers,
+        sentAtTimeUp: answer!.auto,
+        timeUp,
+        gap,
+      };
+    };
     if (READ_PHASES.includes(this.phase)) return { kind: "eyesUp", ...base };
+    // Multi-correct: the options stay up with this player's own ticks (the draft, or frozen once locked in).
+    if (run.multi && ANSWER_PHASES.includes(this.phase)) {
+      const picks = answer ? answer.picks ?? [] : run.drafts.get(p.id) ?? [];
+      return {
+        kind: "answer",
+        ...base,
+        questionId: run.id,
+        options: this.optionsFor(run),
+        multi: { selectedIds: picks.map((i) => run.optionIds[i]), locked: !!answer },
+        text: null,
+        chosenId: null,
+      };
+    }
     // Blackout: the runner's phone keeps the question and its options up, the tapped one locked.
     if (run.round === 3 && ANSWER_PHASES.includes(this.phase)) {
       return {
@@ -2221,12 +2390,13 @@ export class QuizRoom {
         ...base,
         questionId: run.id,
         options: this.optionsFor(run),
+        multi: null,
         text: run.question.text,
         chosenId: answer ? run.optionIds[answer.optionIndex] : null,
       };
     }
     if (ANSWER_PHASES.includes(this.phase))
-      return answer ? locked(false) : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run), text: null, chosenId: null };
+      return answer ? locked(false) : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run), multi: null, text: null, chosenId: null };
     return answer ? locked(true) : { kind: "timesUp", round: run.round };
   }
 
@@ -2244,12 +2414,31 @@ export class QuizRoom {
       if (!REVEALED_PHASES.includes(phase)) return this.questionScreen(p, run);
       if (run.voided) return { kind: "voided", round: 1 };
       const a = run.answers.get(p.id);
+      if (run.multi) {
+        const m = a ? this.multiMark(run, a) : null;
+        const slots = this.correctSlots(run);
+        return {
+          kind: "result",
+          round: 1,
+          outcome: !m ? "missed" : m.found === m.total && m.wrong === 0 ? "correct" : m.points > 0 ? "partial" : "wrong",
+          correctText: this.correctTextOf(run),
+          tally: null,
+          multi: {
+            found: m?.found ?? 0,
+            total: run.correct.size,
+            wrongPicks: m?.wrong ?? 0,
+            rightNumbers: slots.map((slot) => slot + 1),
+            rightTexts: slots.map((slot) => run.question.options[run.hostOrder[slot]]),
+          },
+        };
+      }
       return {
         kind: "result",
         round: 1,
-        outcome: !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong",
-        correctText: run.question.options[run.question.correct],
+        outcome: !a ? "missed" : run.correct.has(a.optionIndex) ? "correct" : "wrong",
+        correctText: this.correctTextOf(run),
         tally: null,
+        multi: null,
       };
     }
 
@@ -2274,9 +2463,10 @@ export class QuizRoom {
       return {
         kind: "result",
         round: 2,
-        outcome: !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong",
-        correctText: run.question.options[run.question.correct],
+        outcome: !a ? "missed" : run.correct.has(a.optionIndex) ? "correct" : "wrong",
+        correctText: this.correctTextOf(run),
         tally: { right: p.wild.correct, asked: p.wild.asked },
+        multi: null,
       };
     }
 
@@ -2378,10 +2568,10 @@ export class QuizRoom {
     const options = run.hostOrder.map((i, slot) => ({
       number: slot + 1,
       text: run.question.options[i],
-      correct: i === run.question.correct,
+      correct: run.correct.has(i),
       count: counts ? counts[slot].count : null,
     }));
-    const correct = options.find((o) => o.correct)!;
+    const right = options.filter((o) => o.correct);
     const q = this.mcqQuestion(run);
     return {
       id: run.id,
@@ -2392,8 +2582,10 @@ export class QuizRoom {
       text: run.question.text,
       image: run.question.image,
       options,
-      correctNumber: correct.number,
-      correctText: correct.text,
+      multi: run.multi,
+      correctNumber: right[0].number,
+      correctNumbers: right.map((o) => o.number),
+      correctText: right.map((o) => o.text).join("; "),
       voided: run.voided,
     };
   }
@@ -2509,7 +2701,7 @@ export class QuizRoom {
       soundOn: this.soundOn,
       question: this.cached("adminQuestion", () => this.adminQuestion()),
       nextQuestion: this.preview(),
-      counts: { ...this.counts(), answered: answerCounts?.answered ?? null, expected: answerCounts?.expected ?? null },
+      counts: { ...this.counts(), answered: answerCounts?.answered ?? null, expected: answerCounts?.expected ?? null, ticking: this.tickingCount() },
       participants: this.adminParticipants(),
       finalists: this.cutOrder ? this.finalistInfos() : [],
       wildCard: this.wildCardState(true),

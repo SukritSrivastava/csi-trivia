@@ -13,6 +13,8 @@
  * and the autopilot holds always come from the preset.
  */
 
+import { MULTI_ANSWER_SECONDS } from "../src/shared/protocol";
+
 /** Round 1: an instant correct answer scores this… */
 export const R1_MAX_POINTS = 200;
 /** …and a correct answer at the last moment this. Speed slides linearly between them. */
@@ -24,6 +26,22 @@ export function round1Points(elapsedMs: number, limitMs: number): number {
   return Math.round(R1_MAX_POINTS - (R1_MAX_POINTS - R1_MIN_POINTS) * t);
 }
 
+/** Multi-correct (Round 1): each wrong option ticked takes this share of the speed score off. */
+export const MULTI_WRONG_PENALTY = 0.25;
+/** Multi-correct: the answer time when the question has no time of its own (the read time is unchanged). */
+export const MULTI_ANSWER_MS = MULTI_ANSWER_SECONDS * 1000;
+
+/**
+ * Round 1 points for a multi-correct question (docs/SPEC.md "Multi-correct questions"):
+ *   S = round1Points(elapsed, limit), the speed score of the lock-in (200 → 100)
+ *   points = max(0, round(S × (found / total − MULTI_WRONG_PENALTY × wrong)))
+ * found = right options ticked, total = right options, wrong = wrong options ticked.
+ */
+export function multiPoints(elapsedMs: number, limitMs: number, found: number, total: number, wrong: number): number {
+  const s = round1Points(elapsedMs, limitMs);
+  return Math.max(0, Math.round(s * (found / Math.max(1, total) - MULTI_WRONG_PENALTY * wrong)));
+}
+
 export interface GameConfig {
   name: "event" | "demo";
   round1: {
@@ -33,6 +51,8 @@ export interface GameConfig {
     readMs: number;
     /** Time to answer on phones. */
     answerMs: number;
+    /** Time to answer a multi-correct question that has no time of its own (MULTI_ANSWER_MS). */
+    multiAnswerMs: number;
   };
   /** Safe at the cut (ranks 1–N become finalists). The wild card winner makes it N + 1. */
   safe: number;
@@ -107,7 +127,7 @@ const HEAD_START = { top3: 2, safe: 1, wildCard: 0 };
 export const PRESETS: Record<GameConfig["name"], GameConfig> = {
   event: {
     name: "event",
-    round1: { questions: 20, ...QUESTION_TIMING },
+    round1: { questions: 20, ...QUESTION_TIMING, multiAnswerMs: MULTI_ANSWER_MS },
     safe: 9,
     wildCard: { questions: 5, suddenDeathMax: 3, ...QUESTION_TIMING },
     blackout: {
@@ -130,7 +150,7 @@ export const PRESETS: Record<GameConfig["name"], GameConfig> = {
   },
   demo: {
     name: "demo",
-    round1: { questions: 3, ...QUESTION_TIMING },
+    round1: { questions: 3, ...QUESTION_TIMING, multiAnswerMs: MULTI_ANSWER_MS },
     safe: 3,
     wildCard: { questions: 3, suddenDeathMax: 3, ...QUESTION_TIMING },
     blackout: {
@@ -171,7 +191,7 @@ export function withTimingScale(config: GameConfig, scale: number): GameConfig {
   const h = config.blackout.holds;
   return {
     ...config,
-    round1: { ...config.round1, readMs: s(config.round1.readMs), answerMs: s(config.round1.answerMs) },
+    round1: { ...config.round1, readMs: s(config.round1.readMs), answerMs: s(config.round1.answerMs), multiAnswerMs: s(config.round1.multiAnswerMs) },
     wildCard: { ...config.wildCard, readMs: s(config.wildCard.readMs), answerMs: s(config.wildCard.answerMs) },
     blackout: {
       ...config.blackout,

@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Quiz, QuizRules } from "../src/shared/protocol";
-import { blankQuestion, isLegacyQuiz } from "../src/shared/quiz";
+import { blankQuestion, isLegacyQuiz, isMultiCorrect } from "../src/shared/quiz";
 import type { GameConfig } from "./config";
 import type { Database } from "./db";
 import { loadQuestions, type QuizQuestion } from "./questions";
@@ -188,7 +188,8 @@ export function quizToGame(quiz: Quiz, base: GameConfig): { config: GameConfig; 
   return {
     config: {
       ...base,
-      round1: { questions: r.round1Questions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000 },
+      // A multi-correct question without its own time gets the preset's 15 s.
+      round1: { questions: r.round1Questions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000, multiAnswerMs: base.round1.multiAnswerMs },
       safe: r.safe,
       // The wild card round uses Round 1's timings (docs/SPEC.md v3).
       wildCard: { ...base.wildCard, questions: r.wildCardQuestions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000 },
@@ -209,30 +210,38 @@ export const DEMO_QUIZ_ID = "demo";
  * Makes sure the library isn't empty: adds a "Demo quiz" built from
  * data/questions.json. Each list takes the questions tagged for it, else the
  * untagged ones, repeated to fill the preset's counts (the demo reuses its 3
- * questions in every round; each run still gets fresh ids). A Demo quiz saved
- * before v3 (no Blackout list) or with too few Blackout questions is rebuilt.
+ * questions in every round; each run still gets fresh ids). Round 1 mixes in
+ * the multi-correct questions (tagged round 1): second and fourth. A Demo quiz
+ * saved before v3 (no Blackout list), with too few Blackout questions, or
+ * before multi-correct questions is rebuilt.
  */
 export async function ensureDemoQuiz(store: LibraryStore, config: GameConfig, questionsFile?: string) {
   const quizzes = await store.list();
   const demo = quizzes.find((q) => q.id === DEMO_QUIZ_ID);
-  // Rebuilt when it was saved before v3 (no Blackout list) or before v3.1 (too few Blackout questions for the autopilot).
-  // …or built for the other preset (switching between `npm run dev` and the event preset locally).
+  const all = loadQuestions(questionsFile);
+  const multis = all.filter((q) => q.round === 1 && isMultiCorrect(q));
+  // Rebuilt when it was saved before v3 (no Blackout list) or before v3.1 (too few Blackout questions for the autopilot),
+  // …or built for the other preset (switching between `npm run dev` and the event preset locally),
+  // …or before v3.2 (no multi-correct question in Round 1 while the file has some).
   const outdated =
     !!demo &&
     (isLegacyQuiz(demo) ||
       (Array.isArray(demo.blackout) ? demo.blackout.length : 0) < config.blackout.minQuestions ||
       demo.rules?.safe !== config.safe ||
-      demo.rules?.round1Questions !== config.round1.questions);
+      demo.rules?.round1Questions !== config.round1.questions ||
+      (multis.length > 0 && !(Array.isArray(demo.round1) && demo.round1.some((q) => Array.isArray(q?.correct)))));
   if (quizzes.length > 0 && !outdated) return;
-  const all = loadQuestions(questionsFile);
   const toLib = (q: QuizQuestion) => ({ ...blankQuestion(), text: q.text, options: q.options, correct: q.correct, image: q.image });
   const fill = (round: 1 | 2 | 3, count: number) => {
-    const tagged = all.filter((q) => q.round === round);
-    const pool = tagged.length ? tagged : all.filter((q) => q.round === null);
-    const source = pool.length ? pool : all;
+    // The wild card and Blackout never take a multi-correct question.
+    const tagged = all.filter((q) => q.round === round && !isMultiCorrect(q));
+    const pool = tagged.length ? tagged : all.filter((q) => q.round === null && !isMultiCorrect(q));
+    const source = pool.length ? pool : all.filter((q) => !isMultiCorrect(q));
     return Array.from({ length: Math.max(count, tagged.length) }, (_, i) => toLib(source[i % source.length]));
   };
+  // Round 1: the single-answer questions, with the multi-correct ones second and fourth (the demo plays the first 3).
   const round1 = fill(1, config.round1.questions);
+  multis.forEach((q, i) => round1.splice(Math.min(round1.length, 1 + i * 2), 0, toLib(q)));
   const wildcard = fill(2, config.wildCard.questions + config.wildCard.suddenDeathMax);
   const blackout = fill(3, config.blackout.minQuestions);
   await store.save({

@@ -48,6 +48,9 @@ export const NAME_MAX_LENGTH = 20;
 /** How much "+5 seconds" adds to a running timer. */
 export const ADD_TIME_MS = 5_000;
 
+/** A multi-correct Round 1 question's answer time when it has no time of its own (server/config.ts MULTI_ANSWER_MS). */
+export const MULTI_ANSWER_SECONDS = 15;
+
 /** Letters for the 4 options, as shown on the Host in the buzzer round and on Admin. */
 export const OPTION_LETTERS = ["A", "B", "C", "D"] as const;
 export type OptionLetter = (typeof OPTION_LETTERS)[number];
@@ -166,6 +169,8 @@ export function hslToHex(h: number, s: number, l: number): string {
  *       r1Read        8s, question on Host, "Eyes up" on phones       (click: Show question / Next question)
  *       r1Answer      8s, options on phones; ends early when every
  *                     connected player has answered                   (timer)
+ *                     (a multi-correct question: 15s, players tick then
+ *                     LOCK IN; it ends early once every one has locked in)
  *       r1TimesUp     holds                                           (timer)
  *       r1Reveal      the correct answer; phones right / wrong        (click: Reveal answer)
  *       r1Results     how many picked each option (optional)          (click: Show results)
@@ -304,6 +309,11 @@ export interface McqQuestion {
   count: number | null;
   /** A wild card sudden-death question. */
   suddenDeath: boolean;
+  /**
+   * Round 1 only: a multi-correct question (2–4 right options). Players tick every
+   * option they think is right, then LOCK IN. Never says HOW MANY are right.
+   */
+  multi: boolean;
   text: string;
   /** "/questions/x.svg" on this site, or "/images/<id>" on the game server (assetUrl), or null. */
   image: string | null;
@@ -331,10 +341,12 @@ export interface OptionResult {
 
 /** After a reveal (Host, every round). */
 export interface Reveal {
-  /** null when the question was voided. */
+  /** null when the question was voided. A multi-correct question: every right text, in 1–4 order, joined with "; ". */
   correctText: string | null;
-  /** 0–3 into McqQuestion.options; null when voided. */
+  /** 0–3 into McqQuestion.options; null when voided. A multi-correct question: the first right one. */
   correctIndex: number | null;
+  /** Every right option, 0–3 into McqQuestion.options in 1–4 order (one entry for a single-answer question). null when voided. */
+  correctIndexes: number[] | null;
   voided: boolean;
 }
 
@@ -580,7 +592,11 @@ export type ParticipantScreen =
       /** Blackout runners: steps ahead of the dark. null in other rounds. */
       gap: number | null;
     }
-  /** The 4 options in the Host's order (number = position + 1). Never a correct flag. First tap locks. */
+  /**
+   * The 4 options in the Host's order (number = position + 1). Never a correct flag.
+   * Single-answer: first tap locks. Multi-correct (Round 1): taps tick and untick,
+   * LOCK IN sends them (participant:select / participant:answer with optionIds).
+   */
   | {
       kind: "answer";
       round: RoundNumber;
@@ -589,6 +605,12 @@ export type ParticipantScreen =
       questionCount: number | null;
       suddenDeath: boolean;
       options: AnswerOption[];
+      /**
+       * Multi-correct questions only (null otherwise): this player's OWN ticks (option
+       * ids; the draft, or what they locked in), restored after a refresh, and whether
+       * they have locked in (ticks frozen). Never says which or how many are right.
+       */
+      multi: { selectedIds: string[]; locked: boolean } | null;
       /** Blackout runners: steps ahead of the dark. null in other rounds. */
       gap: number | null;
       /** Blackout only: the question text (the runner's phone shows question + options). null in other rounds. */
@@ -603,24 +625,37 @@ export type ParticipantScreen =
   | {
       kind: "lockedIn";
       round: RoundNumber;
-      /** 1–4: the number of the option they tapped. */
+      /** 1–4: the number of the option they tapped (multi-correct: the first of their picks). */
       choiceNumber: number;
       choiceText: string;
+      /** Multi-correct: every option they picked, 1–4, ascending. null for a single-answer question. */
+      choiceNumbers: number[] | null;
+      /** Multi-correct: they never pressed LOCK IN; the server sent their ticks when time ran out. */
+      sentAtTimeUp: boolean;
       timeUp: boolean;
       /** Blackout runners: steps ahead of the dark. null in other rounds. */
       gap: number | null;
     }
   /** Time ran out without an answer. */
   | { kind: "timesUp"; round: RoundNumber }
-  /** After a Round 1 or wild card reveal: right or wrong (no points, no rank). */
+  /**
+   * After a Round 1 or wild card reveal: right or wrong (no points, no rank).
+   * "partial": a multi-correct question that scored some points but wasn't perfect.
+   */
   | {
       kind: "result";
       round: 1 | 2;
-      outcome: "correct" | "wrong" | "missed";
-      /** The right answer, for "It was …" (after the reveal only, so it's safe). */
+      outcome: "correct" | "partial" | "wrong" | "missed";
+      /** The right answer, for "It was …" (after the reveal only, so it's safe). Multi-correct: every right text joined with "; ". */
       correctText: string;
       /** Wild card: "2 of 3 right". null in Round 1. (Not named "correct", so it can't be mistaken for an answer key.) */
       tally: { right: number; asked: number } | null;
+      /**
+       * Multi-correct questions (after the reveal): `found` of `total` right options
+       * ticked, `wrongPicks` wrong ones ticked, and every right option's number (1–4,
+       * ascending) and text. null for a single-answer question.
+       */
+      multi: { found: number; total: number; wrongPicks: number; rightNumbers: number[]; rightTexts: string[] } | null;
     }
   /** The quizmaster cancelled the question. */
   | { kind: "voided"; round: RoundNumber }
@@ -827,8 +862,13 @@ export interface AdminQuestion {
   image: string | null;
   /** In the Host's 1–4 order. `count`: how many picked it, after the reveal (null before). */
   options: { number: number; text: string; correct: boolean; count: number | null }[];
-  /** 1–4. */
+  /** A multi-correct question (Round 1): 2–4 right options, players tick and lock in. */
+  multi: boolean;
+  /** 1–4 (multi-correct: the first right one). */
   correctNumber: number;
+  /** Every right option, 1–4, ascending (one entry for a single-answer question). */
+  correctNumbers: number[];
+  /** Multi-correct: every right text, joined with "; ". */
   correctText: string;
   /** Cancelled by Void question: it doesn't count. */
   voided: boolean;
@@ -842,8 +882,12 @@ export interface QuestionPreview {
   suddenDeath: boolean;
   text: string;
   image: string | null;
-  /** Its right answer (Admin only: the "Next up" card). */
+  /** Its right answer (Admin only: the "Next up" card). Multi-correct: every right text joined with "; ". */
   correctText: string;
+  /** Every right answer's text (one for a single-answer question). */
+  correctTexts: string[];
+  /** A multi-correct question. */
+  multi: boolean;
 }
 
 /** Blackout's autopilot as Admin sees it. */
@@ -930,9 +974,11 @@ export interface AdminView {
   question: AdminQuestion | null;
   nextQuestion: QuestionPreview | null;
   counts: Counts & {
-    /** Current question: answered / expected. null outside an answer step. */
+    /** Current question: answered / expected (multi-correct: locked in). null outside an answer step. */
     answered: number | null;
     expected: number | null;
+    /** Multi-correct answer step: players with ticks who haven't locked in yet. null otherwise. */
+    ticking: number | null;
   };
   /** Everyone who ever joined, removed ones included, in join order. */
   participants: AdminParticipant[];
@@ -981,8 +1027,12 @@ export interface LibraryQuestion {
   id: string;
   text: string;
   options: [string, string, string, string];
-  /** Index (0–3) of the right option. */
-  correct: number;
+  /**
+   * Index (0–3) of the right option, or a list of 2–4 indexes for a multi-correct
+   * question (Round 1 list only). A one-entry list is cleaned to a plain number,
+   * so quizzes saved before multi-correct read exactly as they did.
+   */
+  correct: number | number[];
   /** "/images/<id>" served by the game server (or a /public path), shown on the Host only. */
   image: string | null;
   /** This question's read time, overriding the quiz's (null = use the quiz's). */
@@ -1124,8 +1174,18 @@ export interface ClientToServerEvents {
    * Every round. First tap wins; later taps are ignored, and so is an answer from
    * anyone who can't answer the current question (finalists in the wild card
    * round, caught runners, the audience).
+   * Multi-correct questions (Round 1): LOCK IN sends `optionIds` (1–4 of the
+   * question's option ids) instead of `optionId`. First lock-in wins. Each shape
+   * is ignored on the other kind of question.
    */
-  "participant:answer": (payload: { questionId: string; optionId: string }) => void;
+  "participant:answer": (payload: { questionId: string; optionId: string } | { questionId: string; optionIds: string[] }) => void;
+  /**
+   * Multi-correct questions only: the player's current ticks (the draft), sent on
+   * every tap. Not an answer: it doesn't end the step early. When time runs out
+   * without a LOCK IN, the server sends the draft for them (at the full time).
+   * Ignored after their lock-in, and on single-answer questions.
+   */
+  "participant:select": (payload: { questionId: string; optionIds: string[] }) => void;
   /** Audience backs a finalist (can change until Blackout starts). */
   "participant:back": (payload: { finalistId: string }) => void;
   /** The quiz page was hidden/shown (switched app or tab). Flag for Admin only. */

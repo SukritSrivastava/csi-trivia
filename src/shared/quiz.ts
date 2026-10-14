@@ -17,19 +17,49 @@ export function blankQuestion(): LibraryQuestion {
 }
 
 // ---------------------------------------------------------------------------
+// Right answers: one index, or a list for a multi-correct question
+// ---------------------------------------------------------------------------
+
+const isIndex = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 3;
+
+/** Every right option's index (0–3), ascending and without repeats. Invalid entries are dropped. */
+export function correctList(correct: number | number[]): number[] {
+  const all = Array.isArray(correct) ? correct : [correct];
+  return [...new Set(all.filter(isIndex))].sort((a, b) => a - b);
+}
+
+/** 2 or more right options: a multi-correct question (Round 1 only). */
+export function isMultiCorrect(q: { correct: number | number[] }): boolean {
+  return correctList(q.correct).length >= 2;
+}
+
+/** A plain index for one right answer, a list for 2+ (how a question stores it). */
+export function packCorrect(indexes: number[]): number | number[] {
+  const list = correctList(indexes);
+  return list.length === 1 ? list[0] : list;
+}
+
+// ---------------------------------------------------------------------------
 // Checking
 // ---------------------------------------------------------------------------
 
 const inRange = (n: unknown, r: { min: number; max: number }) => typeof n === "number" && Number.isInteger(n) && n >= r.min && n <= r.max;
 
-/** Problems with one question, in plain words (empty = fine). `where` e.g. "Round 1, question 3". */
-export function questionProblems(q: LibraryQuestion, where: string): string[] {
+/**
+ * Problems with one question, in plain words (empty = fine). `where` e.g. "Round 1, question 3".
+ * `list`: which list it sits in (only Round 1 may have more than one right answer).
+ */
+export function questionProblems(q: LibraryQuestion, where: string, list?: ListName): string[] {
   const p: string[] = [];
   if (!q.text.trim()) p.push(`${where}: the question is empty.`);
   const filled = q.options.map((o) => o.trim());
   if (filled.some((o) => !o)) p.push(`${where}: all 4 answers need text.`);
   else if (new Set(filled.map((o) => o.toLowerCase())).size !== 4) p.push(`${where}: the 4 answers must all be different.`);
-  if (!Number.isInteger(q.correct) || q.correct < 0 || q.correct > 3) p.push(`${where}: pick the right answer.`);
+  const right = Array.isArray(q.correct) ? q.correct : [q.correct];
+  if (right.length === 0 || !right.every(isIndex) || new Set(right).size !== right.length) p.push(`${where}: pick the right answer.`);
+  else if (right.length >= 2 && list && list !== "round1") {
+    p.push(`${where}: only Round 1 questions can have more than one right answer. Tick just one.`);
+  }
   if (q.readSeconds !== null && !inRange(q.readSeconds, L.readSeconds)) {
     p.push(`${where}: read time must be ${L.readSeconds.min}–${L.readSeconds.max} s.`);
   }
@@ -76,7 +106,7 @@ export function quizProblems(quiz: Quiz, minBlackout = 1): string[] {
   if (!quiz.title.trim()) p.push("Give the quiz a title.");
   for (const list of LIST_NAMES) {
     if (quiz[list].length === 0) p.push(`Add at least one ${LIST_LABELS[list]} question.`);
-    quiz[list].forEach((q, i) => p.push(...questionProblems(q, `${LIST_LABELS[list]}, question ${i + 1}`)));
+    quiz[list].forEach((q, i) => p.push(...questionProblems(q, `${LIST_LABELS[list]}, question ${i + 1}`, list)));
   }
   if (quiz.blackout.length > 0 && quiz.blackout.length < minBlackout) {
     p.push(`Blackout needs at least ${minBlackout} questions (it plays until one runner is left); the list has ${quiz.blackout.length}.`);
@@ -101,7 +131,8 @@ export function cleanQuestion(raw: unknown): LibraryQuestion {
     id: typeof q.id === "string" && /^[\w-]{1,40}$/.test(q.id) ? q.id : newId(),
     text: text(q.text, L.questionText),
     options: [0, 1, 2, 3].map((i) => text(opts[i], L.optionText)) as LibraryQuestion["options"],
-    correct: Math.min(3, Math.max(0, int(q.correct, 0))),
+    // A list (multi-correct) keeps its valid entries; one entry, a number, or anything else reads as before.
+    correct: Array.isArray(q.correct) && correctList(q.correct).length > 0 ? packCorrect(q.correct) : Math.min(3, Math.max(0, int(q.correct, 0))),
     image: imagePath(q.image),
     readSeconds: optInt(q.readSeconds),
     openSeconds: optInt(q.openSeconds),
@@ -174,6 +205,35 @@ function correctIndex(value: string, options: string[]): number {
 }
 
 /**
+ * One right answer as correctIndex reads it, or a list for a multi-correct
+ * question: "1,3", "1 3", "1;3", "A, C" (letters or 1–4, the same convention as a
+ * single answer). Returns a number, a list of 2+, or null if it can't be read.
+ */
+function correctValue(value: string, options: string[]): number | number[] | null {
+  const single = correctIndex(value, options);
+  if (single >= 0) return single;
+  const parts = value.split(/[\s,;/&+]+|\band\b/i).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const list = parts.map((part) => (/^[a-d1-4][).:\]]?$/i.test(part) ? correctIndex(part, options) : -1));
+  if (list.some((i) => i < 0) || new Set(list).size !== list.length) return null;
+  return packCorrect(list);
+}
+
+/** A right answer as the import/export columns write it: "B", or "A,C" for a multi-correct question. */
+function correctLetters(correct: number | number[]): string {
+  return correctList(correct).map((i) => "ABCD"[i]).join(",");
+}
+
+/** Adds an imported question to its list; a multi-correct question outside Round 1 is refused as a problem. */
+function place(out: ImportResult, into: ListName, q: LibraryQuestion, where: string) {
+  if (into !== "round1" && isMultiCorrect(q)) {
+    out.problems.push(`${where}: several right answers are allowed in Round 1 only, not in ${LIST_LABELS[into]}. Mark just one, or move it to Round 1.`);
+    return;
+  }
+  out[into].push(q);
+}
+
+/**
  * Pasted text. Questions are separated by a blank line:
  *
  *   What does LLM stand for?
@@ -183,7 +243,8 @@ function correctIndex(value: string, options: string[]): number {
  *   Long-term Language Memory
  *
  * Answers may start with "A)", "b.", "1)" etc. A line "# Wild card", "# Blackout"
- * (or "# Round 1") puts the questions after it into that list.
+ * (or "# Round 1") puts the questions after it into that list. Round 1 questions
+ * may have several right answers: mark each with *, or "Answer: A, C".
  */
 export function importText(input: string, target: ListName): ImportResult {
   const out: ImportResult = { round1: [], wildcard: [], blackout: [], problems: [] };
@@ -219,21 +280,22 @@ export function importText(input: string, target: ListName): ImportResult {
       out.problems.push(`${where}: needs exactly 4 answers (found ${rest.length}).`);
       return;
     }
-    let correct = -1;
+    // Several * marks (or "Answer: A, C") = a multi-correct question.
+    const marked: number[] = [];
     const options = rest.map((l, i) => {
       let o = l;
       if (/^\*|\*$|\(correct\)$/i.test(o)) {
-        correct = i;
+        marked.push(i);
         o = o.replace(/^\*\s*|\s*\*$|\s*\(correct\)$/gi, "");
       }
       return o.replace(LETTER, "").replace(/^[-•]\s+/, "").trim();
     });
-    if (answerLine) correct = correctIndex(answerLine, options);
-    if (correct < 0) {
-      out.problems.push(`${where}: mark the right answer with * (or add a line "Answer: B").`);
+    const correct = answerLine ? correctValue(answerLine, options) : marked.length ? packCorrect(marked) : null;
+    if (correct === null) {
+      out.problems.push(`${where}: mark the right answer with * (or add a line "Answer: B"; several right answers: "Answer: A, C").`);
       return;
     }
-    out[into].push({ ...blankQuestion(), text: text(question, L.questionText), options: options.map((o) => text(o, L.optionText)) as LibraryQuestion["options"], correct });
+    place(out, into, { ...blankQuestion(), text: text(question, L.questionText), options: options.map((o) => text(o, L.optionText)) as LibraryQuestion["options"], correct }, where);
   });
   return out;
 }
@@ -286,7 +348,8 @@ const HEADERS: Record<string, string[]> = {
 
 /**
  * Spreadsheet rows (from CSV or Excel). The first row is the header; columns are
- * matched by name: question, A, B, C, D, correct (A–D, 1–4 or the answer's text),
+ * matched by name: question, A, B, C, D, correct (A–D, 1–4 or the answer's text;
+ * a list such as "A,C", "1 3" or "1;3" for a multi-correct Round 1 question),
  * and optionally round (1 / wild card / blackout), read seconds, answer seconds.
  */
 export function importRows(rows: unknown[][], target: ListName): ImportResult {
@@ -308,20 +371,25 @@ export function importRows(rows: unknown[][], target: ListName): ImportResult {
     const where = `Row ${i + 2}`;
     if (!cell("question") && !cell("a")) return; // blank row
     const options = [cell("a"), cell("b"), cell("c"), cell("d")];
-    const correct = correctIndex(cell("correct"), options);
-    if (correct < 0) {
-      out.problems.push(`${where}: "correct" should be A, B, C, D (or 1–4, or the right answer's text); got "${cell("correct")}".`);
+    const correct = correctValue(cell("correct"), options);
+    if (correct === null) {
+      out.problems.push(`${where}: "correct" should be A, B, C, D (or 1–4, or the right answer's text; several right answers: "A,C"); got "${cell("correct")}".`);
       return;
     }
     const secs = (v: string) => (v && Number.isFinite(Number(v)) ? Math.round(Number(v)) : null);
-    out[roundOf(cell("round"), target)].push({
-      ...blankQuestion(),
-      text: text(cell("question"), L.questionText),
-      options: options.map((o) => text(o, L.optionText)) as LibraryQuestion["options"],
-      correct,
-      readSeconds: secs(cell("read")),
-      openSeconds: secs(cell("open")),
-    });
+    place(
+      out,
+      roundOf(cell("round"), target),
+      {
+        ...blankQuestion(),
+        text: text(cell("question"), L.questionText),
+        options: options.map((o) => text(o, L.optionText)) as LibraryQuestion["options"],
+        correct,
+        readSeconds: secs(cell("read")),
+        openSeconds: secs(cell("open")),
+      },
+      where,
+    );
   });
   return out;
 }
@@ -342,10 +410,11 @@ export function importJson(input: string, target: ListName): ImportResult {
   }
   const d = data as Record<string, unknown>;
   if (d && typeof d === "object" && ["round1", "wildcard", "blackout", "buzzer"].some((k) => Array.isArray(d[k]))) {
-    const take = (v: unknown) => (Array.isArray(v) ? v : []).map((q) => ({ ...cleanQuestion(q), id: newId() }));
-    out.round1 = take(d.round1);
-    out.wildcard = take(Array.isArray(d.wildcard) ? d.wildcard : d.buzzer);
-    out.blackout = take(d.blackout);
+    const take = (into: ListName, v: unknown) =>
+      (Array.isArray(v) ? v : []).forEach((q, i) => place(out, into, { ...cleanQuestion(q), id: newId() }, `${LIST_LABELS[into]}, question ${i + 1}`));
+    take("round1", d.round1);
+    take("wildcard", Array.isArray(d.wildcard) ? d.wildcard : d.buzzer);
+    take("blackout", d.blackout);
     return out;
   }
   const list = Array.isArray(data) ? data : Array.isArray(d?.questions) ? (d.questions as unknown[]) : null;
@@ -353,10 +422,10 @@ export function importJson(input: string, target: ListName): ImportResult {
     out.problems.push('Expected a list of questions, { "questions": [...] }, or a quiz exported from here.');
     return out;
   }
-  list.forEach((raw) => {
+  list.forEach((raw, i) => {
     const q = (raw ?? {}) as Record<string, unknown>;
     const into: ListName = q.round === 3 ? "blackout" : q.round === 2 ? "wildcard" : q.round === 1 ? "round1" : target;
-    out[into].push({ ...cleanQuestion({ ...q, text: q.text ?? q.question, correct: q.correct ?? q.correctOption }), id: newId() });
+    place(out, into, { ...cleanQuestion({ ...q, text: q.text ?? q.question, correct: q.correct ?? q.correctOption }), id: newId() }, `Question ${i + 1}`);
   });
   return out;
 }
@@ -375,7 +444,7 @@ const csvCell = (v: string | number | null) => {
 /** The quiz as a spreadsheet (the same columns the import reads). */
 export function quizToCsv(quiz: Pick<Quiz, ListName>): string {
   const line = (q: LibraryQuestion, round: string) =>
-    [q.text, ...q.options, "ABCD"[q.correct], round, q.readSeconds, q.openSeconds].map(csvCell).join(",");
+    [q.text, ...q.options, correctLetters(q.correct), round, q.readSeconds, q.openSeconds].map(csvCell).join(",");
   return (
     [
       TEMPLATE_HEADER.join(","),
@@ -391,6 +460,8 @@ export const TEMPLATE_CSV = quizToCsv({
   round1: [
     { ...blankQuestion(), text: "What does LLM stand for?", options: ["Large Language Model", "Linear Logic Machine", "Layered Learning Matrix", "Long-term Language Memory"], correct: 0 },
     { ...blankQuestion(), text: "In an AI agent, what is a tool call?", options: ["The agent asking a program to do something", "A phone call to support", "A bug report", "A software licence"], correct: 0, openSeconds: 12 },
+    // Round 1 only: several right answers ("A,C"). Players tick all that apply, then lock in.
+    { ...blankQuestion(), text: "Which of these are AI companies?", options: ["Anthropic", "Nestlé", "OpenAI", "IKEA"], correct: [0, 2] },
   ],
   wildcard: [{ ...blankQuestion(), text: "Which company makes Claude?", options: ["Anthropic", "OpenAI", "Google", "Meta"], correct: 0 }],
   blackout: [{ ...blankQuestion(), text: "What does an agent's memory let it do?", options: ["Remember earlier steps", "Run faster", "Use less power", "Skip its tools"], correct: 0 }],

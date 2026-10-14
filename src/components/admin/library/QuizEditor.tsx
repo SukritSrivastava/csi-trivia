@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { assetUrl } from "@/lib/socket";
 import type { LibraryQuestion, Quiz } from "@/shared/protocol";
 import { QUIZ_LIMITS } from "@/shared/protocol";
-import { type ListName, quizProblems } from "@/shared/quiz";
+import { correctList, isMultiCorrect, type ListName, quizProblems } from "@/shared/quiz";
 import { useAdminStore } from "@/stores/adminStore";
 import { ControlButton, Panel, useConfirm } from "../parts";
 import { ImportPanel } from "./ImportPanel";
@@ -344,8 +344,13 @@ function QuestionCard({
         <span className="w-8 shrink-0 font-term text-[2rem] leading-none text-amber">{number}</span>
         <span className="min-w-0 flex-1">
           <span className="line-clamp-2 text-[16px] leading-snug text-bright">{q.text || <span className="text-wrong">Empty question</span>}</span>
-          <span className="mt-1 block truncate text-[14px] text-mint">✓ {q.options[q.correct] || "—"}</span>
+          <span className="mt-1 block truncate text-[14px] text-mint">✓ {correctList(q.correct).map((i) => q.options[i] || "—").join(" · ") || "—"}</span>
           <span className="mt-0.5 flex flex-wrap gap-x-3 text-[14px] text-fog">
+            {isMultiCorrect(q) && (
+              <span className="text-amber" data-testid="multi-tag">
+                multi-correct: {correctList(q.correct).length} right
+              </span>
+            )}
             {spare && <span>spare</span>}
             {q.image && <span>picture</span>}
             {(q.readSeconds !== null || q.openSeconds !== null) && (

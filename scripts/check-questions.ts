@@ -6,7 +6,9 @@
  *   npm run check-questions -- --file my-questions.json
  *
  * Errors (exit code 1): not exactly 4 different options, a "correct" that isn't
- * 0–3, duplicate ids, a missing image file, not enough questions for the preset.
+ * 0–3 (or a list of them), a multi-correct question outside Round 1 (in the file
+ * or a library quiz), duplicate ids, a missing image file, not enough questions for the preset.
+ * Prints how many multi-correct questions each list has.
  * Warnings: images that won't read on the Host's dark card (transparent
  * background with dark lines), buzzer questions that would have to repeat.
  * Also checks every quiz saved in the local library (data/library/quizzes/).
@@ -17,7 +19,7 @@ import { inflateSync } from "node:zlib";
 import { loadConfig } from "../server/config";
 import { loadQuestions, pickRound, QUESTIONS_FILE } from "../server/questions";
 import type { Quiz } from "../src/shared/protocol";
-import { cleanQuiz, quizProblems } from "../src/shared/quiz";
+import { cleanQuiz, isMultiCorrect, quizProblems } from "../src/shared/quiz";
 import { defaultRules } from "../server/library";
 
 function arg(name: string): string | undefined {
@@ -194,6 +196,8 @@ if (questions.length) {
   }
   const tagged = (n: 1 | 2 | 3 | null) => questions.filter((q) => q.round === n).length;
   console.log(`  ${questions.length} questions: ${tagged(1)} tagged Round 1, ${tagged(2)} wild card, ${tagged(3)} Blackout, ${tagged(null)} any round`);
+  // (A multi-correct question outside Round 1 is already an error from loadQuestions.)
+  console.log(`  ${questions.filter((q) => isMultiCorrect(q)).length} multi-correct (Round 1 only; 15 s to answer unless they have their own time)`);
   console.log(`  ${questions.filter((q) => q.image).length} with an image`);
   for (const l of lines) console.log(l);
   console.log(`  Top ${config.safe} safe at the cut; the wild card makes ${config.safe + 1} Blackout runners`);
@@ -211,11 +215,13 @@ if (existsSync(libDir)) {
       // Saved before v3? Upgraded the way the server reads it (buzzer list → Wild card).
       const quiz = (cleanQuiz(raw, defaultRules(config), true) ?? raw) as Quiz;
       const problems = quizProblems(quiz, config.blackout.minQuestions);
-      for (const p of problems) warnings.push(`Library quiz "${quiz.title}": ${p}`);
+      // A multi-correct question outside Round 1 is an error; anything else that stops it opening is a warning (drafts are fine).
+      for (const p of problems) (p.includes("only Round 1") ? errors : warnings).push(`Library quiz "${quiz.title}": ${p}`);
       const lists = { round1: quiz.round1 ?? [], wildcard: quiz.wildcard ?? (quiz as unknown as { buzzer?: Quiz["round1"] }).buzzer ?? [], blackout: quiz.blackout ?? [] };
       [...lists.round1, ...lists.wildcard, ...lists.blackout].forEach((q, i) => q.image && checkImage(q.image, `Library quiz "${quiz.title}", question ${i + 1}`));
+      const multi = (list: Quiz["round1"]) => list.filter((q) => isMultiCorrect(q)).length;
       console.log(
-        `  Library: "${quiz.title}" (${lists.round1.length} Round 1 + ${lists.wildcard.length} wild card + ${lists.blackout.length} Blackout)${problems.length ? ", not ready" : ", ready to play"}`,
+        `  Library: "${quiz.title}" (${lists.round1.length} Round 1 + ${lists.wildcard.length} wild card + ${lists.blackout.length} Blackout; multi-correct: ${multi(lists.round1)} / ${multi(lists.wildcard)} / ${multi(lists.blackout)})${problems.length ? ", not ready" : ", ready to play"}`,
       );
     } catch {
       warnings.push(`Library file ${name} isn't valid JSON.`);

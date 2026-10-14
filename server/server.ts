@@ -308,7 +308,19 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
       ack(result);
     });
     socket.on("participant:answer", (payload) =>
-      rooms.asParticipant(socket, (room, id) => room.answer(id, str(payload?.questionId, 40), str(payload?.optionId, 40))),
+      rooms.asParticipant(socket, (room, id) => {
+        const questionId = str(payload?.questionId, 40);
+        // Multi-correct LOCK IN sends optionIds; a single-answer tap sends optionId.
+        const ids = optionIdList((payload as { optionIds?: unknown } | undefined)?.optionIds);
+        if (ids) room.lockIn(id, questionId, ids);
+        else room.answer(id, questionId, str((payload as { optionId?: unknown } | undefined)?.optionId, 40));
+      }),
+    );
+    socket.on("participant:select", (payload) =>
+      rooms.asParticipant(socket, (room, id) => {
+        const ids = optionIdList(payload?.optionIds);
+        if (ids) room.select(id, str(payload?.questionId, 40), ids);
+      }),
     );
     socket.on("participant:back", (payload) => rooms.asParticipant(socket, (room, id) => room.back(id, str(payload?.finalistId, 40))));
     socket.on("participant:visibility", (payload) =>
@@ -358,6 +370,12 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
 
 function str(value: unknown, max: number): string {
   return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+/** A multi-correct pick list from the network: up to 4 option id strings, else null. */
+function optionIdList(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 4 || !value.every((v) => typeof v === "string")) return null;
+  return value.map((v: string) => v.slice(0, 40));
 }
 
 /** Checks an admin action from the network; null if it isn't a valid one. */
