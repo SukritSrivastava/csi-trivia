@@ -6,6 +6,31 @@ For the quizmaster. Three screens: the **projector** (`/host`, everyone watches 
 Live addresses: https://hermes-quiz-nine.vercel.app/host · /admin · /play. The PIN is the same for
 Admin and the projector (ask Sukrit; it's not written anywhere public).
 
+**The questions** are `final_quiz.json` in the project folder. The game server checks it every time it
+starts (it refuses to start, listing every problem, if anything is wrong) and puts it in Admin's quiz
+list as **"Hermes final quiz"** (Round 1: 20 + 2 spares, wild card: 5 + 3 spares, Blackout: 18). To
+change a question, edit the file and restart the game server; don't edit that quiz in Admin (the file
+replaces it on the next start).
+
+### Starting it on the laptop (if you're not using the live site)
+
+The laptop and every phone on the **same Wi-Fi**. In PowerShell, in the project folder:
+
+```powershell
+npm install                     # once
+npm run build                   # once, after any change to the code
+$env:GAME_PRESET="event"; $env:ADMIN_PIN="choose-a-pin"; $env:DATABASE_URL="off"; npm start
+```
+
+- The game server prints the addresses: **Admin** `http://localhost:3000/admin`, **projector**
+  `http://localhost:3000/host`, **phones** `http://<laptop's Wi-Fi address>:3000/play` (also as a QR
+  code on the projector). If Windows asks whether Node.js may use the network, choose **Allow** on
+  private networks; phones can't connect otherwise.
+- `DATABASE_URL="off"` keeps everything on the laptop (download the results as CSV from Admin at the
+  end). Leave it out to also save results to Supabase (needs internet).
+- `npm run bot-load-test` (another PowerShell window, before doors open, ~15 minutes) plays a whole
+  quiz with 100 fake phones against its own server and checks the scores: a last confidence check.
+
 ---
 
 ## 1. Setup checklist (start 45 minutes before)
@@ -88,6 +113,7 @@ about 10 questions), podium and prizes ≈ 3 min. Budget **45 minutes** for the 
 | Problem | Do this |
 |---|---|
 | **Need a moment** (noise, a question about the rules) | Controls → **Pause** (or P). Every clock freezes; phones and the projector say PAUSED. **Resume** when ready. |
+| **Skip a question (play a spare instead)** | **Void question** (Controls, tap twice) any time from when it goes up until you press Next. Then press the big button (**Next question**): the next question takes the skipped one's number, so Round 1 still plays 20 and the wild card still 5. The spares (Round 1: 2, wild card: 3) come in only this way (the wild card also uses them for sudden death); Admin's step line says "(spare)" when one is up. |
 | **A question is wrong or confusing** | Controls → **Void question** (tap twice). It doesn't count: no points, no tally, in Blackout nobody moves and the dark stays; the next question takes its number. Phones say CANCELLED. **Restart question** replays it from the start instead (in Blackout it also undoes the dark and any catches). |
 | **A Blackout question is wrong or confusing** | Under the runners: **Void question** (tap twice) while it's being read or answered: nobody moves, the dark stays, the next question comes by itself. **Restart question** (until the dark moves) replays it. |
 | **A Blackout wait feels too long** (the room is ready) | **Skip** under the runners (or S on a laptop) ends the current wait now; the autopilot carries on. |

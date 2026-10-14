@@ -108,10 +108,15 @@ function MultiAnswerScreen({ screen: s, me, paused }: { screen: Screen<"answer">
 
 export function AnswerScreen({ screen: s, me, paused = false }: { screen: Screen<"answer">; me: ParticipantTag; paused?: boolean }) {
   if (s.multi) return <MultiAnswerScreen screen={s} me={me} paused={paused} />;
-  return <SingleAnswerScreen screen={s} />;
+  return <SingleAnswerScreen screen={s} paused={paused} />;
 }
 
-function SingleAnswerScreen({ screen: s }: { screen: Screen<"answer"> }) {
+/**
+ * First tap locks. While the quizmaster has paused, the buttons are disabled: the
+ * server ignores answers during a pause, and an optimistic "locked in" would
+ * make the player think they'd answered.
+ */
+function SingleAnswerScreen({ screen: s, paused }: { screen: Screen<"answer">; paused: boolean }) {
   const answer = useParticipantStore((st) => st.answer);
   const tapped = useParticipantStore((st) => st.tapped);
   // Blackout: the server says which option this runner already tapped (survives a refresh).
@@ -132,11 +137,11 @@ function SingleAnswerScreen({ screen: s }: { screen: Screen<"answer"> }) {
             type="button"
             className="phone-opt min-h-[4.25rem] gap-4 text-[clamp(1.1rem,5.4vw,1.4rem)] break-words"
             onClick={() => {
-              if (locked) return;
+              if (locked || paused) return;
               answer(s.questionId, o);
               vibrate(30); // only after the tap, on phones that can
             }}
-            disabled={!!locked}
+            disabled={!!locked || paused}
             aria-pressed={locked?.optionId === o.id}
             data-testid="option"
           >

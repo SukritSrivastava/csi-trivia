@@ -98,6 +98,10 @@ For each question the quizmaster clicks through:
 - **Late joiners** play from the next question whose answers haven't opened yet (joining during a
   read step = they play that question); earlier questions count as missed for the tie-break.
 - **End round 1** is allowed from any reveal onward (cut Round 1 short if the night runs late).
+- **Spares** (15 Oct): Round 1 questions beyond the planned count are spares. A voided (skipped)
+  question gives its number back and the next question takes it, a spare when the planned ones have
+  run out, so Round 1 still plays its planned count. Without a skip the spares never come up. (The wild
+  card already worked this way, and also uses its spares for sudden death.)
 - Default: **20 questions** at the event, the 3 demo questions in the demo preset (the Demo quiz
   plays a single-answer question, a multi-correct one, then a single-answer one).
 

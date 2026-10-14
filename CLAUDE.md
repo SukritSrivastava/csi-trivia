@@ -46,6 +46,12 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   `multiPoints` in `server/config.ts` (`MULTI_WRONG_PENALTY` 0.25, `MULTI_ANSWER_MS` 15 s). The early
   end waits for lock-ins. The wild card and Blackout lists refuse them (editor, imports, `quizProblems`,
   the question file, `pickRound`). Never tell players how many are right. `npm run multi-shots`.
+- **The night's questions: `final_quiz.json`** (project root; branch `quiz-prep`, 15 Oct). Its own format
+  (rounds "1" / "wild card" / "blackout", options keyed A–D, `correct` = letters, `spare`, null timings).
+  `server/finalQuiz.ts` `loadFinalQuiz` checks everything (and the `counts` block) and the server refuses to
+  start, listing every problem; on start it's saved to the library as "Hermes final quiz" (id `final`), so
+  edit the file, not that quiz. Round 1 now also takes its spares: a voided question gives its number back
+  (`r1Number`, `r1Planned` in quiz.ts). Never change the wording, answers or letters in the file.
 - Questions: quizzes in the Admin library have three lists (Round 1, Wild card, Blackout).
   `data/questions.json` (MCQ, 4 options, `correct` = index, `round` 1/2/3/null) only seeds the Demo quiz.
   `server/questions.ts` `pickRound`: tagged for the round, then untagged unused; only the demo preset reuses.
@@ -176,6 +182,14 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   (laptop + phone) opens a Demo room from its home screen and clicks lobby → podium; 6 phone tabs cover
   every multi-correct case on question 2 (perfect, partly right, wrong ticks, late, unlocked at time's up,
   no ticks, a refresh), checks the points, leaderboard and cut, screenshots Host / phones / the editor.
+- `npm run bot-load-test [-- --bots 150 --speed 0.25 --seed 7]`: needs nothing running. Starts its own game
+  server in a child process (`scripts/load-test-server.ts`, event preset, final_quiz.json), plays a whole
+  quiz with 100 Socket.IO bots (random times, right/wrong, late, double taps, multi-correct ticks and
+  drafts, ~10% drop and rejoin, Round 1 question 5 skipped so a spare plays) and checks every bot's
+  deliveries and Round 1 score / wild card tally / Blackout position against rules computed in the
+  script; reports server CPU, memory and question delivery latency (p95/max). Real timings ≈ 15 min.
+- `npm run phone-fit` (with `npm run dev`): the night's longest answers at 320/360/375 px wide: no
+  clipping, no sideways scroll, LOCK IN in reach.
 - `npm run drills` (against `npm run dev` or `npm run preview`): failure drills on all three screens,
   including Blackout (a Slow 4G runner, Host and Admin reloads mid-chase, pause and Skip in the dark's
   hold) and a game-server restart (it touches `server/index.ts`, so `tsx watch` must be running).

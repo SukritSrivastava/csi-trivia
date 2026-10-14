@@ -109,6 +109,8 @@ Ground rules (details in [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md)):
 | `npm run admin-run` | a real browser runs a whole quiz from Admin, with screenshots (needs `npm run dev`) |
 | `npm run host-shots` | screenshots every projector state at 1920×1080 and 1366×768 (needs `npm run dev`) |
 | `npm run play-shots` | 4 phone tabs play a whole quiz; screenshots every phone state next to the design |
+| `npm run bot-load-test` | a whole quiz (final_quiz.json) with 100 bot phones against its own server; checks every score, reports CPU, memory, latency (`-- --bots 150`) |
+| `npm run phone-fit` | the night's longest answers on 320–375 px phones: nothing clipped (needs `npm run dev`) |
 | `npm run multi-shots` | multi-correct questions from Admin only: 6 phone tabs + 30 bots, every case, Host / phone / Admin screenshots (needs `npm run dev`) |
 | `npm run drills` | failure drills: refresh, Wi-Fi cut, locked phone, Slow 4G, two Admins, server restart |
 | `npm run rehearsal -- --gpu` | the full event rehearsal: 100 bots, 4 phones, Host fps and memory (needs `npm run preview`) |
@@ -137,6 +139,10 @@ Quizzes are made in **Admin → Quizzes** (PIN first) and saved in Supabase:
 
 Then **Open room** on a quiz. The room plays a frozen copy, so editing the quiz later never changes a
 game in progress. The projector (`/host`) asks for the same PIN and shows the newest open room.
+
+**The night's questions** are [`final_quiz.json`](final_quiz.json) (its `_format` field explains the
+format). The game server checks it on every start, refuses to start if anything is wrong (listing every
+problem), and saves it to the library as **"Hermes final quiz"**: edit the file, not that quiz.
 
 [`data/questions.json`](data/questions.json) only seeds a "Demo quiz" when the library is empty.
 Running locally without Supabase, quizzes are kept in `data/library/` (git-ignored).
