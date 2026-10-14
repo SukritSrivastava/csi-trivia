@@ -109,6 +109,7 @@ Ground rules (details in [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md)):
 | `npm run admin-run` | a real browser runs a whole quiz from Admin, with screenshots (needs `npm run dev`) |
 | `npm run host-shots` | screenshots every projector state at 1920×1080 and 1366×768 (needs `npm run dev`) |
 | `npm run play-shots` | 4 phone tabs play a whole quiz; screenshots every phone state next to the design |
+| `npm run multi-shots` | multi-correct questions from Admin only: 6 phone tabs + 30 bots, every case, Host / phone / Admin screenshots (needs `npm run dev`) |
 | `npm run drills` | failure drills: refresh, Wi-Fi cut, locked phone, Slow 4G, two Admins, server restart |
 | `npm run rehearsal -- --gpu` | the full event rehearsal: 100 bots, 4 phones, Host fps and memory (needs `npm run preview`) |
 | `npm run check-questions` | checks `data/questions.json` and local quizzes before the event (`-- --preset event`) |
@@ -127,7 +128,9 @@ Quizzes are made in **Admin → Quizzes** (PIN first) and saved in Supabase:
   extra Round 1 and wild card questions at the end are spares; Blackout plays its whole list until
   one runner is left;
 - every question has exactly 4 answers (shuffled on screen), an optional picture (projector only)
-  and optional own timers;
+  and optional own timers; a **Round 1** question may have **2–4 right answers** (tick them in the
+  editor): players tick all that apply and press LOCK IN, with partial credit and 15 s to answer
+  ([`docs/SPEC.md`](docs/SPEC.md) "Multi-correct questions");
 - **Settings** per quiz: how many questions each round plays, finalists, and every timer;
 - add questions one by one, or **Import many**: paste text, a spreadsheet (CSV or Excel, template
   inside), or JSON. Settings → Download gives the quiz back as CSV or JSON.
@@ -172,6 +175,8 @@ rather write them in a file first, use this shape and import it as JSON, or put 
   autopilot, so keep its questions short.
 - `options`: exactly 4, all different, short enough for a phone button (under ~40 characters).
   They're shuffled on screen, so put the right one anywhere; `correct` is its index (0–3).
+  A Round 1 question with several right answers: `"round": 1, "correct": [0, 2]` (in a spreadsheet:
+  `"A,C"`; pasted text: a `*` on each right answer). The wild card and Blackout take one right answer only.
 - `image` (optional, projector only): upload it in Admin's question form, or (for this file) put it in
   `public/questions/` and redeploy. It sits on a **dark card**, so
   use pictures with a light or solid background: dark lines on a transparent background vanish.

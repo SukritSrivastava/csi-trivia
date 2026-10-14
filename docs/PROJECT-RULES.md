@@ -5,7 +5,7 @@
 > skills, agent roles, plugins and the frontend↔backend API. If you change anything it
 > describes, update this file in the same change (see §10 "Keeping this file true").
 >
-> Last updated: 14 Oct 2026, night (SPEC v3.1: 200→100 scoring, Blackout autopilot, no glow) · Owner: Sukrit Srivastava (frontend) · Repo: `csikjsce/jackbox_2.0` (moved from `Leleouch14/jackbox_2.0` on 14 Oct)
+> Last updated: 14 Oct 2026, late night (SPEC v3.2: multi-correct questions in Round 1; v3.1: 200→100 scoring, Blackout autopilot, no glow) · Owner: Sukrit Srivastava (frontend) · Repo: `csikjsce/jackbox_2.0` (moved from `Leleouch14/jackbox_2.0` on 14 Oct)
 
 ---
 
@@ -111,6 +111,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 14 Oct | If time runs short, **sound is the first thing to cut**. |
 | 14 Oct (night) | **Round 1 scoring 200 → 100:** correct = `round(200 − 100 × elapsed/limit)` (clamped), wrong or none 0; ties unchanged (lower total time, a miss = the full 8 s). Constants `R1_MAX_POINTS` / `R1_MIN_POINTS` in `server/config.ts`. |
 | 14 Oct (night) | **Blackout on autopilot:** Start Blackout is the only click; the server runs intro (6 s) → read 5 s → answer **10 s** → time's up 1.5 s → reveal (3 s + 0.15 s per runner) → the dark (2.5 s + 0.25 s per step + 1.5 s if caught) → next question … → winner moment (7 s) → podium. Plays **every** round-3 question (then untagged unused ones) until one runner is left: no fixed count, no spares; the event needs ≥ 12 (warns < 15). `DARKNESS_STEPS` repeats its last value. Admin keeps Pause/Resume, Skip, +5 s (answer only), Void, Restart question (until the dark moves), Restart round, End quiz now, Remove. `advanceDarkness` / `showWinner` and Show/Reveal/Next in Blackout → `not-allowed`. Pause and Skip are step-bound (a stale one is ignored). Retuned: event BASE_GAP 6, `[1,2,2,3]`; demo BASE_GAP 2, `[1,2]`. *Replaces the "two clicks per question" row above.* |
+| 14 Oct (late night, Sukrit) | **Multi-correct questions, Round 1 only (SPEC v3.2):** 2, 3 or 4 right options; players tick, then **LOCK IN** (first lock-in counts; ticks are server-kept drafts, sent at the full time if never locked); points = `max(0, round(S × (found/total − 0.25 × wrong)))` with S the lock-in's 200→100 speed score; **15 s** default answer time (`MULTI_ANSWER_MS`; a question's own time wins); **no count hint** ("Select ALL that apply" only); bot mood `right` if points ≥ ½ S; outcomes correct / partly right / wrong / missed. Exactly one right option = the old single-answer question, unchanged. The wild card and Blackout lists refuse them. |
 | 14 Oct (late night, Sukrit) | **Blackout on the projector runs left to right** under the question and options (always on screen), all 10 finalists in lanes, the dark a wall from the left; **runner phones show only the question and its options** (else "Eyes on the screen" / "You're out"). |
 | 14 Oct (late night) | The Host draws Blackout as one persistent scene (no cast strip, its own corridor) whose CSS beats fit inside the server's holds; `GAME_PRESET=event` refuses the default PIN (`ALLOW_DEFAULT_PIN=1` for local rehearsals); the server notes are `docs/SERVER-NOTES.md` (was BACKEND-NOTES). |
 | 14 Oct (night) | **No glow** (Sukrit): no text-shadow halos, blurred/coloured-spread box-shadows, drop-shadow/blur halos, radial blooms or glow keyframes. Flat fills, 1–2 px borders, colour/opacity changes; zero-blur offsets, dark scrims and the vignette stay. Where "glow" was used: mint outline / mint text / mint fill. `public/finaldesign.html` updated the same way (approved). `npm run check-glow` (`scripts/no-glow.ts`) is an end-of-phase check. |
@@ -167,10 +168,12 @@ lobby → r1Intro → [ r1Read (8s) → r1Answer (8s) → r1TimesUp → r1Reveal
 card every other step is a click. **Blackout is automatic** from Start Blackout to the podium (autopilot).
 ```
 Scoring: **Round 1** correct = `round(200 − 100 × elapsed/limit)` (200 instant, 100 at the last moment), wrong or none = 0; ties →
-lower total answer time (a miss = the full time). **Wild card**: number right; ties → lower total time
+lower total answer time (a miss = the full time). **Multi-correct Round 1 questions** (2–4 right options, 15 s, tick
+then LOCK IN): `max(0, round(S × (found/total − 0.25 × wrong)))`, S = that speed score at the lock-in (an unlocked
+draft is sent at the full time). **Wild card**: number right; ties → lower total time
 (wrong/miss = the full time); exact tie → sudden death. **Blackout**: right +3/+2/+1 by third of the
 answer time (10 s), wrong −1, none 0; the dark advances by `DARKNESS_STEPS[q]` (last value repeats) and
-catches anyone at or behind it. Full rules and edge cases: `docs/SPEC.md` v3.1.
+catches anyone at or behind it. Full rules and edge cases: `docs/SPEC.md` v3.2.
 
 ### 2.4 Folder map
 ```
@@ -304,6 +307,14 @@ Environment variables (`.env.local`, see `.env.example`):
 Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. Phases are in `docs/BUILD-PHASES.md`.
 
 ### Done
+- ✅ **Multi-correct questions in Round 1 (14 Oct, late night; SPEC v3.2):** contract (`participant:select`,
+  `participant:answer { optionIds }`, `answer.multi`, `lockedIn.choiceNumbers` / `sentAtTimeUp`, `result`
+  `partial` + `multi`, `Reveal.correctIndexes`, `AdminQuestion.multi` / `correctNumbers`, `QuestionPreview.correctTexts`,
+  `counts.ticking`, `LibraryQuestion.correct` number or list); engine (`multiPoints`, drafts, time's-up send,
+  mood rule, tie time per question); phone (ticks + LOCK IN + PARTLY RIGHT), Host (SELECT ALL THAT APPLY,
+  every right option checked), Admin (checkbox editor, Multi-correct tags, locked-in/ticking counts);
+  imports/exports take lists; the Demo quiz plays one; `simulate` 45 checks (worked-example table, 100-player
+  game with 4 multi questions), `smoke` (a multi question over sockets), `bots`, `check-questions`, `multi-shots`.
 - ✅ v4 Phases 1–5 (12–13 Oct): design foundation, Admin, phones, Host, event-proofing. Deployed 13 Oct (v2 buzzer-round game).
 - ✅ **v5 Phase 2, Part 0: rules update (14 Oct, night):** SPEC v3.1; Round 1 200→100 (`round1Points`);
   Blackout autopilot in `server/quiz.ts` (`nextBlackoutQuestion`, `afterDark`, `winnerMoment`, holds in
@@ -318,7 +329,7 @@ Status: ✅ done · 🟡 done but unverified · ⬜ to do. Work top to bottom. P
 - ✅ **v5 Phase 1, the engine (14 Oct):** SPEC v3; contract (`protocol.ts`: `wc*` and `bo*` phases, `McqQuestion`, `WildCardState`, `BlackoutState`, `Runner`, new phone screens, new Admin actions); `server/quiz.ts` (wild card with sudden death and the fallback, Blackout with catches and catch order, seat hand-over, void/restart/restart round/end quiz in every round); `npm run tune-blackout`; `simulate` (33 checks, 50 event seeds), `smoke` (whole three-round game over sockets), `bots` (every round, accuracy); quiz library with three lists (old quizzes upgraded); `/health` JSON; the existing Host / phone / Admin screens extended to the new flow (plain stages for the wild card and Blackout); play-shots, host-shots, admin-run (68 checks) and drills pass.
 
 ### Next
-2. ⬜ **Write 50 questions** (20 Round 1, 5 + 3 wild card, **15+ Blackout**: it plays until one runner is left) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file.
+2. ⬜ **Write 50 questions** (20 Round 1, 5 + 3 wild card, **15+ Blackout**: it plays until one runner is left) in Admin → Quizzes; `npm run check-questions -- --preset event` for a file. A few Round 1 questions may be multi-correct (tick 2+ answers in the editor; 15 s each).
 3. ⬜ **Push and deploy** (only when Sukrit says "push"); the live site runs the v2 buzzer game until then.
 
 ### Not in a phase yet
@@ -436,7 +447,8 @@ exactly this**; `server/` is the working reference.
 | *(HTTP)* `POST /api/images` | image bytes (JPEG/PNG/WebP, ≤ 2.5 MB), header `x-admin-pin` | `{ url: "/images/<id>" }` | Question pictures. `GET /images/<id>` serves them (cached forever). |
 | `participant:join` | `{ roomCode, name, participantId? }` | `JoinResult` = `{ ok:true, participantId, roomCode, status }` or `{ ok:false, error: JoinError }` | Phone joins or rejoins (with saved id, or same name if the old phone dropped). |
 | `participant:bot` | `BotLook` `{ color, head }` | `BotResult` = `{ ok:true }` or `{ ok:false, error: "invalid"\|"too-late" }` | Phone changes its bot (any colour, any head, may match others). **Lobby only.** |
-| `participant:answer` | `{ questionId, optionId }` | none | Any round's answer step. First tap wins; ignored from anyone who can't answer this question (finalists in the wild card round, caught runners, the audience). |
+| `participant:answer` | `{ questionId, optionId }`, or `{ questionId, optionIds }` (multi-correct LOCK IN, 1–4 ids) | none | Any round's answer step. First tap / first lock-in wins; ignored from anyone who can't answer this question (finalists in the wild card round, caught runners, the audience), and when the shape doesn't fit the question. |
+| `participant:select` | `{ questionId, optionIds }` | none | Multi-correct only: the current ticks (a draft) on every tap. Not an answer (doesn't end the step early); sent for them at the full time if they never lock in; ignored after the lock-in. |
 | `participant:back` | `{ finalistId }` | none | Audience backs a finalist (changeable until Start Blackout). |
 | `participant:visibility` | `{ hidden: boolean }` | none | Page hidden/shown. Admin-only flag ("left page"). |
 | `admin:auth` | `{ roomCode, pin }` | `{ ok:true, roomCode }` or `{ ok:false, error:"room-not-found"\|"wrong-pin" }` | After 5 wrong PINs the socket is refused (reload to retry). |
@@ -465,8 +477,8 @@ phone updates to 150 ms). Every view carries `serverNow` (ms).
 (each with `mood`; everyone, then in the wild card round only its players, in Blackout the runners),
 `counts` (+ `wildcard`), `timer`, `paused`, `serverNow`, `nextImage`, `stage: HostStage` keyed by
 `phase`: question steps carry `question: McqQuestion` (`round` 1/2/3, `number`, `count` (null in Blackout),
-`suddenDeath`, **`options` 1–4** from the answer step); reveals add `correctText` / `correctIndex` /
-`voided`; `cut` has `standings` (rank, score, timeMs, finalist), `safeCount`, `wildCardCount`,
+`suddenDeath`, `multi` (multi-correct, never how many), **`options` 1–4** from the answer step); reveals add `correctText` / `correctIndex` /
+**`correctIndexes`** (every right option) / `voided`; `cut` has `standings` (rank, score, timeMs, finalist), `safeCount`, `wildCardCount`,
 `wildCardSkipped`; `wc*` stages carry `wildCard: WildCardState` (standings only on `wcStandings` /
 `wcWinner`); `bo*` stages carry `blackout: BlackoutState` (`dark`, `darkFrom`, `runners` with position,
 from, delta (after the reveal only), gap, alive, caughtOnQuestion, place, headStart, mood),
@@ -477,8 +489,10 @@ from, delta (after the reveal only), gap, alive, caughtOnQuestion, place, headSt
 **`ParticipantView`**: `roomCode`, `me` (+ `status`: playing / finalist / wildcard / audience /
 removed), `timer`, `paused`, `serverNow`, `screen` keyed by `kind`: `lobby`, `r1Intro`,
 `nextQuestion`, `eyesUp` / `answer` / `lockedIn` / `timesUp` (all with `round`; Blackout runners also get
-`gap`; `lockedIn` has `choiceNumber` 1–4), `result` (Round 1
-and wild card: `outcome`, **`correctText`** after the reveal only, wild card `tally`), `voided`,
+`gap`; `lockedIn` has `choiceNumber` 1–4, multi-correct `choiceNumbers` + `sentAtTimeUp`; `answer` has
+`multi { selectedIds, locked }`: the player's OWN ticks), `result` (Round 1
+and wild card: `outcome` correct / partial / wrong / missed, **`correctText`** after the reveal only, wild card `tally`,
+multi-correct `multi { found, total, wrongPicks, rightNumbers, rightTexts, mood }`), `voided`,
 `cut` (`outcome` safe / wildcard, `rank`: the only time a rank shows), `safeWatch`, `wcStatus`
 (`right`, `asked`, `suddenDeath` in / out), `wcWinner` (`you` won / lost), `audience`,
 `backFinalist`, `runnerResult` (`outcome`, `delta`, `position`, `gap`, `correctText` when wrong or
@@ -487,8 +501,8 @@ question / winner / podium: what the running hold leads to, for "Next question i
 (audience: backed, runners with gap, alive count, `questionsLeft`, `winner`), `podium`, `removed`.
 
 **`AdminView`**: `phase`, **`stepId`**, `stepLabel`, **`primary`**, `hint`, **`allowed`**, `timer`,
-`paused`, `question: AdminQuestion` (**with the answer**, numbered 1–4), `nextQuestion`, `counts`
-(+ `answered`/`expected`), `participants` (score, rank, `wildCorrect`, `wildTimeMs`, `isWildCard`,
+`paused`, `question: AdminQuestion` (**with the answer**, numbered 1–4; `multi`, `correctNumbers` = every right one), `nextQuestion`
+(`correctTexts`, `multi`), `counts` (+ `answered`/`expected` (lock-ins on a multi-correct question), `ticking`), `participants` (score, rank, `wildCorrect`, `wildTimeMs`, `isWildCard`,
 `blackout` {position, gap, caughtOnQuestion, place}, answered, flags, backing), `finalists:
 FinalistInfo[]`, `wildCard` (full standings), **`cut`** (standings, safeCount, wildCardCount,
 wildCardSkipped; from the cut on), **`optional`** (the "or:" chips: Show results / leaderboard / standings,
@@ -586,6 +600,7 @@ Whichever is chosen: record it in §1.3 and §4.
 | Date | Change | Screens must |
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
+| 14 Oct 2026 (late night) | **Multi-correct (SPEC v3.2):** `participant:select { questionId, optionIds }`; `participant:answer` also takes `{ questionId, optionIds }`; `McqQuestion.multi`; `Reveal.correctIndexes`; answer screen `multi { selectedIds, locked }` (null on single-answer questions); `lockedIn.choiceNumbers` + `sentAtTimeUp`; `result.outcome` + `"partial"` and `result.multi { found, total, wrongPicks, rightNumbers, rightTexts, mood }`; `AdminQuestion.multi` + `correctNumbers`; `QuestionPreview.correctTexts` + `multi`; `AdminView.counts.ticking`; `LibraryQuestion.correct` is a number or a list of 2–4; `MULTI_ANSWER_SECONDS`. All additive. | Phone: ticks + LOCK IN + PARTLY RIGHT; Host: SELECT ALL THAT APPLY, every right option; Admin: checkboxes in Round 1, tags, counts |
 | 14 Oct 2026 (late night) | `answer` screen + `text` (Blackout: the question) and `chosenId` (Blackout: the runner's tap, so the options stay up locked); Blackout runners get `answer` only in boAnswer and `runnerStatus` in every other step (`runnerResult` is no longer sent); HostStage `boDark` carries `Reveal` (the answer stays on the projector while the dark moves). | Phones: question + options in Blackout; Host: `QuestionPanel` over the left-to-right track |
 | 14 Oct 2026 (night, later) | **Phase 2 Admin / phones:** `AdminView.optional: PrimaryAction[]` (the big button is now always the main path: Next question / End round 1 after a reveal, Reveal wild card / Next question after a wild card reveal, Start Blackout at wcWinner and when the wild card round is skipped); `AdminView.cut`; `AdminQuestion.options[].count`, `AdminQuestion.voided`; `QuizSummary.blackoutMin`; `QuizSettings.round1MaxPoints`; `JOIN_ERROR_MESSAGES` quiz-ended / removed reworded. | Admin draws chips; phones read the 200 from settings |
 | 14 Oct 2026 (night) | **v3.1: Blackout autopilot, 200→100 scoring, no glow.** + phase `boWinner` (HostStage `{blackout, backing}`); `McqQuestion.count`, `AdminQuestion.count`, `QuestionPreview.count` and `eyesUp`/`answer` `questionCount` may be `null` (Blackout); `BlackoutState.questionCount` → `questionsLeft`; `runnerStatus.questionCount` → `questionsLeft` + `nextUp`; `blackoutWatch` → `questionsLeft` + `winner`; `eyesUp`/`answer`/`lockedIn` + `gap`; `lockedIn` + `choiceNumber`; `QuestionPreview.correctText`; `AdminView` + `autopilot: AutopilotState`, `darkPreview: DarkPreview`; `QuizSettings` − `blackoutQuestions`; `QuizRules` − `blackoutQuestions`; `pause` no longer step-independent. `advanceDarkness`/`showWinner` kept as types but never allowed. Timers run during Blackout's holds (the view's `timer` counts the hold). | Admin: Pause/Resume as the big button in Blackout, the autopilot strip, the catch preview; phones: "Next question in N" from `nextUp` + `timer`; no "of N" in Blackout; the Host draws `boWinner` |

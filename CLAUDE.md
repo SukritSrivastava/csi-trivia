@@ -3,8 +3,8 @@
 **Read `docs/PROJECT-RULES.md` first: it is the full handoff (constraints, architecture, stack, to-do,
 skills, agents, plugins, API). This file is the short version.**
 
-Hermes Quiz: a live MCQ quiz for 60–100 people (event: Thu 16 Oct 2026). Rules: **`docs/SPEC.md` v3.1
-(14 Oct night: three rounds; Round 1 scores 200→100; Blackout on autopilot; no glow)**. Build plan: v5,
+Hermes Quiz: a live MCQ quiz for 60–100 people (event: Thu 16 Oct 2026). Rules: **`docs/SPEC.md` v3.2
+(14 Oct late night: three rounds; Round 1 scores 200→100 and may have multi-correct questions; Blackout on autopilot; no glow)**. Build plan: v5,
 three phases (pasted in chat 14 Oct; Phase 1 the engine and Phase 2 rules update + Admin + phones are
 done; Phase 3, the Host + sound + event-proofing, is done). `docs/BUILD-PHASES.md` holds the earlier v4 plan (done).
 Quizmaster: `docs/RUN-SHEET.md`. Backend teammate: `docs/SERVER-NOTES.md`.
@@ -39,6 +39,13 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
 - Phones and the Host never receive the correct answer before the reveal (simulate and smoke
   check this, in all three rounds). Options are shuffled once per question; in every round the Host
   (from the answer step) and every phone show the same order, numbered 1–4. Ids are opaque.
+- **Multi-correct questions (SPEC v3.2, Round 1 only):** `correct` is a number or a list of 2–4
+  (`correctList` / `isMultiCorrect` / `packCorrect` in `src/shared/quiz.ts`; a one-entry list is
+  cleaned to a number). Players tick (`participant:select`, a server-kept draft) then LOCK IN
+  (`participant:answer { optionIds }`); time's up sends an unlocked draft at the full time. Points
+  `multiPoints` in `server/config.ts` (`MULTI_WRONG_PENALTY` 0.25, `MULTI_ANSWER_MS` 15 s). The early
+  end waits for lock-ins. The wild card and Blackout lists refuse them (editor, imports, `quizProblems`,
+  the question file, `pickRound`). Never tell players how many are right. `npm run multi-shots`.
 - Questions: quizzes in the Admin library have three lists (Round 1, Wild card, Blackout).
   `data/questions.json` (MCQ, 4 options, `correct` = index, `round` 1/2/3/null) only seeds the Demo quiz.
   `server/questions.ts` `pickRound`: tagged for the round, then untagged unused; only the demo preset reuses.
@@ -165,6 +172,10 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   checks (name clash, shared bot, refresh mid-question and mid-Blackout, removal, a late joiner, a tab
   winning the wild card, a wild card loser, "Too slow: no move", a wrong move back, a catch, "You called
   it!") and screenshot every phone state; `compare.png` = design | app.
+- `npm run multi-shots [-- --bots 30 --out screenshots/multi]` (with `npm run dev`, database off): Admin
+  (laptop + phone) opens a Demo room from its home screen and clicks lobby → podium; 6 phone tabs cover
+  every multi-correct case on question 2 (perfect, partly right, wrong ticks, late, unlocked at time's up,
+  no ticks, a refresh), checks the points, leaderboard and cut, screenshots Host / phones / the editor.
 - `npm run drills` (against `npm run dev` or `npm run preview`): failure drills on all three screens,
   including Blackout (a Slow 4G runner, Host and Admin reloads mid-chase, pause and Skip in the dark's
   hold) and a game-server restart (it touches `server/index.ts`, so `tsx watch` must be running).

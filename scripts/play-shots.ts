@@ -223,9 +223,15 @@ async function main() {
     check((await kabir.page.getByTestId("phone-header").textContent())?.includes("Q2 of"), "refresh mid-question: back on the same question");
     check((await kabir.page.getByTestId("round-name").textContent())?.toUpperCase().includes("ROUND 1"), "the header names the round (ROUND 1)");
     await shot("13-refresh-mid-question", [kabir]);
-    const correct2 = admin!.question!.correctText;
-    for (const p of [riya, kabir]) await p.page.getByTestId("option").filter({ hasText: correct2 }).click();
-    await meera.page.getByTestId("option").filter({ hasNotText: correct2 }).first().click();
+    // The Demo quiz's question 2 is multi-correct (npm run multi-shots covers it screen by screen): tick, then LOCK IN.
+    const q2 = admin!.question!;
+    const rights2 = q2.options.filter((o) => o.correct).map((o) => o.text);
+    const tickAndLock = async (p: Phone, texts: string[]) => {
+      for (const t of texts) await p.page.getByTestId("option").filter({ hasText: t }).click();
+      if (q2.multi) await p.page.getByTestId("multi-lock-in").click();
+    };
+    for (const p of [riya, kabir]) await tickAndLock(p, q2.multi ? rights2 : [q2.correctText]);
+    await tickAndLock(meera, [q2.options.find((o) => !o.correct)!.text]);
     await phase("r1TimesUp");
     await send({ type: "revealAnswer" });
     await sleep(400);

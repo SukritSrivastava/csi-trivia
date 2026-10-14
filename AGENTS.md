@@ -2,8 +2,8 @@
 
 **Read `docs/PROJECT-RULES.md` first, all of it.** It is the full AI handoff: constraints,
 architecture, tech stack, to-do list, skills, agent roles, plugins and the frontend↔backend API.
-Then read `docs/SPEC.md` (game rules, **v3.1 since 14 Oct night: Round 1 (200→100) → wild card →
-Blackout on autopilot; no glow**),
+Then read `docs/SPEC.md` (game rules, **v3.2 since 14 Oct late night: Round 1 (200→100, plus
+multi-correct questions: tick then LOCK IN, partial credit) → wild card → Blackout on autopilot; no glow**),
 `src/shared/protocol.ts` (the contract) and `public/finaldesign.html` (the approved design).
 
 ## Must-follow rules (details in docs/PROJECT-RULES.md §1)

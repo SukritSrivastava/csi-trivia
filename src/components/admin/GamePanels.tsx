@@ -52,6 +52,11 @@ export function QuestionCard({ view }: { view: AdminView }) {
           </>
         )}
         {q.image && <span className="ml-2 text-fog">(with image)</span>}
+        {q.multi && (
+          <span className="ml-2 inline-block rounded-[0.5rem] border-2 border-amber px-1.5 text-[14px] whitespace-nowrap text-amber" data-testid="multi-tag">
+            Multi-correct: {q.correctNumbers.length} right
+          </span>
+        )}
       </p>
       <p className="mt-2 text-[1.3rem] leading-snug text-bright">{q.text}</p>
       <ol className="mt-3 flex flex-col gap-2">
@@ -88,7 +93,8 @@ export function NextUp({ view }: { view: AdminView }) {
         <N className="text-[1.25rem]">#{next.number}</N>: <span className="text-mint-soft">{next.text}</span>
       </p>
       <p className="mt-1 truncate">
-        Answer: <span className="text-mint-soft">{next.correctText}</span>
+        {next.multi ? `Multi-correct, ${next.correctTexts.length} answers: ` : "Answer: "}
+        <span className="text-mint-soft">{next.correctTexts.join(" · ")}</span>
       </p>
     </section>
   );
@@ -119,7 +125,12 @@ export function Counts({ view }: { view: AdminView }) {
       <div className="grid grid-cols-3 gap-3">
         <Count n={c.joined} label="joined" testId="count-joined" />
         {c.expected != null ? (
-          <Count n={c.answered ?? 0} of={c.expected} label="answered" testId="count-answered" />
+          <Count
+            n={c.answered ?? 0}
+            of={c.expected}
+            label={view.question?.multi ? (c.ticking ? `locked in · ${c.ticking} ticking` : "locked in") : "answered"}
+            testId="count-answered"
+          />
         ) : (
           <Count n={c.connected} label="online" />
         )}

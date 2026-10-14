@@ -2,15 +2,16 @@
 
 /**
  * Add or edit one question: the question, 4 answers (tap the number of the right
- * one), an optional picture (projector only), and optional own timers.
+ * one; in Round 1 the numbers are checkboxes, so 2+ ticked makes it multi-correct),
+ * an optional picture (projector only), and optional own timers.
  * Design extension in the Admin look: answer rows like phone-opt with the
  * number in amber terminal digits, the right one lit in mint.
  */
 import { useRef, useState } from "react";
 import { shrinkImage } from "@/lib/image";
 import { assetUrl } from "@/lib/socket";
-import { type LibraryQuestion, QUIZ_LIMITS, type QuizRules } from "@/shared/protocol";
-import { blankQuestion, type ListName, questionProblems } from "@/shared/quiz";
+import { type LibraryQuestion, MULTI_ANSWER_SECONDS, QUIZ_LIMITS, type QuizRules } from "@/shared/protocol";
+import { blankQuestion, correctList, type ListName, packCorrect, questionProblems } from "@/shared/quiz";
 import { useAdminStore } from "@/stores/adminStore";
 import { ControlButton, Panel, useConfirm } from "../parts";
 
@@ -36,18 +37,31 @@ export function QuestionForm({
   onDelete?: () => void;
 }) {
   const uploadImage = useAdminStore((s) => s.uploadImage);
-  const [q, setQ] = useState<LibraryQuestion>(() => initial ?? blankQuestion());
+  // A new question starts with nothing ticked (with checkboxes, a pre-ticked 1 would quietly make it multi-correct).
+  const [q, setQ] = useState<LibraryQuestion>(() => initial ?? { ...blankQuestion(), correct: [] });
   const [touched, setTouched] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const { armed, guard } = useConfirm();
-  const problems = questionProblems(q, "This question").map((p) => p.replace(/^This question: /, ""));
-  // The wild card round uses Round 1's timings.
+  const problems = questionProblems(q, "This question", list).map((p) => p.replace(/^This question: /, ""));
+  // Several right answers are allowed in Round 1 only; elsewhere the numbers work like radio buttons.
+  const multiAllowed = list === "round1";
+  const right = correctList(q.correct);
+  const multi = right.length >= 2;
+  const toggleRight = (i: number) =>
+    setQ((prev) => {
+      const now = correctList(prev.correct);
+      if (!multiAllowed) return { ...prev, correct: i };
+      // At least one stays ticked: tapping the only right answer does nothing.
+      const next = now.includes(i) ? (now.length > 1 ? now.filter((x) => x !== i) : now) : [...now, i];
+      return { ...prev, correct: packCorrect(next) };
+    });
+  // The wild card round uses Round 1's timings; a multi-correct question gets 15 s by default.
   const defaults =
     list === "blackout"
       ? { read: rules.blackoutReadSeconds, open: rules.blackoutAnswerSeconds, openLabel: "Answer time" }
-      : { read: rules.round1ReadSeconds, open: rules.round1AnswerSeconds, openLabel: "Answer time" };
+      : { read: rules.round1ReadSeconds, open: multi ? MULTI_ANSWER_SECONDS : rules.round1AnswerSeconds, openLabel: "Answer time" };
 
   const setOption = (i: number, text: string) =>
     setQ((prev) => {
@@ -98,18 +112,34 @@ export function QuestionForm({
       </label>
 
       <fieldset className="flex flex-col gap-2">
-        <legend className="mb-1.5 text-[15px] text-mint-soft">Answers: tap the number of the right one</legend>
+        <legend className="mb-1.5 flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-[15px] text-mint-soft">
+          <span>{multiAllowed ? "Answers: tick every right one (tap its number)" : "Answers: tap the number of the right one"}</span>
+          <span
+            className={`ml-auto rounded-[0.6rem] border-2 px-2 py-0.5 text-[14px] ${multi ? "border-amber text-amber" : "border-line text-fog"}`}
+            data-testid="q-kind"
+          >
+            {multi ? (
+              <>
+                Multi-correct: <span className="font-term text-lg leading-none">{right.length}</span> right
+              </>
+            ) : (
+              "Single answer"
+            )}
+          </span>
+        </legend>
+        {!multiAllowed && <p className="-mt-1 text-[14px] text-fog">Only Round 1 questions can have more than one right answer.</p>}
         {q.options.map((o, i) => {
-          const right = q.correct === i;
+          const isRight = right.includes(i);
           return (
-            <div key={i} className={`flex items-center gap-2 rounded-[0.9rem] border-2 p-1.5 ${right ? "border-mint bg-mint/[0.1]" : "border-line"}`}>
+            <div key={i} className={`flex items-center gap-2 rounded-[0.9rem] border-2 p-1.5 ${isRight ? "border-mint bg-mint/[0.1]" : "border-line"}`}>
               <button
                 type="button"
-                onClick={() => setQ({ ...q, correct: i })}
-                aria-pressed={right}
-                aria-label={`Answer ${i + 1} is the right one`}
-                className={`flex size-12 shrink-0 items-center justify-center rounded-[0.7rem] font-term text-[2rem] leading-none ${
-                  right ? "bg-mint text-void" : "text-amber"
+                onClick={() => toggleRight(i)}
+                role={multiAllowed ? "checkbox" : "radio"}
+                aria-checked={isRight}
+                aria-label={`Answer ${i + 1} is ${multiAllowed ? "a" : "the"} right one`}
+                className={`flex size-12 shrink-0 items-center justify-center rounded-[0.7rem] border-2 font-term text-[2rem] leading-none ${
+                  isRight ? "border-mint bg-mint text-void" : multiAllowed ? "border-mint/50 text-amber" : "border-transparent text-amber"
                 }`}
                 data-testid={`q-correct-${i}`}
               >
@@ -123,11 +153,14 @@ export function QuestionForm({
                 className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[16px] text-ghost outline-none placeholder:text-fog"
                 data-testid={`q-option-${i}`}
               />
-              {right && <span className="shrink-0 pr-2 font-term text-lg leading-none text-mint">RIGHT</span>}
+              {isRight && <span className="shrink-0 pr-2 font-term text-lg leading-none text-mint">✓ RIGHT</span>}
             </div>
           );
         })}
-        <p className="text-[14px] text-fog">The 4 answers are shuffled on screen, so put them in any order.</p>
+        <p className="text-[14px] text-fog">
+          The 4 answers are shuffled on screen, so put them in any order.
+          {multiAllowed && " Tick 2 or more for a multi-correct question: players tick all that apply, then lock in (15 s unless it has its own time). They're never told how many are right."}
+        </p>
       </fieldset>
 
       <Panel title="Picture (projector only, optional)">

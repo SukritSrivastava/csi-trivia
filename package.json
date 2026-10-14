@@ -19,6 +19,7 @@
     "admin-run": "tsx scripts/admin-run.ts",
     "host-shots": "tsx scripts/host-shots.ts",
     "play-shots": "tsx scripts/play-shots.ts",
+    "multi-shots": "tsx scripts/multi-shots.ts",
     "drills": "tsx scripts/drills.ts",
     "rehearsal": "tsx scripts/rehearsal.ts",
     "check-questions": "tsx scripts/check-questions.ts",
