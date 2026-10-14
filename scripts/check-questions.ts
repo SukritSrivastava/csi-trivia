@@ -17,6 +17,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
 import { loadConfig } from "../server/config";
+import { loadEnvFiles } from "../server/env";
 import { loadQuestions, pickRound, QUESTIONS_FILE } from "../server/questions";
 import type { Quiz } from "../src/shared/protocol";
 import { cleanQuiz, isMultiCorrect, quizProblems } from "../src/shared/quiz";
@@ -151,6 +152,8 @@ function checkImage(image: string, where: string) {
 // The question file
 // ---------------------------------------------------------------------------
 
+// The same settings the game server uses: .env.local / .env (ROUND1_QUESTIONS, SAFE_SEATS, BLACKOUT_MIN_QUESTIONS…).
+loadEnvFiles();
 const file = path.resolve(arg("file") ?? QUESTIONS_FILE);
 const presetName = arg("preset") ?? process.env.GAME_PRESET ?? "demo";
 const config = loadConfig(presetName);

@@ -20,27 +20,19 @@
  *
  * Read from the real environment first (Render), then .env.local, then .env (like Next.js).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { parseEnv } from "node:util";
 import { type GameConfig, gameEnvInUse, loadConfig } from "./config";
 import { Database } from "./db";
+import { loadEnvFiles } from "./env";
 import { FINAL_QUIZ_FILE } from "./finalQuiz";
 import { FileLibrary, PostgresLibrary } from "./library";
 import { getLanAddresses } from "./network";
 import { loadQuestions } from "./questions";
 import { startGameServer } from "./server";
 
-// Settings from .env.local, then .env (the files Next.js reads), if there are any. Like Next.js,
-// anything already set in the environment wins, so `$env:DATABASE_URL=""` runs without the database.
-for (const file of [".env.local", ".env"]) {
-  try {
-    const fromFile = parseEnv(readFileSync(file, "utf8"));
-    for (const [key, value] of Object.entries(fromFile)) if (process.env[key] === undefined) process.env[key] = value;
-  } catch {
-    // No such file: defaults it is.
-  }
-}
+// Settings from .env.local, then .env (the files Next.js reads). The real environment wins.
+loadEnvFiles();
 
 const presetFlag = process.argv.indexOf("--preset");
 let config: GameConfig;

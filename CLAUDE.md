@@ -52,6 +52,12 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   start, listing every problem; on start it's saved to the library as "Hermes final quiz" (id `final`), so
   edit the file, not that quiz. Round 1 now also takes its spares: a voided question gives its number back
   (`r1Number`, `r1Planned` in quiz.ts). Never change the wording, answers or letters in the file.
+- **In-game settings from the environment** (15 Oct): `applyGameEnv` / `GAME_ENV` in `server/config.ts`
+  (`ROUND1_READ_SECONDS`, `ROUND1_ANSWER_SECONDS`, `MULTI_ANSWER_SECONDS`, `BLACKOUT_READ_SECONDS`,
+  `BLACKOUT_ANSWER_SECONDS`, `ROUND1_QUESTIONS`, `SAFE_SEATS`, `WILDCARD_QUESTIONS`, …) override the preset and
+  are every quiz's defaults (`defaultRules`); Admin's Settings win per quiz (`QuizRules.multiAnswerSeconds` too).
+  `server/env.ts` `loadEnvFiles` reads `.env.local` then `.env` (real environment wins). Screens never
+  hard-code a time or count: use `view.settings` / the server's `blackoutMin`. Every variable: `.env.example`.
 - Questions: quizzes in the Admin library have three lists (Round 1, Wild card, Blackout).
   `data/questions.json` (MCQ, 4 options, `correct` = index, `round` 1/2/3/null) only seeds the Demo quiz.
   `server/questions.ts` `pickRound`: tagged for the round, then untagged unused; only the demo preset reuses.

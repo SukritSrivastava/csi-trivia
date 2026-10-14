@@ -66,7 +66,7 @@ function Stepper({
   );
 }
 
-export function RulesForm({ quiz, onChange }: { quiz: Quiz; onChange: (rules: QuizRules) => void }) {
+export function RulesForm({ quiz, blackoutMin, onChange }: { quiz: Quiz; blackoutMin: number; onChange: (rules: QuizRules) => void }) {
   const r = quiz.rules;
   const set = (key: Key) => (v: number) => onChange({ ...r, [key]: v });
   const read = QUIZ_LIMITS.readSeconds;
@@ -132,7 +132,8 @@ export function RulesForm({ quiz, onChange }: { quiz: Quiz; onChange: (rules: Qu
               Questions: <span className="font-term text-2xl leading-none text-amber">{quiz.blackout.length}</span> in the list
             </p>
             <p className="mt-1 text-[14px] text-fog">
-              Blackout runs on autopilot and plays the list top to bottom until one runner is left. The event needs at least 12; 15 or more is safer (voids use them up).
+              Blackout runs on autopilot and plays the list top to bottom until one runner is left. This server needs at least {blackoutMin}; {blackoutMin + 3} or
+              more is safer (voids use them up).
             </p>
           </div>
           <Stepper label="Time to read" hint="Question on the projector, answers not yet on phones." value={r.blackoutReadSeconds} min={read.min} max={read.max} unit="seconds" onChange={set("blackoutReadSeconds")} />

@@ -360,7 +360,7 @@ function Overlay({ view, stage, elapsed, darkEndMs, anim }: { view: HostView; st
             BLACKOUT
           </p>
           <p className={`host-hint bo-appear-${anim} !text-[3rem]`} style={appear(900)}>
-            Answer fast. 10 seconds. The dark is coming. Run for the exit.
+            Answer fast. {view.settings.blackoutAnswerSeconds} seconds. The dark is coming. Run for the exit.
           </p>
         </div>
       );

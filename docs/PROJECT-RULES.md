@@ -111,6 +111,7 @@ npm run typecheck; npm run build; npm run simulate; npm run smoke   # all must p
 | 14 Oct | If time runs short, **sound is the first thing to cut**. |
 | 14 Oct (night) | **Round 1 scoring 200 → 100:** correct = `round(200 − 100 × elapsed/limit)` (clamped), wrong or none 0; ties unchanged (lower total time, a miss = the full 8 s). Constants `R1_MAX_POINTS` / `R1_MIN_POINTS` in `server/config.ts`. |
 | 14 Oct (night) | **Blackout on autopilot:** Start Blackout is the only click; the server runs intro (6 s) → read 5 s → answer **10 s** → time's up 1.5 s → reveal (3 s + 0.15 s per runner) → the dark (2.5 s + 0.25 s per step + 1.5 s if caught) → next question … → winner moment (7 s) → podium. Plays **every** round-3 question (then untagged unused ones) until one runner is left: no fixed count, no spares; the event needs ≥ 12 (warns < 15). `DARKNESS_STEPS` repeats its last value. Admin keeps Pause/Resume, Skip, +5 s (answer only), Void, Restart question (until the dark moves), Restart round, End quiz now, Remove. `advanceDarkness` / `showWinner` and Show/Reveal/Next in Blackout → `not-allowed`. Pause and Skip are step-bound (a stale one is ignored). Retuned: event BASE_GAP 6, `[1,2,2,3]`; demo BASE_GAP 2, `[1,2]`. *Replaces the "two clicks per question" row above.* |
+| 15 Oct (Sukrit) | **In-game settings from the environment:** read/answer times and counts (`ROUND1_READ_SECONDS`, `MULTI_ANSWER_SECONDS`, `BLACKOUT_ANSWER_SECONDS`, …) override the preset and are every quiz's defaults; Admin's Settings still change them per quiz, +5 s during play. Screens never hard-code a time or count (the Blackout intro reads `settings.blackoutAnswerSeconds`, Admin the server's `blackoutMin`). |
 | 15 Oct (Sukrit) | **The night's questions are `final_quiz.json`** (never change their wording, answers or letters). Checked on every server start (it refuses to start on a problem), saved as "Hermes final quiz". **Spares** are played only when a question is skipped (voided), in Round 1 too. Options stay shuffled **once per question, the same 1–4 order on the projector and every phone** (the prompt asked for a separate shuffle per phone; not done, because the projector's numbered answers would no longer match: raised with Sukrit). Work on branch `quiz-prep`. |
 | 14 Oct (late night, Sukrit) | **Multi-correct questions, Round 1 only (SPEC v3.2):** 2, 3 or 4 right options; players tick, then **LOCK IN** (first lock-in counts; ticks are server-kept drafts, sent at the full time if never locked); points = `max(0, round(S × (found/total − 0.25 × wrong)))` with S the lock-in's 200→100 speed score; **15 s** default answer time (`MULTI_ANSWER_MS`; a question's own time wins); **no count hint** ("Select ALL that apply" only); bot mood `right` if points ≥ ½ S; outcomes correct / partly right / wrong / missed. Exactly one right option = the old single-answer question, unchanged. The wild card and Blackout lists refuse them. |
 | 14 Oct (late night, Sukrit) | **Blackout on the projector runs left to right** under the question and options (always on screen), all 10 finalists in lanes, the dark a wall from the left; **runner phones show only the question and its options** (else "Eyes on the screen" / "You're out"). |
@@ -290,16 +291,19 @@ question centred, hint under it. At 1920 px, 1% of the width ≈ 1.2rem (`html:h
 npm scripts: `dev`, `dev:event`, `dev:web`, `dev:game`, `build`, `start`, `preview`, `typecheck`, `simulate`, `smoke`, `bots`,
 `tune-blackout`, `check-questions`, `play-shots`, `host-shots`, `admin-run`, `drills`, `rehearsal`, `washout`, `db-check`, `deploy`.
 
-Environment variables (`.env.local`, see `.env.example`):
+Environment variables (every one explained in `.env.example`; locally `.env.local` or `.env`, read by
+the game server through `server/env.ts` `loadEnvFiles`, the real environment wins):
 | Var | Default | Used by |
 |---|---|---|
-| `NEXT_PUBLIC_SOCKET_URL` | same host, port 3001 | browser: where the game server is |
+| `NEXT_PUBLIC_SOCKET_URL` | same host, port 3001 | browser (Vercel, build time): where the game server is |
 | `GAME_PRESET` | `demo` | server: `demo` or `event` |
-| `ADMIN_PIN` | `1234` | server |
+| `ADMIN_PIN` | `1234` | server (refused with `event` unless `ALLOW_DEFAULT_PIN=1`) |
 | `GAME_PORT` / `WEB_PORT` | `PORT` (Render) else `3001` / `3000` | server (web port only for printed links) |
 | `PUBLIC_WEB_URL` | `http://<LAN-IP>:3000` | server: builds the join link |
 | `CORS_ORIGIN` | any | server: comma-separated allowed origins |
 | `DATABASE_URL` | unset (memory only) | server: Postgres/Supabase; saves rooms, players (score, rank, wild card correct, Blackout place/position), every Round 1 answer |
+| `NODE_VERSION` | — | Render: `24` |
+| In-game: `ROUND1_READ_SECONDS`, `ROUND1_ANSWER_SECONDS`, `MULTI_ANSWER_SECONDS`, `BLACKOUT_READ_SECONDS`, `BLACKOUT_ANSWER_SECONDS`, `ROUND1_QUESTIONS`, `SAFE_SEATS`, `WILDCARD_QUESTIONS`, `WILDCARD_SUDDEN_DEATH_MAX`, `BLACKOUT_MIN_QUESTIONS`, `MIN_PARTICIPANTS`, `MAX_PARTICIPANTS` | the preset's | server: `applyGameEnv` in `server/config.ts` (`GAME_ENV` lists the ranges) overrides the preset; they're the defaults every quiz starts with (`defaultRules`), Admin's Settings still win per quiz; "Hermes final quiz" and the Demo quiz take the default times on every start. A bad value stops the server, naming it. |
 
 ---
 
@@ -601,6 +605,7 @@ Whichever is chosen: record it in §1.3 and §4.
 | Date | Change | Screens must |
 |---|---|---|
 | 11 Oct 2026 | v2 contract (Phase 1) | n/a |
+| 15 Oct 2026 | `QuizRules.multiAnswerSeconds` (a quiz's multi-correct answer time; old quizzes get the server default). In-game defaults can come from the environment (`applyGameEnv`). | Admin Settings: a stepper for it; QuestionForm shows it as the multi-correct placeholder |
 | 14 Oct 2026 (late night) | **Multi-correct (SPEC v3.2):** `participant:select { questionId, optionIds }`; `participant:answer` also takes `{ questionId, optionIds }`; `McqQuestion.multi`; `Reveal.correctIndexes`; answer screen `multi { selectedIds, locked }` (null on single-answer questions); `lockedIn.choiceNumbers` + `sentAtTimeUp`; `result.outcome` + `"partial"` and `result.multi { found, total, wrongPicks, rightNumbers, rightTexts, mood }`; `AdminQuestion.multi` + `correctNumbers`; `QuestionPreview.correctTexts` + `multi`; `AdminView.counts.ticking`; `LibraryQuestion.correct` is a number or a list of 2–4; `MULTI_ANSWER_SECONDS`. All additive. | Phone: ticks + LOCK IN + PARTLY RIGHT; Host: SELECT ALL THAT APPLY, every right option; Admin: checkboxes in Round 1, tags, counts |
 | 14 Oct 2026 (late night) | `answer` screen + `text` (Blackout: the question) and `chosenId` (Blackout: the runner's tap, so the options stay up locked); Blackout runners get `answer` only in boAnswer and `runnerStatus` in every other step (`runnerResult` is no longer sent); HostStage `boDark` carries `Reveal` (the answer stays on the projector while the dark moves). | Phones: question + options in Blackout; Host: `QuestionPanel` over the left-to-right track |
 | 14 Oct 2026 (night, later) | **Phase 2 Admin / phones:** `AdminView.optional: PrimaryAction[]` (the big button is now always the main path: Next question / End round 1 after a reveal, Reveal wild card / Next question after a wild card reveal, Start Blackout at wcWinner and when the wild card round is skipped); `AdminView.cut`; `AdminQuestion.options[].count`, `AdminQuestion.voided`; `QuizSummary.blackoutMin`; `QuizSettings.round1MaxPoints`; `JOIN_ERROR_MESSAGES` quiz-ended / removed reworded. | Admin draws chips; phones read the 200 from settings |

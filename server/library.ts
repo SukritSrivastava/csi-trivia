@@ -231,7 +231,16 @@ export async function ensureDemoQuiz(store: LibraryStore, config: GameConfig, qu
       demo.rules?.safe !== config.safe ||
       demo.rules?.round1Questions !== config.round1.questions ||
       (multis.length > 0 && !(Array.isArray(demo.round1) && demo.round1.some((q) => Array.isArray(q?.correct)))));
-  if (quizzes.length > 0 && !outdated) return;
+  if (quizzes.length > 0 && !outdated) {
+    // The Demo quiz follows the server's default times (the preset and ROUND1_READ_SECONDS & co. in the
+    // environment), like "Hermes final quiz": refresh them if they changed. Quizzes made in Admin keep their own.
+    const defaults = defaultRules(config);
+    const timing = ["round1ReadSeconds", "round1AnswerSeconds", "multiAnswerSeconds", "blackoutReadSeconds", "blackoutAnswerSeconds"] as const;
+    if (demo?.rules && timing.some((k) => demo.rules[k] !== defaults[k])) {
+      await store.save({ ...demo, rules: { ...demo.rules, ...Object.fromEntries(timing.map((k) => [k, defaults[k]])) }, updatedAt: Date.now() });
+    }
+    return;
+  }
   const toLib = (q: QuizQuestion) => ({ ...blankQuestion(), text: q.text, options: q.options, correct: q.correct, image: q.image });
   const fill = (round: 1 | 2 | 3, count: number) => {
     // The wild card and Blackout never take a multi-correct question.

@@ -24,7 +24,7 @@ import {
 import { blankQuestion, cleanQuiz, correctList, importJson, importRows, importText, isMultiCorrect, parseCsv, questionProblems, quizProblems, quizToCsv } from "../src/shared/quiz";
 import { darknessStep, type GameConfig, loadConfig, MULTI_ANSWER_MS, MULTI_WRONG_PENALTY, multiPoints, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
 import { FINAL_QUIZ_FILE, loadFinalQuiz } from "./finalQuiz";
-import { defaultRules, quizToGame } from "./library";
+import { DEMO_QUIZ_ID, defaultRules, ensureDemoQuiz, MemoryLibrary, quizToGame } from "./library";
 import { loadQuestions, pickRound, type QuizQuestion } from "./questions";
 import { type Clock, QuizRoom } from "./quiz";
 
@@ -331,10 +331,16 @@ function toBlackout(names: string[], winnerIndex: number, config = testConfig(),
 }
 
 const results: string[] = [];
-function test(name: string, fn: () => void) {
-  fn();
-  results.push(name);
-  console.log(`✓ ${name}`);
+/** Async tests (the quiz library's stores are async), awaited before the final tally. */
+const pending: Promise<void>[] = [];
+function test(name: string, fn: () => void | Promise<void>) {
+  const done = () => {
+    results.push(name);
+    console.log(`✓ ${name}`);
+  };
+  const r = fn();
+  if (r instanceof Promise) pending.push(r.then(done));
+  else done();
 }
 
 // ============================================================================
@@ -1839,6 +1845,17 @@ test("environment settings: override the preset, become a quiz's defaults, Admin
   assert.equal(old.rules.multiAnswerSeconds, 20);
 });
 
+test("environment settings: the Demo quiz follows changed default times; a quiz made in Admin keeps its own", async () => {
+  const store = new MemoryLibrary();
+  await ensureDemoQuiz(store, PRESETS.demo);
+  const mine: Quiz = { ...libraryQuiz(), id: "mine" };
+  await store.save(mine);
+  await ensureDemoQuiz(store, loadConfig("demo", { ROUND1_READ_SECONDS: "11", BLACKOUT_ANSWER_SECONDS: "13" }));
+  const demo = (await store.get(DEMO_QUIZ_ID))!;
+  assert.deepEqual([demo.rules.round1ReadSeconds, demo.rules.blackoutAnswerSeconds, demo.round1.length], [11, 13, 5], "Demo: new times, same questions");
+  assert.deepEqual((await store.get("mine"))!.rules, mine.rules, "a quiz made in Admin keeps its own settings");
+});
+
 // ============================================================================
 // The night's question bank: final_quiz.json
 // ============================================================================
@@ -2224,4 +2241,10 @@ console.log(
   `✓ ${seeds} more 100-player event games (Blackout lasted ${lengths[0]}–${lengths[lengths.length - 1]} questions, median ${lengths[Math.floor(lengths.length / 2)]}; ` +
     `${suddenDeaths} wild card sudden deaths) and 40 demo games (Blackout median ${demoLengths[20]}, ${demoLengths.filter((n) => n <= 6).length} of 40 within 6 questions)`,
 );
-console.log(`\nAll ${results.length + summaries.length + 1} checks passed.`);
+Promise.all(pending).then(
+  () => console.log(`\nAll ${results.length + summaries.length + 1} checks passed.`),
+  (error) => {
+    console.error(error);
+    process.exit(1);
+  },
+);

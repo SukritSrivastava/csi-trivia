@@ -210,7 +210,16 @@ Step by step, from scratch: [`docs/DEPLOY.md`](docs/DEPLOY.md). Don't deploy fro
 | `ADMIN_PIN` | Render | the quizmaster's PIN (Admin and the projector). Never in the repo: it's public. **Required with `GAME_PRESET=event`**: the server refuses to start on the default `1234` (set `ALLOW_DEFAULT_PIN=1` only for a local rehearsal). |
 | `GAME_PRESET` | Render | `event` for the night (20 Round 1, top 9 safe, 5 wild card, Blackout on autopilot with at least 12 questions) or `demo`. New quizzes start with these settings; each quiz's own Settings win. The Blackout tuning and holds always come from the preset. |
 | `DATABASE_URL` | Render | Supabase **Session pooler** connection string. Unset or `off` = nothing saved (the quiz still runs). |
+| `NODE_VERSION` | Render | `24`. |
 | `PORT` | Render sets it | the game server listens on it (`GAME_PORT` locally, default 3001). |
+| `ROUND1_READ_SECONDS`, `ROUND1_ANSWER_SECONDS`, `MULTI_ANSWER_SECONDS`, `BLACKOUT_READ_SECONDS`, `BLACKOUT_ANSWER_SECONDS` | Render (optional; locally `.env.local`) | the default read and answer times (event: 8, 8, 15, 5, 10). |
+| `ROUND1_QUESTIONS`, `SAFE_SEATS`, `WILDCARD_QUESTIONS`, `WILDCARD_SUDDEN_DEATH_MAX`, `BLACKOUT_MIN_QUESTIONS`, `MIN_PARTICIPANTS`, `MAX_PARTICIPANTS` | Render (optional) | the default counts (event: 20, 9, 5, 3, 12, 2, 200). |
+
+**In-game settings** (the last two rows) override the preset and are the defaults every quiz starts
+with. Admin → a quiz → Settings still changes them for that quiz (including the multi-correct answer
+time), and +5 s works during play. "Hermes final quiz" and the Demo quiz take the default times again on
+every server start; quizzes made in Admin keep their own. A bad value stops the game server at start,
+naming it; the startup log lists the settings in use. Every variable is explained in [`.env.example`](.env.example).
 
 **CORS:** the game server only accepts connections from `CORS_ORIGIN`. If phones show "Can't
 reach the quiz", check it matches the website's address exactly (`https://…`, no trailing slash).
@@ -223,7 +232,8 @@ npm run deploy                                      # redeploys both (keys in .e
 ```
 
 1. Render (game server): New → Blueprint → this repo (`render.yaml`: `npm ci`, `npm run start:game`,
-   health check `/health`). Set `ADMIN_PIN`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, optionally `DATABASE_URL`.
+   health check `/health`). Set `ADMIN_PIN`, `PUBLIC_WEB_URL`, `CORS_ORIGIN`, optionally `DATABASE_URL`
+   and the in-game settings.
 2. Vercel (website): import the repo, set `NEXT_PUBLIC_SOCKET_URL` to the Render address, deploy.
 3. Back on Render: `PUBLIC_WEB_URL` and `CORS_ORIGIN` = the Vercel address (no trailing slash), so the
    QR code is right and the phones may connect.

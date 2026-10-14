@@ -26,6 +26,9 @@ $env:GAME_PRESET="event"; $env:ADMIN_PIN="choose-a-pin"; $env:DATABASE_URL="off"
   `http://localhost:3000/host`, **phones** `http://<laptop's Wi-Fi address>:3000/play` (also as a QR
   code on the projector). If Windows asks whether Node.js may use the network, choose **Allow** on
   private networks; phones can't connect otherwise.
+- **Changing the times** (read, answer, multi-correct, Blackout): before opening the room, Admin → the quiz
+  → **Settings**. To change the default for every quiz, add for example `$env:ROUND1_ANSWER_SECONDS="10";` to
+  the start line (or put it in `.env.local`, or Render's Environment); the server prints the times it uses.
 - `DATABASE_URL="off"` keeps everything on the laptop (download the results as CSV from Admin at the
   end). Leave it out to also save results to Supabase (needs internet).
 - `npm run bot-load-test` (another PowerShell window, before doors open, ~15 minutes) plays a whole

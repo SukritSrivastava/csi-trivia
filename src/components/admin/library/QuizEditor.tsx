@@ -189,7 +189,7 @@ export function QuizEditor({ id, onClose }: { id: string; onClose: () => void })
           {tab === "settings" ? (
             <>
               <ReadyPanel problems={problems} />
-              <RulesForm quiz={quiz} onChange={(rules) => update((q) => ({ ...q, rules }))} />
+              <RulesForm quiz={quiz} blackoutMin={blackoutMin} onChange={(rules) => update((q) => ({ ...q, rules }))} />
             </>
           ) : (
             <QuestionList
@@ -284,7 +284,7 @@ function QuestionList({
           ? `Everyone answers these, top to bottom. The first ${played} are played (change it in Settings).`
           : list === "wildcard"
             ? `Everyone outside the safe seats answers these, top to bottom. The first ${played} count; the rest are spares for voided questions and sudden death.`
-            : `The finalists race the dark on these, top to bottom, until one runner is left. This server needs at least ${blackoutMin} (the event 12); 15 or more is safer.`}
+            : `The finalists race the dark on these, top to bottom, until one runner is left. This server needs at least ${blackoutMin}; ${blackoutMin + 3} or more is safer.`}
       </p>
 
       {items.length === 0 ? (

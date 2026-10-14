@@ -5,7 +5,7 @@
  * sample every second, every log line, and any uncaught error.
  */
 import { FINAL_QUIZ_FILE } from "../server/finalQuiz";
-import { PRESETS } from "../server/config";
+import { applyGameEnv, PRESETS } from "../server/config";
 import { startGameServer } from "../server/server";
 
 const send = (message: object) => process.send?.(message);
@@ -17,7 +17,8 @@ process.on("unhandledRejection", (e) => send({ type: "error", message: `unhandle
 startGameServer({
   port: 0,
   host: "127.0.0.1",
-  config: PRESETS.event,
+  // The event preset with any game settings from the environment (ROUND1_READ_SECONDS & co.), as on Render.
+  config: applyGameEnv(PRESETS.event),
   adminPin: process.env.LOAD_TEST_PIN ?? "4321",
   joinUrl: "http://localhost:3000/play",
   finalQuizFile: FINAL_QUIZ_FILE,
