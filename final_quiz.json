@@ -1,0 +1,201 @@
+{
+  "_format": "Hermes Quiz question bank. Each question: id (unique), round ('1', 'wild card' or 'blackout'), spare (true = backup question, kept at the bottom of its round), text, image (path under /public shown on the projector only, or null), options (exactly 4, all different, keyed A-D), correct (array of right letters; only Round 1 may have more than one), readSeconds / answerSeconds (null = use the round default). Round defaults: Round 1 = 8 s read + 8 s answer (15 s answer when more than one option is correct; players tick all right ones, wrong ticks cost points, faster answers score more). Wild card = 8 s + 8 s. Blackout = 5 s + 10 s. Options are shuffled on every phone, so no option refers to a letter or position. Each round uses only its own questions; nothing repeats across rounds.",
+  "counts": {
+    "round1": { "played": 20, "spares": 2, "total": 22 },
+    "wildCard": { "played": 5, "spares": 3, "total": 8 },
+    "blackout": { "minimum": 12, "total": 18 }
+  },
+  "questions": [
+    { "id": "r1-01", "round": "1", "spare": false, "text": "What does LLM stand for?", "image": null,
+      "options": { "A": "Linear Logic Machine", "B": "Large Language Model", "C": "Layered Learning Matrix", "D": "Long-term Language Memory" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-02", "round": "1", "spare": false, "text": "Which organisation builds Hermes Agent?", "image": null,
+      "options": { "A": "Google DeepMind", "B": "NVIDIA", "C": "Groq", "D": "Nous Research" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-03", "round": "1", "spare": false, "text": "Under which licence is Hermes released?", "image": null,
+      "options": { "A": "GPL-3.0", "B": "MIT", "C": "Apache-2.0", "D": "Proprietary" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-04", "round": "1", "spare": false, "text": "Which command checks that your Hermes install is healthy?", "image": null,
+      "options": { "A": "hermes check", "B": "hermes health", "C": "hermes doctor", "D": "hermes verify" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-05", "round": "1", "spare": false, "text": "Which command swaps the model but keeps your memory and skills?", "image": null,
+      "options": { "A": "hermes model", "B": "hermes swap", "C": "hermes brain", "D": "hermes switch" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-06", "round": "1", "spare": false, "text": "Where does Hermes store skills?", "image": null,
+      "options": { "A": "~/.hermes/.env", "B": "~/.hermes/skills/", "C": "~/.hermes/memories/", "D": "~/Documents/skills/" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-07", "round": "1", "spare": false, "text": "What is a skill in Hermes?", "image": null,
+      "options": { "A": "A fine-tuned copy of the model", "B": "An encrypted API key file", "C": "A saved procedure in a SKILL.md file", "D": "A plugin for the Telegram app" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-08", "round": "1", "spare": false, "text": "Which of these are Hermes terminal backends?", "image": null,
+      "options": { "A": "Docker", "B": "Kubernetes", "C": "SSH", "D": "Modal" },
+      "correct": ["A", "C", "D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-09", "round": "1", "spare": false, "text": "Which Telegram bot creates a new bot and gives its token?", "image": null,
+      "options": { "A": "@userinfobot", "B": "@HermesBot", "C": "@TokenMaster", "D": "@BotFather" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-10", "round": "1", "spare": false, "text": "Which Telegram bot tells you your numeric user ID?", "image": null,
+      "options": { "A": "@BotFather", "B": "@userinfobot", "C": "@IDFinderBot", "D": "@HermesBot" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-11", "round": "1", "spare": false, "text": "Which command starts a fresh, empty session in Hermes?", "image": null,
+      "options": { "A": "/begin", "B": "/fresh", "C": "/new", "D": "/blank" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-12", "round": "1", "spare": false, "text": "What does /reasoning low do?", "image": null,
+      "options": { "A": "Disables memory", "B": "Cuts thinking effort to save tokens", "C": "Switches to a smaller model", "D": "Turns off all tools" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-13", "round": "1", "spare": false, "text": "Which file stores what Hermes remembers about you?", "image": null,
+      "options": { "A": "SKILL.md", "B": "config.yaml", "C": "USER.md", "D": ".env" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-14", "round": "1", "spare": false, "text": "Which provider is the primary one for the student labs?", "image": null,
+      "options": { "A": "Google Gemini", "B": "NVIDIA NIM", "C": "Groq", "D": "OpenRouter" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-15", "round": "1", "spare": false, "text": "Which of these toolsets stay switched on for the labs?", "image": null,
+      "options": { "A": "Web", "B": "Terminal", "C": "Image generation", "D": "Memory" },
+      "correct": ["B", "D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-16", "round": "1", "spare": false, "text": "In an AI agent, what is a \"tool call\"?", "image": null,
+      "options": { "A": "The agent phoning a human for help", "B": "The model asking to run a function", "C": "A command that restarts the model", "D": "A type of GPU memory" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-17", "round": "1", "spare": false, "text": "What does GPU stand for?", "image": null,
+      "options": { "A": "Graphics Processing Unit", "B": "General Processing Unit", "C": "Graphical Program Utility", "D": "Global Power Unit" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-18", "round": "1", "spare": false, "text": "Which of these are families of LLMs?", "image": null,
+      "options": { "A": "Kotlin", "B": "Gemini", "C": "Kubernetes", "D": "Claude" },
+      "correct": ["B", "D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-19", "round": "1", "spare": false, "text": "Your Telegram bot token leaks. What should you do?", "image": null,
+      "options": { "A": "Rename the bot", "B": "Restart the gateway", "C": "Wait for it to expire", "D": "Send /revoke to @BotFather" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-20", "round": "1", "spare": false, "text": "What does API stand for?", "image": null,
+      "options": { "A": "Automated Program Integration", "B": "Application Programming Interface", "C": "Advanced Processing Input", "D": "Application Process Index" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-21", "round": "1", "spare": true, "text": "What should you do at the close of the workshop?", "image": null,
+      "options": { "A": "Leave the gateway running overnight", "B": "Commit your .env file to GitHub", "C": "Stop gateway, revoke token, delete keys", "D": "Share your API keys with a friend" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "r1-22", "round": "1", "spare": true, "text": "To an LLM, what is a token?", "image": null,
+      "options": { "A": "A login password", "B": "A small chunk of text", "C": "A unit of cryptocurrency", "D": "A core inside the GPU" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-01", "round": "wild card", "spare": false, "text": "What is the character cap of USER.md?", "image": null,
+      "options": { "A": "500", "B": "1,375", "C": "2,200", "D": "4,096" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-02", "round": "wild card", "spare": false, "text": "What is the character cap of MEMORY.md?", "image": null,
+      "options": { "A": "1,375", "B": "4,096", "C": "10,000", "D": "2,200" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-03", "round": "wild card", "spare": false, "text": "Roughly how many tokens do skill names and descriptions add to the prompt?", "image": null,
+      "options": { "A": "About 300", "B": "About 3K", "C": "About 20K", "D": "About 50K" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-04", "round": "wild card", "spare": false, "text": "Which open standard does the Hermes skill format follow?", "image": null,
+      "options": { "A": "OpenAPI", "B": "JSON-RPC", "C": "agentskills.io", "D": "GraphQL" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-05", "round": "wild card", "spare": false, "text": "Which errors make Hermes fail over immediately, with no retries?", "image": null,
+      "options": { "A": "429 only", "B": "500 or 503", "C": "200 or 201", "D": "401, 403 or 404" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-06", "round": "wild card", "spare": true, "text": "How many gateways can poll one bot token at a time?", "image": null,
+      "options": { "A": "One", "B": "Two", "C": "Five", "D": "Unlimited" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-07", "round": "wild card", "spare": true, "text": "Which provider is the first fallback for students?", "image": null,
+      "options": { "A": "Groq", "B": "NVIDIA NIM", "C": "Cerebras", "D": "OpenRouter" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "wc-08", "round": "wild card", "spare": true, "text": "In context compression, what happens to the middle turns?", "image": null,
+      "options": { "A": "Deleted with no summary", "B": "Zipped to save disk space", "C": "Summarised by another model call", "D": "Moved into a skill file" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-01", "round": "blackout", "spare": false, "text": "What lets an agent remember facts across sessions?", "image": null,
+      "options": { "A": "A faster GPU", "B": "Memory", "C": "A bigger screen", "D": "Dark mode" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-02", "round": "blackout", "spare": false, "text": "Hermes skills are written in which format?", "image": null,
+      "options": { "A": "Excel", "B": "PDF", "C": "Markdown", "D": "MP3" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-03", "round": "blackout", "spare": false, "text": "What does CPU stand for?", "image": null,
+      "options": { "A": "Central Processing Unit", "B": "Central Program Utility", "C": "Core Processing Unit", "D": "Computer Power Unit" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-04", "round": "blackout", "spare": false, "text": "Which .env variable lists who may message your bot?", "image": null,
+      "options": { "A": "TELEGRAM_BOT_TOKEN", "B": "TELEGRAM_ADMIN", "C": "GATEWAY_ALLOW_ALL_USERS", "D": "TELEGRAM_ALLOWED_USERS" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-05", "round": "blackout", "spare": false, "text": "Which command installs the gateway as a background service?", "image": null,
+      "options": { "A": "hermes service start", "B": "hermes gateway install", "C": "hermes daemon on", "D": "hermes gateway --bg" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-06", "round": "blackout", "spare": false, "text": "LLMs read and write text in units called what?", "image": null,
+      "options": { "A": "Pixels", "B": "Frames", "C": "Tokens", "D": "Packets" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-07", "round": "blackout", "spare": false, "text": "Students connect Hermes to which messaging app?", "image": null,
+      "options": { "A": "Telegram", "B": "WhatsApp", "C": "Slack", "D": "Discord" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-08", "round": "blackout", "spare": false, "text": "Which company makes Claude?", "image": null,
+      "options": { "A": "OpenAI", "B": "Google", "C": "Meta", "D": "Anthropic" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-09", "round": "blackout", "spare": false, "text": "Which company makes Gemini?", "image": null,
+      "options": { "A": "Anthropic", "B": "Google", "C": "Meta", "D": "NVIDIA" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-10", "round": "blackout", "spare": false, "text": "What does AI stand for?", "image": null,
+      "options": { "A": "Automated Interface", "B": "Advanced Internet", "C": "Artificial Intelligence", "D": "Applied Information" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-11", "round": "blackout", "spare": false, "text": "What does HTTP error 429 mean?", "image": null,
+      "options": { "A": "Too many requests", "B": "Page not found", "C": "Server error", "D": "Unauthorized" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-12", "round": "blackout", "spare": false, "text": "What is it called when an AI invents false facts?", "image": null,
+      "options": { "A": "Overfitting", "B": "Compression", "C": "Tokenization", "D": "Hallucination" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-13", "round": "blackout", "spare": false, "text": "What is the text you send to an LLM called?", "image": null,
+      "options": { "A": "Kernel", "B": "Prompt", "C": "Cache", "D": "Driver" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-14", "round": "blackout", "spare": false, "text": "Which Hermes file holds your API keys?", "image": null,
+      "options": { "A": "SKILL.md", "B": "USER.md", "C": ".env", "D": "README.md" },
+      "correct": ["C"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-15", "round": "blackout", "spare": false, "text": "What does the harness do with a model's tool call?", "image": null,
+      "options": { "A": "Runs the tool", "B": "Ignores the request", "C": "Deletes the model", "D": "Prints an error" },
+      "correct": ["A"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-16", "round": "blackout", "spare": false, "text": "What does RAM stand for?", "image": null,
+      "options": { "A": "Read And Modify", "B": "Rapid Access Module", "C": "Runtime Allocation Memory", "D": "Random Access Memory" },
+      "correct": ["D"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-17", "round": "blackout", "spare": false, "text": "Which cron jobs are allowed in the labs?", "image": null,
+      "options": { "A": "Hourly agent summaries", "B": "Script-only jobs that call no model", "C": "Daily agent reports", "D": "Any job at low reasoning" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null },
+
+    { "id": "bo-18", "round": "blackout", "spare": false, "text": "Which company owns GitHub?", "image": null,
+      "options": { "A": "Google", "B": "Microsoft", "C": "Amazon", "D": "Meta" },
+      "correct": ["B"], "readSeconds": null, "answerSeconds": null }
+  ]
+}
