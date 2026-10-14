@@ -1,4 +1,4 @@
-# Hermes Quiz
+# Hermes Quiz!
 
 A live multiple-choice quiz for 60–100 people in one hall, run by the CSI student chapter at
 KJSCE after the Hermes AI agent workshop. Questions go up on the **projector**, everyone answers
