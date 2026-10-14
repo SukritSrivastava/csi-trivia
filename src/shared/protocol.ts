@@ -653,9 +653,11 @@ export type ParticipantScreen =
       /**
        * Multi-correct questions (after the reveal): `found` of `total` right options
        * ticked, `wrongPicks` wrong ones ticked, and every right option's number (1–4,
-       * ascending) and text. null for a single-answer question.
+       * ascending) and text. `mood`: the player's bot, by the same rule as the Host's
+       * cast ("right" with at least half of a perfect answer's points). null for a
+       * single-answer question.
        */
-      multi: { found: number; total: number; wrongPicks: number; rightNumbers: number[]; rightTexts: string[] } | null;
+      multi: { found: number; total: number; wrongPicks: number; rightNumbers: number[]; rightTexts: string[]; mood: BotMood } | null;
     }
   /** The quizmaster cancelled the question. */
   | { kind: "voided"; round: RoundNumber }

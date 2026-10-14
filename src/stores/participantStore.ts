@@ -32,6 +32,10 @@ interface ParticipantStore {
   /** Lobby: change this participant's bot. */
   setBot: (look: BotLook) => void;
   answer: (questionId: string, option: { id: string; text: string }) => void;
+  /** Multi-correct: the current ticks (a draft the server keeps; not an answer). */
+  select: (questionId: string, optionIds: string[]) => void;
+  /** Multi-correct: LOCK IN these ticks. */
+  lockIn: (questionId: string, optionIds: string[]) => void;
   back: (finalistId: string) => void;
   leave: () => void;
 }
@@ -142,6 +146,10 @@ export const useParticipantStore = create<ParticipantStore>()((set, get) => ({
     set({ tapped: { questionId, optionId: option.id, text: option.text } });
     getSocket().emit("participant:answer", { questionId, optionId: option.id });
   },
+
+  select: (questionId, optionIds) => getSocket().emit("participant:select", { questionId, optionIds }),
+
+  lockIn: (questionId, optionIds) => getSocket().emit("participant:answer", { questionId, optionIds }),
 
   back: (finalistId) => getSocket().emit("participant:back", { finalistId }),
 

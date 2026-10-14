@@ -164,7 +164,7 @@ function Screen({ view }: { view: ParticipantView }) {
     case "lobby":
       return <LobbyScreen view={view} joined={s.joined} />;
     case "answer":
-      return <AnswerScreen screen={s} />;
+      return <AnswerScreen screen={s} me={view.me} paused={view.paused} />;
     case "backFinalist":
       return <BackFinalistScreen screen={s} />;
     case "safeWatch":

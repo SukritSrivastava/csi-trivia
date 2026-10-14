@@ -1767,7 +1767,10 @@ export class QuizRoom {
         return { primary: null, hint: "Reading time. Answers open by themselves." };
       case "r1Answer":
       case "wcAnswer":
-        return { primary: null, hint: ["Answering.", answeredLine(), "Time's up comes by itself, or when everyone has answered."].filter(Boolean).join(" ") };
+        return {
+          primary: null,
+          hint: ["Answering.", answeredLine(), `Time's up comes by itself, or when everyone has ${run?.multi ? "locked in" : "answered"}.`].filter(Boolean).join(" "),
+        };
       case "r1TimesUp":
       case "wcTimesUp":
         return { primary: { action: { type: "revealAnswer" }, label: "Reveal answer" }, hint: ["Time's up.", answeredLine()].filter(Boolean).join(" ") };
@@ -2429,6 +2432,7 @@ export class QuizRoom {
             wrongPicks: m?.wrong ?? 0,
             rightNumbers: slots.map((slot) => slot + 1),
             rightTexts: slots.map((slot) => run.question.options[run.hostOrder[slot]]),
+            mood: this.botMood(p),
           },
         };
       }

@@ -269,6 +269,42 @@ html:has(.host-root) {
   .phone-result[data-bad="true"] {
     color: var(--color-wrong);
   }
+  /* Partly right (multi-correct): the same mint words inside a flat mint outline. */
+  .phone-result[data-partial="true"] {
+    border: 2px solid var(--color-mint);
+    border-radius: 0.9rem;
+    padding: 0.2em 0.45em 0.1em;
+  }
+  /* Multi-correct options (Round 1): a tap ticks or unticks; ticked = a stronger wash
+     and a solid mint square with a check on the right. Flat: no glow. */
+  .phone-opt[data-tick][aria-pressed="true"] {
+    background: rgb(108 240 176 / 0.16);
+    color: var(--color-ghost);
+  }
+  .tick-box {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 2px solid var(--color-mint);
+    border-radius: 0.45rem;
+    color: var(--color-void);
+  }
+  .phone-opt[aria-pressed="true"] .tick-box {
+    background: var(--color-mint);
+  }
+  /* LOCK IN stays in thumb reach: pinned to the bottom of the phone, over the options. */
+  .phone-lock-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin-inline: -0.25rem;
+    padding: 0.75rem 0.25rem max(0.25rem, env(safe-area-inset-bottom));
+    background: var(--color-deep);
+    border-top: 1px solid var(--color-line);
+  }
 
   /* ======================================================================
      THE TIMER (<TimerRing />): a clock face with a red wedge for time used

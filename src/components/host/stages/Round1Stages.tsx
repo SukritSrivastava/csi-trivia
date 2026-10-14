@@ -7,6 +7,9 @@
  * the left with its tilt while the 4 options fly in on the right (answer).
  * Reveal: wrong options dim to 30%, the right number turns mint, the banner
  * types itself out, and the cast hops and shakes (their moods, from the server).
+ * Multi-correct (Round 1): "SELECT ALL THAT APPLY" under the question from the
+ * answer step, "locked in" counts, and at the reveal every right option lit with
+ * a mint check.
  */
 import NumberFlow from "@number-flow/react";
 import { motion } from "motion/react";
@@ -75,7 +78,8 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
   const step = stage.phase.slice(2) as "Read" | "Answer" | "TimesUp" | "Reveal";
   const reading = step === "Read";
   const revealed = step === "Reveal" && "voided" in stage;
-  const correct = revealed && !stage.voided ? stage.correctText : null;
+  // Every right option's place in the 1–4 order (a multi-correct question has 2–4).
+  const right = revealed && !stage.voided ? (stage.correctIndexes ?? (stage.correctIndex !== null ? [stage.correctIndex] : [])) : null;
   const counting = step === "Answer" || step === "TimesUp";
   const counts = "wildCard" in stage ? { answered: stage.wildCard.answered ?? 0, expected: stage.wildCard.expected ?? 0 } : "answered" in stage ? stage : null;
   const roundLabel = q.round === 2 ? (q.suddenDeath ? "SUDDEN DEATH" : `WILD CARD · Q${q.number} OF ${q.count}`) : null;
@@ -108,6 +112,19 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
             className={`shrink-0 rounded-[1rem] border border-line bg-panel object-contain p-[1rem] ${reading ? "h-[22rem] w-[22rem]" : "h-[13rem] w-[13rem]"}`}
           />
         )}
+        {/* Multi-correct: from the answer step on (never how many are right). */}
+        {q.multi && !reading && !revealed && (
+          <motion.p
+            layout="position"
+            className="host-hint rounded-[0.8rem] border-2 border-mint px-[1.4rem] py-[0.6rem] !text-[2.8rem] leading-none tracking-[0.04em] text-mint"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            data-testid="select-all"
+          >
+            SELECT ALL THAT APPLY
+          </motion.p>
+        )}
       </motion.div>
 
       {reading && (
@@ -119,7 +136,7 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
       {q.options && (
         <ol className="host-opts absolute top-[30%] right-[5%] z-10 w-[44%]" aria-label="Answers">
           {q.options.map((o, i) => (
-            <li key={`${i}-${o}`} className="host-opt" data-correct={correct === o} data-dim={!!correct && correct !== o}>
+            <li key={`${i}-${o}`} className="host-opt" data-correct={!!right?.includes(i)} data-dim={!!right && !right.includes(i)}>
               <motion.span
                 className="flex items-center gap-[1.4rem]"
                 initial={{ opacity: 0, x: 80 }}
@@ -128,6 +145,12 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
               >
                 <span className="opt-num">{i + 1}</span>
                 {o}
+                {q.multi && right?.includes(i) && (
+                  // Multi-correct: a mint check on every right option.
+                  <svg viewBox="0 0 20 20" className="size-[3.6rem] shrink-0 text-mint" aria-label="right">
+                    <path d="M4 10.5 8.2 14.5 16 5.5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="square" />
+                  </svg>
+                )}
               </motion.span>
             </li>
           ))}
@@ -138,7 +161,7 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
       {counting && counts && (
         <p className="host-count absolute bottom-[12%] left-[28%] z-10" aria-live="polite">
           <b>{counts.answered}</b>{" "}
-          / {counts.expected} answered
+          / {counts.expected} {q.multi ? "locked in" : "answered"}
         </p>
       )}
       {step === "TimesUp" && (
@@ -149,7 +172,13 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
       {revealed && (
         <TypeOut
           className="host-banner absolute inset-x-0 bottom-[12%] z-10 text-center"
-          text={stage.voided ? "> question cancelled" : `> answer: ${(stage.correctText ?? "").toLowerCase()}`}
+          text={
+            stage.voided
+              ? "> question cancelled"
+              : q.multi && right
+                ? `> answers: ${right.map((i) => i + 1).join(" + ")}`
+                : `> answer: ${(stage.correctText ?? "").toLowerCase()}`
+          }
         />
       )}
     </>
@@ -185,7 +214,7 @@ export function ResultsStage({ view, stage }: { view: HostView; stage: Stage<"r1
         ))}
       </ol>
       <p className="host-count">
-        <b>{stage.answered}</b> / {stage.expected} answered
+        <b>{stage.answered}</b> / {stage.expected} {stage.question.multi ? "locked in · every tick counted" : "answered"}
       </p>
     </Panel>
   );

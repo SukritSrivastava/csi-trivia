@@ -74,6 +74,7 @@ export function Moment({
   mood,
   big,
   bad,
+  partial,
   hop = false,
   children,
   testId,
@@ -82,6 +83,8 @@ export function Moment({
   mood: BotMood;
   big?: string;
   bad?: boolean;
+  /** Partly right (a multi-correct question): the big word in a flat mint outline. */
+  partial?: boolean;
   /** A short relieved hop (still running in Blackout). */
   hop?: boolean;
   children?: ReactNode;
@@ -97,7 +100,7 @@ export function Moment({
         <Bot color={me.color} head={me.head} mood={mood} size="clamp(130px, 46vw, 196px)" label="Your bot" />
       </motion.span>
       {big && (
-        <p className="phone-result !text-[clamp(3rem,15vw,4.4rem)]" data-bad={bad ? "true" : undefined}>
+        <p className="phone-result !text-[clamp(3rem,15vw,4.4rem)]" data-bad={bad ? "true" : undefined} data-partial={partial ? "true" : undefined}>
           {big}
         </p>
       )}
