@@ -2134,7 +2134,7 @@ export class QuizRoom {
       case "boReveal":
         return { phase: "boReveal", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing(), ...this.revealOf(run!) };
       case "boDark":
-        return { phase: "boDark", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing() };
+        return { phase: "boDark", question: this.mcqQuestion(run!), blackout: this.blackoutState()!, backing: backing(), ...this.revealOf(run!) };
       case "boWinner":
         return { phase: "boWinner", blackout: this.blackoutState()!, backing: backing() };
       case "podium":
@@ -2214,7 +2214,19 @@ export class QuizRoom {
       gap,
     });
     if (READ_PHASES.includes(this.phase)) return { kind: "eyesUp", ...base };
-    if (ANSWER_PHASES.includes(this.phase)) return answer ? locked(false) : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run) };
+    // Blackout: the runner's phone keeps the question and its options up, the tapped one locked.
+    if (run.round === 3 && ANSWER_PHASES.includes(this.phase)) {
+      return {
+        kind: "answer",
+        ...base,
+        questionId: run.id,
+        options: this.optionsFor(run),
+        text: run.question.text,
+        chosenId: answer ? run.optionIds[answer.optionIndex] : null,
+      };
+    }
+    if (ANSWER_PHASES.includes(this.phase))
+      return answer ? locked(false) : { kind: "answer", ...base, questionId: run.id, options: this.optionsFor(run), text: null, chosenId: null };
     return answer ? locked(true) : { kind: "timesUp", round: run.round };
   }
 
@@ -2285,17 +2297,9 @@ export class QuizRoom {
       if (!p.runner.alive || !run || run.round !== 3 || phase === "boIntro" || phase === "boDark" || phase === "boWinner" || !run.players.has(p.id)) {
         return this.runnerStatus(p);
       }
-      if (phase !== "boReveal") return this.questionScreen(p, run);
-      const a = run.answers.get(p.id);
-      const outcome = run.voided ? "voided" : !a ? "missed" : a.optionIndex === run.question.correct ? "correct" : "wrong";
-      return {
-        kind: "runnerResult",
-        outcome,
-        delta: run.voided ? 0 : p.runner.delta ?? 0,
-        position: p.runner.position,
-        gap: p.runner.position - this.dark,
-        correctText: outcome === "wrong" || outcome === "missed" ? run.question.options[run.question.correct] : null,
-      };
+      // A runner's phone shows only the question and its options while answering; every other step is a plain wait.
+      if (phase === "boAnswer") return this.questionScreen(p, run);
+      return this.runnerStatus(p);
     }
     return { kind: "audience" };
   }

@@ -602,56 +602,39 @@ html:has(.host-root) {
 }
 
 /* ======================================================================
-   BLACKOUT on the Host (<BlackoutScene />): flat lights, CSS beats that
-   Pause can freeze ([data-paused]) and a refresh can resume (negative delays).
-   Every keyframe exists twice (-a / -b) so a new step restarts it without
-   remounting the element.
+   BLACKOUT on the Host (<BlackoutScene />): the chase runs left to right
+   under the question. Flat lights, CSS beats that Pause can freeze
+   ([data-paused]) and a refresh can resume (negative delays). Every keyframe
+   exists twice (-a / -b) so a new step restarts it without remounting.
    ====================================================================== */
 .bo-scene[data-paused] *,
 .bo-scene[data-paused] *::before,
 .bo-scene[data-paused] *::after {
   animation-play-state: paused !important;
 }
-.bo-stage {
-  transform-origin: 50% 50%;
-}
-.bo-alarm,
-.bo-scene > .corridor-vignette {
+.bo-alarm {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
-.bo-row {
-  opacity: 0;
+/* The dark: a flat black wall from the left, a crisp alarm-red edge (no glow). */
+.bo-wall {
+  position: absolute;
+  left: 0;
+  top: 440px;
+  height: 642px;
+  width: var(--w1);
+  background: rgb(2 3 4 / 0.94);
+  border-right: 5px solid var(--color-alarm);
+  z-index: 5;
 }
-.bo-row.bo-row-off {
-  opacity: 1;
-}
-.bo-row-die-a {
-  animation: bo-row-die-a 0.45s linear both;
-}
-.bo-row-die-b {
-  animation: bo-row-die-b 0.45s linear both;
-}
-.bo-row-light-a {
-  animation: bo-row-light-a 0.5s linear both;
-}
-.bo-row-light-b {
-  animation: bo-row-light-b 0.5s linear both;
-}
-.bo-front-a {
-  animation-name: bo-front-a;
-  animation-timing-function: linear;
+.bo-wall-a {
+  animation-name: bo-wall-a;
   animation-fill-mode: both;
 }
-.bo-front-b {
-  animation-name: bo-front-b;
-  animation-timing-function: linear;
+.bo-wall-b {
+  animation-name: bo-wall-b;
   animation-fill-mode: both;
-}
-.bo-front-gone {
-  opacity: 0;
-  transition: opacity 0.8s;
 }
 .bo-runner {
   position: absolute;
@@ -659,74 +642,74 @@ html:has(.host-root) {
   top: 0;
   width: 0;
   height: 0;
-  font-size: var(--f1);
-  transform: translate(var(--x1), var(--y1));
+  transform: translate(var(--x1), var(--y));
   animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   animation-fill-mode: both;
 }
 .bo-body {
   position: absolute;
   left: 0;
-  bottom: 0;
+  top: 0;
 }
 .bo-bot {
   position: absolute;
   left: 0;
-  bottom: 0;
-  transform: translateX(-50%);
+  top: 0;
+  transform: translate(-50%, -50%);
   line-height: 0;
 }
-.bo-plate {
+/* Name and distance to the right of the bot, on a dark plate. */
+.bo-tag {
   position: absolute;
-  left: 0;
-  bottom: 1.16em;
-  transform: translateX(-50%);
-  font-family: var(--font-term);
-  font-size: max(32px, 0.5em);
-  line-height: 1;
-  color: var(--color-amber);
-  background: rgb(3 5 6 / 0.85);
-  border: 2px solid var(--color-line);
-  border-radius: 8px;
+  left: 32px;
+  top: 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   padding: 2px 10px;
+  border-radius: 8px;
+  background: rgb(3 5 6 / 0.82);
   white-space: nowrap;
-}
-.bo-wc {
-  margin-right: 0.3em;
-  font-size: 0.6em;
-  color: var(--color-mint-soft);
 }
 .bo-name {
-  position: absolute;
-  left: 0;
-  top: 6px;
-  transform: translateX(-50%);
   font-family: var(--font-type);
-  font-size: max(26px, 0.28em);
+  font-size: 26px;
   line-height: 1.1;
   color: var(--color-ghost);
-  background: rgb(3 5 6 / 0.7);
-  padding: 0 6px;
-  border-radius: 6px;
-  white-space: nowrap;
 }
-.bo-name-low {
-  top: calc(10px + 1.15 * max(26px, 0.28em));
+.bo-gap {
+  font-family: var(--font-term);
+  font-size: 36px;
+  line-height: 1;
+  color: var(--color-amber);
+}
+.bo-out {
+  font-family: var(--font-term);
+  font-size: 24px;
+  line-height: 1;
+  color: var(--color-fog);
+}
+.bo-wc {
+  font-family: var(--font-term);
+  font-size: 22px;
+  color: var(--color-mint-soft);
 }
 .bo-caught-label {
   position: absolute;
   left: 0;
-  bottom: calc(1.3em + max(40px, 0.6em));
+  top: -40px;
   transform: translateX(-50%);
   font-family: var(--font-term);
-  font-size: max(30px, 0.38em);
+  font-size: 28px;
   line-height: 1;
   color: var(--color-wrong);
-  background: rgb(3 5 6 / 0.85);
+  background: rgb(3 5 6 / 0.9);
   border: 2px solid var(--color-alarm);
   border-radius: 6px;
   padding: 2px 8px;
   white-space: nowrap;
+  z-index: 2;
 }
 .bo-caught-a {
   animation: bo-caught-a 0.9s ease-out both;
@@ -743,9 +726,9 @@ html:has(.host-root) {
 .bo-delta {
   position: absolute;
   left: 0;
-  bottom: 1.9em;
+  top: -30px;
   font-family: var(--font-term);
-  font-size: max(44px, 0.6em);
+  font-size: 46px;
   line-height: 1;
   white-space: nowrap;
   opacity: 0;
@@ -765,113 +748,36 @@ html:has(.host-root) {
 .bo-intro-title {
   animation: bo-appear-a 1.2s ease-out both;
 }
-.bo-scrim-text {
-  background: rgb(3 5 6 / 0.8);
-  padding: 0.15em 0.6em;
-  border-radius: 0.4em;
-}
-@keyframes bo-move-a {
+@keyframes bo-wall-a {
   from {
-    transform: translate(var(--x0), var(--y0));
-    font-size: var(--f0);
+    width: var(--w0);
   }
   to {
-    transform: translate(var(--x1), var(--y1));
-    font-size: var(--f1);
+    width: var(--w1);
   }
 }
-@keyframes bo-move-b {
+@keyframes bo-wall-b {
   from {
-    transform: translate(var(--x0), var(--y0));
-    font-size: var(--f0);
+    width: var(--w0);
   }
   to {
-    transform: translate(var(--x1), var(--y1));
-    font-size: var(--f1);
+    width: var(--w1);
   }
 }
-@keyframes bo-row-die-a {
-  0% {
-    opacity: 0;
-  }
-  15% {
-    opacity: 0.85;
-  }
-  30% {
-    opacity: 0.15;
-  }
-  50% {
-    opacity: 0.95;
-  }
-  65% {
-    opacity: 0.4;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-@keyframes bo-row-die-b {
-  0% {
-    opacity: 0;
-  }
-  15% {
-    opacity: 0.85;
-  }
-  30% {
-    opacity: 0.15;
-  }
-  50% {
-    opacity: 0.95;
-  }
-  65% {
-    opacity: 0.4;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-@keyframes bo-row-light-a {
-  0% {
-    opacity: 1;
-  }
-  30% {
-    opacity: 0.2;
-  }
-  45% {
-    opacity: 0.8;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-@keyframes bo-row-light-b {
-  0% {
-    opacity: 1;
-  }
-  30% {
-    opacity: 0.2;
-  }
-  45% {
-    opacity: 0.8;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-@keyframes bo-front-a {
+@keyframes bo-run-a {
   from {
-    transform: scale(var(--s0));
+    transform: translate(var(--x0), var(--y));
   }
   to {
-    transform: scale(var(--s1));
+    transform: translate(var(--x1), var(--y));
   }
 }
-@keyframes bo-front-b {
+@keyframes bo-run-b {
   from {
-    transform: scale(var(--s0));
+    transform: translate(var(--x0), var(--y));
   }
   to {
-    transform: scale(var(--s1));
+    transform: translate(var(--x1), var(--y));
   }
 }
 @keyframes bo-caught-a {
@@ -892,7 +798,6 @@ html:has(.host-root) {
   }
   100% {
     opacity: 0.3;
-    transform: translateY(4%);
   }
 }
 @keyframes bo-caught-b {
@@ -913,7 +818,6 @@ html:has(.host-root) {
   }
   100% {
     opacity: 0.3;
-    transform: translateY(4%);
   }
 }
 @keyframes bo-float-a {
@@ -926,11 +830,11 @@ html:has(.host-root) {
   }
   80% {
     opacity: 1;
-    transform: translate(-50%, -0.5em);
+    transform: translate(-50%, -24px);
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -0.6em);
+    transform: translate(-50%, -30px);
   }
 }
 @keyframes bo-float-b {
@@ -943,11 +847,11 @@ html:has(.host-root) {
   }
   80% {
     opacity: 1;
-    transform: translate(-50%, -0.5em);
+    transform: translate(-50%, -24px);
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -0.6em);
+    transform: translate(-50%, -30px);
   }
 }
 @keyframes bo-appear-a {

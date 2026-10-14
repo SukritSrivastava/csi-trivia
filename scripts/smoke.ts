@@ -269,7 +269,8 @@ async function main() {
       const correctText = admin.value!.question!.correctText;
       const option = s.options.find((o) => (correct ? o.text === correctText : o.text !== correctText))!;
       phone.socket.emit("participant:answer", { questionId: s.questionId, optionId: option.id });
-      await phone.until("lockedIn");
+      // Blackout keeps the options up with the tap locked; if that was the last answer the phone may already be waiting.
+      await phone.until((x) => x.kind === "lockedIn" || (x.kind === "answer" && x.chosenId !== null) || x.kind === "runnerStatus", "locked in");
     };
 
     // A second Admin device signs in; both press "Show question" at the same moment.
@@ -446,8 +447,8 @@ async function main() {
       const zr = reveal.blackout!.runners.find((r) => r.id === zoya.id)!;
       if (zr.alive && zr.delta === -1) {
         sawBack = true;
-        const zs = (await zoya.until("runnerResult")).screen;
-        assert.ok(zs.kind === "runnerResult" && zs.outcome === "wrong" && zs.delta === -1 && !!zs.correctText);
+        const zs = (await zoya.until("runnerStatus", "Zoya waits after the reveal")).screen;
+        assert.ok(zs.kind === "runnerStatus" && zs.alive, "after the reveal a runner's phone just waits");
       }
       if (!skippedOnce && admin.value!.phase === "boReveal") {
         // A double-tapped Skip ends the reveal's hold once, never two steps.

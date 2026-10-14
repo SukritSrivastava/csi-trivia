@@ -17,14 +17,16 @@ type Screen<K extends ParticipantScreen["kind"]> = Extract<ParticipantScreen, { 
 export function AnswerScreen({ screen: s }: { screen: Screen<"answer"> }) {
   const answer = useParticipantStore((st) => st.answer);
   const tapped = useParticipantStore((st) => st.tapped);
-  const locked = tapped?.questionId === s.questionId ? tapped : null;
+  // Blackout: the server says which option this runner already tapped (survives a refresh).
+  const chosen = s.chosenId ? s.options.find((o) => o.id === s.chosenId) : undefined;
+  const locked = tapped?.questionId === s.questionId ? tapped : chosen ? { questionId: s.questionId, optionId: chosen.id, text: chosen.text } : null;
   return (
     <div className="flex flex-1 flex-col gap-4">
-      <PhoneTitle>{locked ? "Locked in." : s.suddenDeath ? "Sudden death. Wrong answer = out." : "Pick one. First tap locks."}</PhoneTitle>
-      {s.gap !== null && (
-        <p className="text-[1.1rem] opacity-85">
-          <Gap n={s.gap} suffix="ahead of the dark" />
-        </p>
+      {s.text ? (
+        // Blackout: only the question and its options on the phone.
+        <PhoneTitle>{s.text}</PhoneTitle>
+      ) : (
+        <PhoneTitle>{locked ? "Locked in." : s.suddenDeath ? "Sudden death. Wrong answer = out." : "Pick one. First tap locks."}</PhoneTitle>
       )}
       <div className="mt-auto flex flex-col gap-3" role="group" aria-label="Answers">
         {s.options.map((o, i) => (

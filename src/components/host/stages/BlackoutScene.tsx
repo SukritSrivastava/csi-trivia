@@ -1,24 +1,20 @@
 "use client";
 
 /**
- * BLACKOUT on the projector: the centrepiece, on autopilot.
- *
- * One persistent scene for every Blackout step (boIntro → boWinner): the
- * server-room corridor in one-point perspective, drawn as rack rows (one row
- * = one step). The far end (the vanishing point) is where the dark comes from;
- * the camera end is safety. Each runner's gap to the dark is its depth: gap 0
- * stands at the dark line, bigger gaps stand closer to the camera (up to 3×
- * larger). Lights are flat: lit rows have mint / red LED dots and a ceiling
- * strip; dead rows are covered by a flat dark overlay. The dark line is a
- * crisp alarm-red outline (no glow).
+ * BLACKOUT on the projector, on autopilot: the question and its options stay
+ * on screen at the top, and below them the chase runs LEFT TO RIGHT. The dark
+ * comes in from the left; every finalist has a lane (by seat: Round 1 rank, the
+ * wild card last) and runs right toward the EXIT. One step = one column of rack
+ * lights along the rails; the dark is a flat black wall with a crisp alarm-red
+ * edge that covers the lights as it advances (no glow).
  *
  * Every beat is a CSS animation that starts when its step starts and fits
  * inside the server's hold (aim ≤ 80%):
- *   intro   lights behind the start die row by row; runners walk in
+ *   intro   the dark wipes in from the left; runners run in to their start
  *   reveal  runners move one after another, 150 ms apart (+3 / +2 / +1 / −1 / 0)
- *   dark    rows die one by one (~250 ms each), the front slides forward,
- *           anyone it reaches flickers, powers down and fades to 30%
- *   winner  the lights come back on toward the winner, who reaches the camera end
+ *   dark    the wall advances column by column (~250 ms a step); anyone it
+ *           reaches flickers, powers down and fades, with CAUGHT
+ *   winner  the dark falls back, the winner runs to the EXIT
  * Pause freezes every animation (animation-play-state); a refreshed Host lands
  * on the current step with the animation already at the right point (negative
  * animation-delay = time already spent in the step, from the server's timer).
@@ -29,48 +25,30 @@ import { type CSSProperties, useMemo, useRef, useSyncExternalStore } from "react
 import { Bot, botDelay } from "@/components/ui/Bot";
 import { TimerRing } from "@/components/ui/TimerRing";
 import { useCountdown } from "@/lib/useCountdown";
-import type { BlackoutState, HostStage, HostView, McqQuestion, Runner } from "@/shared/protocol";
+import type { HostStage, HostView, McqQuestion, Runner } from "@/shared/protocol";
 import { useHostStore } from "@/stores/hostStore";
 
 type BoStage = Extract<HostStage, { phase: "boIntro" | "boRead" | "boAnswer" | "boTimesUp" | "boReveal" | "boDark" | "boWinner" }>;
 
 // ---------------------------------------------------------------------------
-// Geometry (in the scene's own 1920×1080 px space)
+// Geometry (in the scene's own 1920×1080 px space). The track fills the lower part.
 // ---------------------------------------------------------------------------
 
 const W = 1920;
 const H = 1080;
-const VPX = 960;
-const VPY = 430;
-/** The corridor's cross-section at scale 1 (the dark line): half-width, up, down. */
-const HALF_W = 270;
-const UP = 150;
-const DOWN = 110;
-/** Depth (steps from the dark line) → perspective scale: 1 at the dark line, 3 at 10 steps. */
-const scaleAt = (d: number) => 1 + 0.2 * d;
-/** Nearest and furthest depths drawn. */
-const FAR = -4;
-const NEAR = 24;
-/** Runners stand between these depths (gap 0–11.5 visible). */
-const MIN_RUNNER = -1.5;
-const MAX_RUNNER = 11.5;
-/** A runner's bot at the dark line, px (≈ 3rem at 1920). */
-const BOT_AT_1 = 46;
-
-const plane = (d: number) => {
-  const s = scaleAt(d);
-  return { l: VPX - HALF_W * s, r: VPX + HALF_W * s, t: VPY - UP * s, b: VPY + DOWN * s, s };
-};
-const pts = (p: [number, number][]) => p.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-
-/** Runner lanes across the floor, by seat (Round 1 rank, the wild card last). */
-const laneOffset = (i: number, n: number) => (n <= 1 ? 0 : -0.9 + (1.8 * i) / (n - 1));
-
-/** Where a runner stands at depth d in lane offset o: the floor point and the bot size. */
-function spot(d: number, o: number) {
-  const s = scaleAt(d);
-  return { x: VPX + o * HALF_W * s, y: VPY + DOWN * s, f: BOT_AT_1 * s };
-}
+const TRACK_TOP = 482;
+const TRACK_BOTTOM = 1040;
+const TRACK_LEFT = 60;
+/** The exit, at the right end of the track. */
+const EXIT_X = 1820;
+/** Room to the right of the leader for their name and gap. */
+const LABEL_ROOM = 250;
+/** Steps behind the dark that stay on screen. */
+const BEHIND = 2;
+/** Fewest steps the track shows. */
+const MIN_SPAN = 16;
+/** A runner's bot, px. */
+const BOT = 46;
 
 // ---------------------------------------------------------------------------
 // Timing (every beat ≤ 80% of its hold in server/config.ts)
@@ -81,7 +59,6 @@ const REVEAL_GAP = 150;
 const REVEAL_MOVE = 650;
 const DARK_START = 450;
 const DARK_ROW = 250;
-const INTRO_ROW = 260;
 
 /** Counts up each time `key` changes, so a CSS animation can restart without remounting (NumberFlow keeps rolling). */
 function useStepSeq(key: string) {
@@ -103,101 +80,6 @@ function useElapsed(view: HostView, key: string) {
   return ref.current.ms;
 }
 
-// ---------------------------------------------------------------------------
-// The scene
-// ---------------------------------------------------------------------------
-
-export function BlackoutScene({ view, stage }: { view: HostView; stage: BoStage }) {
-  const bo = stage.blackout;
-  const phase = stage.phase;
-  const stepKey = `${phase}:${bo.questionNumber}:${"question" in stage ? stage.question.id : ""}`;
-  const seq = useStepSeq(stepKey);
-  const elapsed = useElapsed(view, stepKey);
-  const voided = phase === "boReveal" && stage.voided;
-
-  // The frame: depth = position − base. While the dark moves, the frame stays on the old dark line.
-  const base = phase === "boDark" ? bo.darkFrom : bo.dark;
-  const darkSteps = phase === "boDark" ? bo.dark - bo.darkFrom : 0;
-  // After the dark moved, the next step re-bases the frame: runners slide back toward the dark line.
-  const lastBase = useRef(base);
-  const rebase = lastBase.current - base;
-  lastBase.current = base;
-
-  const n = bo.runners.length;
-  const winnerId = bo.winner?.id ?? null;
-  const darkEndMs = DARK_START + darkSteps * DARK_ROW;
-
-  const runners = useMemo(
-    () =>
-      bo.runners.map((r, i) => {
-        const o = laneOffset(i, n);
-        // Runners on the same step get a small depth offset by lane, so nobody hides behind anyone.
-        const nudge = (i % 2) * 0.18;
-        const depth = (pos: number) => Math.max(MIN_RUNNER, Math.min(MAX_RUNNER, pos - base + nudge));
-        let from = depth(r.position);
-        let to = from;
-        let oTo = o;
-        let delay = 0;
-        let dur = 0;
-        if (phase === "boIntro") {
-          from = MAX_RUNNER + 3;
-          delay = 300 + i * 90;
-          dur = 1100;
-        } else if (phase === "boReveal" && !voided && r.alive) {
-          from = depth(r.from);
-          delay = REVEAL_START + i * REVEAL_GAP;
-          dur = REVEAL_MOVE;
-        } else if (phase === "boWinner" && r.id === winnerId) {
-          // The winner runs to the camera end, centre stage.
-          to = MAX_RUNNER;
-          oTo = 0;
-          delay = 700;
-          dur = 1500;
-        } else if (rebase && phase === "boRead") {
-          from = depth(r.position + rebase);
-          dur = 700;
-        }
-        const caughtNow = phase === "boDark" && bo.caughtThisQuestion.includes(r.id);
-        // The front reaches a runner at their depth: catch them then (they're at or behind the new line).
-        const reachAt = DARK_START + Math.max(0, Math.min(darkSteps, to - 0.2)) * DARK_ROW;
-        return { r, o, oTo, low: i % 2 === 1, from, to, delay, dur, caughtNow, reachAt };
-      }),
-    [bo, n, base, phase, voided, winnerId, rebase, darkSteps],
-  );
-
-  return (
-    <div className="bo-scene absolute inset-0 overflow-hidden" data-paused={view.paused || undefined} data-testid="blackout-scene">
-      <Stage1920>
-        <CorridorRows phase={phase} darkSteps={darkSteps} seq={seq} elapsed={elapsed} />
-        {runners.map(({ r, o, oTo, low, from, to, delay, dur, caughtNow, reachAt }) => (
-          <RunnerSprite
-            key={r.id}
-            r={r}
-            o={o}
-            oTo={oTo}
-            low={low}
-            from={from}
-            to={to}
-            delay={delay - elapsed}
-            dur={dur}
-            seq={seq}
-            caughtNow={caughtNow}
-            caughtDelay={reachAt - elapsed}
-            showDelta={phase === "boReveal" && !voided && r.alive && r.delta !== null}
-            deltaDelay={REVEAL_START + bo.runners.indexOf(r) * REVEAL_GAP + REVEAL_MOVE * 0.4 - elapsed}
-            winner={phase === "boWinner" && r.id === winnerId}
-          />
-        ))}
-      </Stage1920>
-      <i className="corridor-alarm bo-alarm" style={{ animationDuration: phase === "boAnswer" || phase === "boDark" ? "1.1s" : "3.2s" }} aria-hidden />
-      <i className="corridor-vignette" aria-hidden />
-
-      <Overlay view={view} stage={stage} elapsed={elapsed} darkEndMs={darkEndMs} seq={seq} />
-      {phase !== "boIntro" && phase !== "boWinner" && <RankStrip bo={bo} />}
-    </div>
-  );
-}
-
 /** The screen's size, for scaling the 1920×1080 stage. */
 function useScreenSize() {
   return useSyncExternalStore(
@@ -210,157 +92,185 @@ function useScreenSize() {
   );
 }
 
-/** A fixed 1920×1080 box, scaled to cover the screen (both projector sizes are 16:9). */
-function Stage1920({ children }: { children: React.ReactNode }) {
-  const [w, h] = useScreenSize().split("x").map(Number);
-  const k = Math.max(w / W, h / H);
+// ---------------------------------------------------------------------------
+// The scene
+// ---------------------------------------------------------------------------
+
+export function BlackoutScene({ view, stage }: { view: HostView; stage: BoStage }) {
+  const bo = stage.blackout;
+  const phase = stage.phase;
+  const stepKey = `${phase}:${bo.questionNumber}:${"question" in stage ? stage.question.id : ""}`;
+  const seq = useStepSeq(stepKey);
+  const elapsed = useElapsed(view, stepKey);
+  const anim = seq % 2 ? "a" : "b";
+  const voided = phase === "boReveal" && stage.voided;
+
+  // The frame: while the dark moves it stays on the old dark line, then the next step catches up.
+  const darkNow = phase === "boDark" ? bo.darkFrom : bo.dark;
+  const darkSteps = phase === "boDark" ? bo.dark - bo.darkFrom : 0;
+  const start = darkNow - BEHIND;
+  const furthest = Math.max(darkNow + darkSteps, ...bo.runners.map((r) => Math.max(r.position, r.from)));
+  const span = Math.max(MIN_SPAN, furthest - start + 1);
+  const stepW = (EXIT_X - LABEL_ROOM - TRACK_LEFT) / span;
+  const x = (pos: number) => TRACK_LEFT + (pos - start) * stepW;
+  // After the dark moved, the next step re-bases the track: everyone slides back toward the left.
+  const lastFrame = useRef({ start, stepW });
+  const prev = lastFrame.current;
+  lastFrame.current = { start, stepW };
+  const reframed = phase === "boRead" && (prev.start !== start || prev.stepW !== stepW);
+  const xPrev = (pos: number) => TRACK_LEFT + (pos - prev.start) * prev.stepW;
+
+  const n = bo.runners.length;
+  const laneH = (TRACK_BOTTOM - TRACK_TOP) / Math.max(1, n);
+  const winnerId = bo.winner?.id ?? null;
+  const darkEndMs = DARK_START + darkSteps * DARK_ROW;
+
+  const runners = bo.runners.map((r, i) => {
+    let from = x(r.position);
+    let to = from;
+    let delay = 0;
+    let dur = 0;
+    if (phase === "boIntro") {
+      from = TRACK_LEFT - 80;
+      delay = 300 + i * 90;
+      dur = 1100;
+    } else if (phase === "boReveal" && !voided && r.alive) {
+      from = x(r.from);
+      delay = REVEAL_START + i * REVEAL_GAP;
+      dur = REVEAL_MOVE;
+    } else if (phase === "boWinner" && r.id === winnerId) {
+      to = EXIT_X - 60;
+      delay = 700;
+      dur = 1500;
+    } else if (reframed) {
+      from = xPrev(r.position);
+      dur = 700;
+    }
+    const caughtNow = phase === "boDark" && bo.caughtThisQuestion.includes(r.id);
+    // The wall reaches a runner when its edge passes their step.
+    const reachAt = DARK_START + Math.max(0, Math.min(darkSteps, r.position - darkNow)) * DARK_ROW;
+    return { r, y: TRACK_TOP + laneH * (i + 0.5), from, to, delay, dur, caughtNow, reachAt };
+  });
+
+  // The dark wall's right edge, before and after this step's beat.
+  let wall0 = x(darkNow);
+  let wall1 = x(darkNow + darkSteps);
+  let wallDelay = DARK_START;
+  let wallDur = Math.max(1, darkSteps) * DARK_ROW;
+  if (phase === "boIntro") {
+    wall0 = TRACK_LEFT - 30;
+    wallDelay = 400;
+    wallDur = 1200;
+  } else if (phase === "boWinner") {
+    wall1 = TRACK_LEFT - 30;
+    wallDelay = 600;
+    wallDur = 1400;
+  } else if (reframed) {
+    wall0 = xPrev(darkNow);
+    wallDelay = 0;
+    wallDur = 700;
+  } else if (phase !== "boDark") wall0 = wall1;
+
+  const [sw, sh] = useScreenSize().split("x").map(Number);
+  const k = Math.max(sw / W, sh / H);
+
   return (
-    <div className="bo-stage absolute top-1/2 left-1/2" style={{ width: W, height: H, transform: `translate(-50%, -50%) scale(${k})` }}>
-      {children}
+    <div className="bo-scene absolute inset-0 overflow-hidden bg-void" data-paused={view.paused || undefined} data-testid="blackout-scene">
+      <div className="absolute top-1/2 left-1/2" style={{ width: W, height: H, transform: `translate(-50%, -50%) scale(${k})` }}>
+        <Track start={start} span={span} stepW={stepW} n={n} laneH={laneH} />
+        {/* the dark: a flat black wall from the left with a crisp alarm-red edge, advancing step by step */}
+        <div
+          key={`wall-${seq}`}
+          className={`bo-wall ${wall0 !== wall1 ? `bo-wall-${anim}` : ""}`}
+          style={
+            {
+              "--w0": `${Math.max(0, wall0)}px`,
+              "--w1": `${Math.max(0, wall1)}px`,
+              animationDuration: `${wallDur}ms`,
+              animationDelay: `${wallDelay - elapsed}ms`,
+              animationTimingFunction: phase === "boDark" ? `steps(${Math.max(1, darkSteps)}, end)` : "cubic-bezier(0.65, 0, 0.35, 1)",
+            } as CSSProperties
+          }
+        />
+        {runners.map(({ r, y, from, to, delay, dur, caughtNow, reachAt }, i) => (
+          <RunnerSprite
+            key={r.id}
+            r={r}
+            y={y}
+            from={from}
+            to={to}
+            delay={delay - elapsed}
+            dur={dur}
+            seq={seq}
+            caughtNow={caughtNow}
+            caughtDelay={reachAt - elapsed}
+            showDelta={phase === "boReveal" && !voided && r.alive && r.delta !== null}
+            deltaDelay={REVEAL_START + i * REVEAL_GAP + REVEAL_MOVE * 0.4 - elapsed}
+            winner={phase === "boWinner" && r.id === winnerId}
+          />
+        ))}
+      </div>
+      <i className="corridor-alarm bo-alarm" style={{ animationDuration: phase === "boAnswer" || phase === "boDark" ? "1.1s" : "3.2s" }} aria-hidden />
+
+      <Overlay view={view} stage={stage} elapsed={elapsed} darkEndMs={darkEndMs} anim={anim} />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// The corridor: rack rows, lit or dead, and the dark line
+// The track: lanes, rails with a column of rack lights per step, the exit
 // ---------------------------------------------------------------------------
 
-function CorridorRows({ phase, darkSteps, seq, elapsed }: { phase: BoStage["phase"]; darkSteps: number; seq: number; elapsed: number }) {
-  const rows = useMemo(() => {
-    const out: { k: number; a: ReturnType<typeof plane>; b: ReturnType<typeof plane> }[] = [];
-    for (let k = FAR; k < NEAR; k++) out.push({ k, a: plane(k), b: plane(k + 1) });
-    return out;
-  }, []);
-  const anim = seq % 2 ? "a" : "b";
-
-  /** The dead-row overlay for row k this step: static, dying, or lighting back up. */
-  const overlay = (k: number): { cls: string; delay: number } => {
-    if (phase === "boIntro") return k < 0 ? { cls: `bo-row-die-${anim}`, delay: 500 + (k - FAR) * INTRO_ROW } : { cls: "", delay: 0 };
-    if (phase === "boDark") {
-      if (k < 0) return { cls: "bo-row-off", delay: 0 };
-      if (k < darkSteps) return { cls: `bo-row-die-${anim}`, delay: DARK_START + k * DARK_ROW };
-      return { cls: "", delay: 0 };
-    }
-    if (phase === "boWinner") return k < 0 ? { cls: `bo-row-light-${anim}`, delay: 900 + (k - FAR) * 140 } : { cls: "", delay: 0 };
-    return k < 0 ? { cls: "bo-row-off", delay: 0 } : { cls: "", delay: 0 };
-  };
-
-  const front = plane(0);
-  const frontTo = scaleAt(darkSteps);
+function Track({ start, span, stepW, n, laneH }: { start: number; span: number; stepW: number; n: number; laneH: number }) {
+  const columns = useMemo(() => Array.from({ length: Math.ceil(span) + 4 }, (_, i) => Math.floor(start) - 1 + i), [start, span]);
+  const x = (pos: number) => TRACK_LEFT + (pos - start) * stepW;
   return (
     <svg className="absolute inset-0" width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden>
-      <rect width={W} height={H} fill="#030506" />
-      {rows.map(({ k, a, b }) => {
-        const left: [number, number][] = [
-          [a.l, a.t],
-          [b.l, b.t],
-          [b.l, b.b],
-          [a.l, a.b],
-        ];
-        const right: [number, number][] = [
-          [a.r, a.t],
-          [b.r, b.t],
-          [b.r, b.b],
-          [a.r, a.b],
-        ];
-        const ceil: [number, number][] = [
-          [a.l, a.t],
-          [a.r, a.t],
-          [b.r, b.t],
-          [b.l, b.t],
-        ];
-        const floor: [number, number][] = [
-          [a.l, a.b],
-          [a.r, a.b],
-          [b.r, b.b],
-          [b.l, b.b],
-        ];
-        const sm = (a.s + b.s) / 2;
-        const xL = (a.l + b.l) / 2;
-        const xR = (a.r + b.r) / 2;
-        const yAt = (f: number) => VPY - UP * sm + (UP + DOWN) * sm * f;
-        const { cls, delay } = overlay(k);
-        const red = k % 3 === 1;
+      {/* the server-room floor: lanes of rack panels */}
+      <rect x={0} y={TRACK_TOP - 34} width={W} height={TRACK_BOTTOM - TRACK_TOP + 68} fill="#091013" />
+      {Array.from({ length: n }, (_, i) => (
+        <rect key={i} x={0} y={TRACK_TOP + i * laneH} width={W} height={laneH} fill={i % 2 ? "#0b1417" : "#0d171b"} />
+      ))}
+      {/* one column of lights per step, on both rails; the dark wall covers the ones it has reached */}
+      {columns.map((c) => {
+        const cx = x(c);
+        if (cx < -20 || cx > W + 20) return null;
+        const red = c % 3 === 0;
         return (
-          <g key={k}>
-            <polygon points={pts(ceil)} fill="#050a0c" />
-            <polygon points={pts(floor)} fill={k % 2 ? "#0b1316" : "#0d171b"} />
-            <polygon points={pts(left)} fill={k % 2 ? "#091013" : "#0b1417"} stroke="#030506" strokeWidth={2 * sm} />
-            <polygon points={pts(right)} fill={k % 2 ? "#091013" : "#0b1417"} stroke="#030506" strokeWidth={2 * sm} />
-            {/* the ceiling light strip */}
-            <polygon
-              points={pts([
-                [VPX - 40 * a.s, a.t + 2],
-                [VPX + 40 * a.s, a.t + 2],
-                [VPX + 40 * b.s, b.t + 2],
-                [VPX - 40 * b.s, b.t + 2],
-              ])}
-              fill="#bfe9d6"
-              opacity={0.28}
-            />
-            {/* flat LED dots, two columns of three per wall */}
-            {[0.3, 0.5, 0.7].map((f) => (
-              <g key={f}>
-                <circle cx={xL} cy={yAt(f)} r={3.2 * sm} fill={red && f === 0.5 ? "#d6334d" : "#6cf0b0"} opacity={0.75} />
-                <circle cx={xR} cy={yAt(f)} r={3.2 * sm} fill={red ? "#d6334d" : "#6cf0b0"} opacity={0.75} />
-              </g>
-            ))}
-            {/* the row's lights out: a flat dark cover */}
-            <polygon
-              points={pts([
-                [a.l, a.t],
-                [b.l, b.t],
-                [b.r, b.t],
-                [a.r, a.t],
-                [a.r, a.b],
-                [b.r, b.b],
-                [b.l, b.b],
-                [a.l, a.b],
-              ])}
-              className={`bo-row ${cls}`}
-              style={{ animationDelay: `${delay - elapsed}ms` } as CSSProperties}
-              fill="#020304"
-            />
+          <g key={c}>
+            <line x1={cx} y1={TRACK_TOP} x2={cx} y2={TRACK_BOTTOM} stroke="#13242a" strokeWidth={2} />
+            <rect x={cx - 9} y={TRACK_TOP - 26} width={18} height={10} rx={2} fill={red ? "#d6334d" : "#6cf0b0"} opacity={0.8} />
+            <rect x={cx - 9} y={TRACK_BOTTOM + 16} width={18} height={10} rx={2} fill={red ? "#d6334d" : "#6cf0b0"} opacity={0.8} />
           </g>
         );
       })}
-      {/* the dark line: a crisp alarm-red frame at the dark's position */}
-      <rect
-        key={`front-${seq}`}
-        className={phase === "boDark" ? `bo-front-${anim}` : phase === "boWinner" ? "bo-front-gone" : ""}
-        x={front.l}
-        y={front.t}
-        width={front.r - front.l}
-        height={front.b - front.t}
-        fill="none"
-        stroke="#d6334d"
-        strokeWidth={4}
-        vectorEffect="non-scaling-stroke"
-        style={
-          {
-            transformOrigin: `${VPX}px ${VPY}px`,
-            transformBox: "view-box",
-            transform: `scale(${frontTo})`,
-            "--s0": 1,
-            "--s1": frontTo,
-            animationDuration: `${Math.max(1, darkSteps) * DARK_ROW}ms`,
-            animationDelay: `${DARK_START - elapsed}ms`,
-          } as CSSProperties
-        }
-      />
+      {/* the exit: a flat mint frame at the right end */}
+      <rect x={EXIT_X} y={TRACK_TOP - 34} width={W - EXIT_X} height={TRACK_BOTTOM - TRACK_TOP + 68} fill="#0f2a22" />
+      <line x1={EXIT_X} y1={TRACK_TOP - 34} x2={EXIT_X} y2={TRACK_BOTTOM + 34} stroke="#6cf0b0" strokeWidth={4} />
+      <text
+        x={EXIT_X + (W - EXIT_X) / 2}
+        y={(TRACK_TOP + TRACK_BOTTOM) / 2}
+        fill="#6cf0b0"
+        fontFamily="var(--font-term)"
+        fontSize={44}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        transform={`rotate(90 ${EXIT_X + (W - EXIT_X) / 2} ${(TRACK_TOP + TRACK_BOTTOM) / 2})`}
+        letterSpacing={8}
+      >
+        EXIT
+      </text>
     </svg>
   );
 }
 
 // ---------------------------------------------------------------------------
-// A runner
+// A runner: their bot in their lane, name and gap beside it
 // ---------------------------------------------------------------------------
 
 function RunnerSprite({
   r,
-  o,
-  oTo,
-  low,
+  y,
   from,
   to,
   delay,
@@ -373,11 +283,7 @@ function RunnerSprite({
   winner,
 }: {
   r: Runner;
-  o: number;
-  /** The lane it ends in (the winner moves to the centre). */
-  oTo: number;
-  /** Odd lanes print their name one line lower. */
-  low: boolean;
+  y: number;
   from: number;
   to: number;
   delay: number;
@@ -389,51 +295,43 @@ function RunnerSprite({
   deltaDelay: number;
   winner: boolean;
 }) {
-  const a = spot(from, o);
-  const b = spot(to, oTo);
-  // Caught on an earlier question: a dim bot by the dark line, no name or plate (the strip lists them).
+  // Caught on an earlier question: a dim bot by the wall, a small "OUT Q2".
   const out = !r.alive && !caughtNow;
   const style = {
-    "--x0": `${a.x}px`,
-    "--y0": `${a.y}px`,
-    "--f0": `${a.f}px`,
-    "--x1": `${b.x}px`,
-    "--y1": `${b.y}px`,
-    "--f1": `${b.f}px`,
-    zIndex: Math.round(to * 10) + 100,
-    animationName: dur ? (seq % 2 ? "bo-move-a" : "bo-move-b") : "none",
+    "--x0": `${from}px`,
+    "--x1": `${to}px`,
+    "--y": `${y}px`,
+    zIndex: r.alive ? 20 : 10,
+    animationName: dur ? (seq % 2 ? "bo-run-a" : "bo-run-b") : "none",
     animationDuration: `${dur}ms`,
     animationDelay: `${delay}ms`,
   } as CSSProperties;
   const delta = r.delta ?? 0;
   return (
     <div className="bo-runner" style={style} data-testid="bo-runner" data-caught={!r.alive || undefined}>
-      <div
-        className={`bo-body ${out ? "opacity-30" : ""} ${caughtNow ? (seq % 2 ? "bo-caught-a" : "bo-caught-b") : ""}`}
-        style={{ animationDelay: `${caughtDelay}ms` }}
-      >
-        {!out && (
-          <span className="bo-plate">
-            {r.wildCard && <span className="bo-wc">WC</span>}
-            <NumberFlow value={Math.max(0, r.gap)} />
-          </span>
-        )}
+      <div className={`bo-body ${out ? "opacity-30" : ""} ${caughtNow ? (seq % 2 ? "bo-caught-a" : "bo-caught-b") : ""}`} style={{ animationDelay: `${caughtDelay}ms` }}>
         <span className="bo-bot">
-          <Bot color={r.color} head={r.head} mood={r.mood} size="1em" delay={botDelay(r.id)} label={r.name} />
+          <Bot color={r.color} head={r.head} mood={r.mood} size={`${BOT}px`} delay={botDelay(r.id)} label={r.name} />
         </span>
-        {/* Neighbouring lanes stagger their names, so they never print over each other. */}
-        {!out && <span className={`bo-name ${low ? "bo-name-low" : ""} ${winner ? "!text-mint" : ""}`}>{r.name}</span>}
+        <span className="bo-tag">
+          <span className={`bo-name ${winner ? "!text-mint" : ""}`}>{r.name}</span>
+          {r.wildCard && <span className="bo-wc">WC</span>}
+          {r.alive || caughtNow ? (
+            <span className="bo-gap">
+              <NumberFlow value={Math.max(0, r.gap)} />
+            </span>
+          ) : (
+            <span className="bo-out">OUT Q{r.caughtOnQuestion ?? ""}</span>
+          )}
+        </span>
       </div>
       {caughtNow && (
-        <span className={`bo-caught-label ${caughtNow ? (seq % 2 ? "bo-pop-a" : "bo-pop-b") : ""}`} style={{ animationDelay: `${caughtDelay + 250}ms` }}>
+        <span className={`bo-caught-label ${seq % 2 ? "bo-pop-a" : "bo-pop-b"}`} style={{ animationDelay: `${caughtDelay + 250}ms` }}>
           CAUGHT
         </span>
       )}
       {showDelta && (
-        <span
-          className={`bo-delta ${seq % 2 ? "bo-float-a" : "bo-float-b"} ${delta > 0 ? "text-mint" : delta < 0 ? "text-wrong" : "text-fog"}`}
-          style={{ animationDelay: `${deltaDelay}ms` }}
-        >
+        <span className={`bo-delta ${seq % 2 ? "bo-float-a" : "bo-float-b"} ${delta > 0 ? "text-mint" : delta < 0 ? "text-wrong" : "text-fog"}`} style={{ animationDelay: `${deltaDelay}ms` }}>
           {delta > 0 ? `+${delta}` : delta < 0 ? "−1" : "0 …"}
         </span>
       )}
@@ -442,28 +340,27 @@ function RunnerSprite({
 }
 
 // ---------------------------------------------------------------------------
-// Words over the scene (the Host's rem layer)
+// The question and options (always on screen), and the words over the track
 // ---------------------------------------------------------------------------
 
-function Overlay({ view, stage, elapsed, darkEndMs, seq }: { view: HostView; stage: BoStage; elapsed: number; darkEndMs: number; seq: number }) {
+function Overlay({ view, stage, elapsed, darkEndMs, anim }: { view: HostView; stage: BoStage; elapsed: number; darkEndMs: number; anim: string }) {
   const bo = stage.blackout;
-  const anim = seq % 2 ? "a" : "b";
+  const appear = (delayMs: number) => ({ animationDelay: `${delayMs - elapsed}ms` }) as CSSProperties;
   const label = (
-    <p className="absolute top-[3%] left-[3%] z-20 font-term text-[2.6rem] leading-none tracking-[0.08em] text-mint-soft">
-      BLACKOUT · Q{bo.questionNumber} <span className="ml-[1rem] rounded-[0.4rem] border-2 border-line px-[0.6rem] text-[2rem] text-fog">AUTOPILOT</span>
+    <p className="absolute top-[2.4%] left-[2.5%] z-30 font-term text-[2.4rem] leading-none tracking-[0.08em] text-mint-soft">
+      BLACKOUT · Q{bo.questionNumber} <span className="ml-[1rem] rounded-[0.4rem] border-2 border-line px-[0.6rem] text-[1.9rem] text-fog">AUTOPILOT</span>
     </p>
   );
-  const appear = (delayMs: number) => ({ animationDelay: `${delayMs - elapsed}ms` }) as CSSProperties;
 
   switch (stage.phase) {
     case "boIntro":
       return (
-        <div className="absolute inset-x-0 top-[9%] z-20 flex flex-col items-center gap-[1.6rem]">
-          <p className="bo-intro-title font-term leading-none tracking-[0.12em] text-bright" style={{ fontSize: "16rem" }}>
+        <div className="absolute inset-x-0 top-[6%] z-30 flex flex-col items-center gap-[1.4rem]">
+          <p className="bo-intro-title font-term leading-none tracking-[0.12em] text-bright" style={{ fontSize: "13rem" }}>
             BLACKOUT
           </p>
-          <p className={`host-hint bo-scrim-text bo-appear-${anim} !text-[3rem]`} style={appear(900)}>
-            Answer fast. 10 seconds. The dark is coming.
+          <p className={`host-hint bo-appear-${anim} !text-[3rem]`} style={appear(900)}>
+            Answer fast. 10 seconds. The dark is coming. Run for the exit.
           </p>
         </div>
       );
@@ -471,66 +368,62 @@ function Overlay({ view, stage, elapsed, darkEndMs, seq }: { view: HostView; sta
       return (
         <>
           {label}
-          <div className="absolute top-[9%] left-1/2 z-20 w-[72%] -translate-x-1/2 rounded-[1.4rem] border-2 border-line bg-void/85 px-[4rem] py-[3rem]">
-            <h2 className="host-q host-q-center !text-[5rem]">{stage.question.text}</h2>
-          </div>
+          <QuestionPanel question={stage.question} correctIndex={null} dim={false} withClock />
           <ClockBlock view={view} />
         </>
       );
     case "boAnswer":
     case "boTimesUp":
     case "boReveal":
+    case "boDark": {
+      const revealed = (stage.phase === "boReveal" || stage.phase === "boDark") && !stage.voided;
       return (
         <>
           {label}
-          <QuestionTop question={stage.question} correctIndex={stage.phase === "boReveal" && !stage.voided ? stage.correctIndex : null} dim={stage.phase === "boReveal" && !stage.voided} />
+          <QuestionPanel question={stage.question} correctIndex={revealed ? stage.correctIndex : null} dim={revealed} withClock={stage.phase === "boAnswer"} />
           {stage.phase === "boAnswer" && (
             <>
               <ClockBlock view={view} />
-              <p className="host-count absolute bottom-[9%] left-[24%] z-20 rounded-[0.8rem] bg-void/80 px-[1.2rem] py-[0.4rem]" data-testid="bo-answered">
-                <b>{stage.answered}</b> / {stage.expected} answered
+              <p className="host-count absolute top-[30%] right-[2.5%] z-30 w-[13rem] text-center !text-[1.9rem]" data-testid="bo-answered">
+                <b className="!text-[3.4rem]">{stage.answered}</b> / {stage.expected} answered
               </p>
             </>
           )}
           {stage.phase === "boTimesUp" && <Banner text="TIME'S UP" className={`bo-appear-${anim}`} style={appear(0)} />}
           {stage.phase === "boReveal" && stage.voided && <Banner text="> question cancelled: nobody moves" className={`bo-appear-${anim}`} style={appear(0)} />}
-        </>
-      );
-    case "boDark": {
-      const alive = bo.alive;
-      return (
-        <>
-          {label}
-          <Banner
-            text={alive === 0 ? "THE DARK GOT EVERYONE" : alive === 1 ? "ONE LEFT RUNNING" : `${alive} STILL RUNNING`}
-            className={`bo-appear-${anim}`}
-            style={appear(darkEndMs + 500)}
-            testId="bo-still-running"
-          />
-          <NextIn view={view} className={`bo-appear-${anim}`} style={appear(darkEndMs + 700)} over={bo.over} />
+          {stage.phase === "boDark" && (
+            <>
+              <Banner
+                text={bo.alive === 0 ? "THE DARK GOT EVERYONE" : bo.alive === 1 ? "ONE LEFT RUNNING" : `${bo.alive} STILL RUNNING`}
+                className={`bo-appear-${anim}`}
+                style={appear(darkEndMs + 500)}
+                testId="bo-still-running"
+                next={<NextIn view={view} over={bo.over} />}
+              />
+            </>
+          )}
         </>
       );
     }
     case "boWinner": {
       const w = bo.runners.find((r) => r.id === bo.winner?.id);
-      const outOfQuestions = bo.alive >= 2;
       return (
-        <div className="absolute inset-x-0 top-[7%] z-20 flex flex-col items-center gap-[1rem]" data-testid="bo-winner">
-          {outOfQuestions && (
-            <p className={`host-banner bo-scrim-text bo-appear-${anim}`} style={appear(0)}>
-              OUT OF QUESTIONS
+        <div className="absolute inset-x-0 top-[5%] z-30 flex flex-col items-center gap-[0.8rem]" data-testid="bo-winner">
+          {bo.alive >= 2 && (
+            <p className={`host-banner bo-appear-${anim} !text-[3.4rem]`} style={appear(0)}>
+              OUT OF QUESTIONS: THE FURTHEST AHEAD WINS
             </p>
           )}
           {bo.alive === 0 && (
-            <p className={`host-banner bo-scrim-text bo-appear-${anim}`} style={appear(0)}>
+            <p className={`host-banner bo-appear-${anim} !text-[3.4rem]`} style={appear(0)}>
               CAUGHT TOGETHER: THE FURTHEST AHEAD WINS
             </p>
           )}
-          <p className={`font-term leading-none tracking-[0.12em] text-mint bo-appear-${anim}`} style={{ fontSize: "12rem", ...appear(1600) }}>
+          <p className={`font-term leading-none tracking-[0.12em] text-mint bo-appear-${anim}`} style={{ fontSize: "10rem", ...appear(1600) }}>
             ESCAPED
           </p>
           {w && (
-            <p className={`host-q host-q-center bo-scrim-text bo-appear-${anim} !text-[6rem]`} style={appear(2000)}>
+            <p className={`host-q host-q-center bo-appear-${anim} !text-[5.4rem]`} style={appear(2000)}>
               {w.name}
             </p>
           )}
@@ -540,22 +433,27 @@ function Overlay({ view, stage, elapsed, darkEndMs, seq }: { view: HostView; sta
   }
 }
 
-/** The answer step's question top-left and options top-right, compact so the corridor stays visible. */
-function QuestionTop({ question, correctIndex, dim }: { question: McqQuestion; correctIndex: number | null; dim: boolean }) {
+/** The question with its four options, numbered 1–4 like every phone; after the reveal the right one turns mint. */
+function QuestionPanel({ question, correctIndex, dim, withClock }: { question: McqQuestion; correctIndex: number | null; dim: boolean; withClock: boolean }) {
   return (
-    <div className="absolute inset-x-[2.5%] top-[8%] z-20 grid grid-cols-[1fr_1.1fr] gap-[3rem] rounded-[1.4rem] border-2 border-line bg-void/95 px-[2.4rem] py-[1.8rem]">
+    <div
+      className={`absolute top-[7.5%] left-[2.5%] z-30 grid max-h-[31%] grid-cols-[1fr_1.15fr] items-center gap-[3rem] overflow-hidden rounded-[1.4rem] border-2 border-line bg-void/95 px-[2.4rem] py-[1.6rem] ${withClock ? "right-[17%]" : "right-[2.5%]"}`}
+      data-testid="bo-question"
+    >
       <h2 className="host-q !text-[3.4rem]" style={{ transform: "rotate(-2deg)" }}>
         {question.text}
       </h2>
-      {question.options && (
-        <ol className="host-opts !gap-[0.9rem] !text-[2.4rem]">
+      {question.options ? (
+        <ol className="host-opts !gap-[0.8rem] !text-[2.4rem]">
           {question.options.map((o, i) => (
             <li key={i} className="host-opt" data-dim={dim && i !== correctIndex ? "true" : undefined} data-correct={i === correctIndex ? "true" : undefined}>
-              <span className="opt-num !text-[4rem]">{i + 1}</span>
+              <span className="opt-num !text-[3.8rem]">{i + 1}</span>
               <span>{o}</span>
             </li>
           ))}
         </ol>
+      ) : (
+        <p className="host-hint !text-[2.6rem]">Read it. The options come up on your phone in a moment.</p>
       )}
     </div>
   );
@@ -565,46 +463,31 @@ function ClockBlock({ view }: { view: HostView }) {
   const clockOffset = useHostStore((s) => s.clockOffset);
   if (!view.timer) return null;
   return (
-    <div className="absolute bottom-[6%] left-[10%] z-20">
-      <TimerRing timer={view.timer} clockOffset={clockOffset} size={11} />
+    <div className="absolute top-[8%] right-[3.6%] z-30">
+      <TimerRing timer={view.timer} clockOffset={clockOffset} size={10} />
     </div>
   );
 }
 
-function Banner({ text, className = "", style, testId }: { text: string; className?: string; style?: CSSProperties; testId?: string }) {
+/** A banner top-right, level with the BLACKOUT label (never over the track). */
+function Banner({ text, className = "", style, testId, next }: { text: string; className?: string; style?: CSSProperties; testId?: string; next?: React.ReactNode }) {
   return (
-    <p className={`host-banner bo-scrim-text absolute top-[23%] left-1/2 z-20 -translate-x-1/2 text-center whitespace-nowrap ${className}`} style={style} data-testid={testId}>
-      {text}
-    </p>
+    <div className={`absolute top-[1.4%] right-[3%] z-30 flex items-baseline gap-[2rem] whitespace-nowrap ${className}`} style={style} data-testid={testId}>
+      <span className="host-banner !text-[3.4rem]">{text}</span>
+      {next}
+    </div>
   );
 }
 
 /** "next question in 3", from the hold's own timer (frozen while paused). */
-function NextIn({ view, className, style, over }: { view: HostView; className: string; style: CSSProperties; over: boolean }) {
+function NextIn({ view, over }: { view: HostView; over: boolean }) {
   const clockOffset = useHostStore((s) => s.clockOffset);
   const c = useCountdown(view.timer, clockOffset);
   if (!c) return null;
   return (
-    <p className={`host-hint bo-scrim-text absolute top-[31%] left-1/2 z-20 -translate-x-1/2 !text-[2.4rem] ${className}`} style={style}>
+    <span className="host-hint !text-[2.2rem]">
       {over ? "the winner in " : "next question in "}
-      <span className="font-term text-[3.4rem] leading-none text-amber">{c.seconds}</span>
-    </p>
-  );
-}
-
-/** For the back row: runners still running by gap, then the caught ones greyed with their question. */
-function RankStrip({ bo }: { bo: BlackoutState }) {
-  const alive = bo.runners.filter((r) => r.alive).sort((a, b) => b.gap - a.gap);
-  const caught = bo.runners.filter((r) => !r.alive).sort((a, b) => (a.place ?? 99) - (b.place ?? 99));
-  return (
-    <ol className="absolute top-[30%] right-[1.2%] z-20 flex w-[19rem] flex-col gap-[0.4rem] rounded-[1rem] bg-void/80 p-[0.8rem]" aria-label="Runners by distance" data-testid="bo-rank">
-      {[...alive, ...caught].map((r) => (
-        <li key={r.id} className={`flex items-center gap-[0.8rem] ${r.alive ? "" : "opacity-40"}`}>
-          <Bot color={r.color} head={r.head} mood={r.mood} size="2.4rem" delay={botDelay(r.id)} />
-          <span className="host-name min-w-0 flex-1 truncate !text-[1.7rem]">{r.name}</span>
-          <span className="font-term text-[2.6rem] leading-none text-amber">{r.alive ? r.gap : `Q${r.caughtOnQuestion ?? ""}`}</span>
-        </li>
-      ))}
-    </ol>
+      <span className="font-term text-[3.2rem] leading-none text-amber">{c.seconds}</span>
+    </span>
   );
 }

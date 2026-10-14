@@ -105,10 +105,11 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   sized by count), `Clock`, `Panel`, `Heading`, `contentTop(castCount)`, `useMoods(view)` (moods only
   from `HostView.cast`). `stages/`: Lobby, Round1Stages (intro, `QuestionStage` for every round's
   questions, Results, Leaderboard, `TypeOut` banner), CutStage, WildCardStages (intro, standings,
-  winner with the power-down sweep, predictions, `SafeCorner`), **`BlackoutScene`** (v5 Phase 3: one
-  persistent scene for every Blackout step, `stageKey` "blackout"; a 1920×1080 stage scaled to the
-  screen with an SVG corridor of rack rows (one row = one step), runners' gaps mapped to depth, lanes by
-  seat; every beat is a CSS keyframe (`bo-*` in globals.css, each defined twice -a/-b so a new step
+  winner with the power-down sweep, predictions, `SafeCorner`), **`BlackoutScene`** (one persistent
+  scene for every Blackout step, `stageKey` "blackout": the question and options always at the top
+  (`QuestionPanel`), and under them a LEFT-TO-RIGHT track in a 1920×1080 stage scaled to the screen:
+  one lane per finalist (all 10, by seat), one column of rack lights per step, the dark as a black wall
+  from the left with an alarm-red edge (`.bo-wall`), runners running right to the EXIT; every beat is a CSS keyframe (`bo-*` in globals.css, each defined twice -a/-b so a new step
   restarts it without remounting) timed inside the server's holds; `[data-paused]` freezes them; a
   remount uses negative delays from the timer so a refreshed Host lands mid-beat; ranking strip; no
   cast strip and no `<Corridor />` during Blackout), PodiumStage. `sound.ts`: Web Audio, unlocked by a
@@ -121,8 +122,9 @@ moment and the podium by themselves) → podium. Every answer is a tap marked by
   confetti for the cut/winning/calling it; `JoinScreen`; `LobbyScreen` (BotBuilder + LOCK IN → "You're in",
   remembered per tab); `Round1Screens` (answer buttons numbered 1–4 in the Host's order, podium, every
   `Moment` screen, the runner's gap on question screens); `FinalScreens` (backing with BACKING, safe/wild
-  card status, sudden death, the wild card result, a runner's move, "Still running" + "Next question in 3"
-  from `runnerStatus.nextUp` and the hold's timer, caught, ESCAPED!, the audience's pick and the chase);
+  card status, sudden death, the wild card result; Blackout runners see ONLY the question + options
+  (`answer.text`, `answer.chosenId` keeps the tap locked) and otherwise "Eyes on the screen" / "You're
+  out"; the audience's pick and the chase);
   `parts.tsx` (`PhoneHeader`, `Moment` with an optional relieved `hop`, `Gap`, `useSecondsLeft`, `Banner`)). Phone bot moods follow the phone's own screen state (only the Host uses `HostView.cast`).
   `/play` sets `viewportFit: "cover"` and pads with the safe-area insets. `src/components/temp/` is gone.
 - Event-proofing (phase 5): every connection gets `server:hello { bootId }`; `src/lib/socket.ts`

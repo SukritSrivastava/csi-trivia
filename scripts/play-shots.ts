@@ -302,21 +302,17 @@ async function main() {
     check((await zoe.page.getByTestId("back").filter({ hasText: "Riya" }).textContent())?.includes("BACKING"), "the pick says BACKING");
     await shot("22-backed", [zoe, riya]);
 
-    // Blackout on autopilot: ONE click. Riya right fast; Kabir silent on Q1 (no move), then right
-    // but slow; Meera wrong every time (she steps back and the dark catches her).
+    // Blackout on autopilot: ONE click. A runner's phone shows only the question and its options while
+    // answering, and a plain "Eyes on the screen" otherwise (the chase is on the projector); caught: "You're out".
+    // Riya right fast; Kabir silent on Q1, then right but slow; Meera wrong every time (the dark catches her).
     await send({ type: "startBlackout" });
     await screen(riya, "runnerStatus");
-    await riya.page.getByTestId("runner-ready").waitFor();
+    await riya.page.getByTestId("runner-waiting").waitFor();
     await screen(zoe, "blackoutWatch");
-    check((await riya.page.locator("main").textContent())?.includes("Head start"), "the Blackout intro shows the head start");
-    await shot("23-blackout-intro", [riya, meera, zoe]);
-    await phase("boRead", 20_000);
-    await screen(riya, "eyesUp");
-    await shot("24-blackout-eyes-up", [riya, kabir], 300);
+    await shot("23-blackout-waiting", [riya, zoe]);
     let bq = 0;
     let lastQ = "";
     let sawBack = false;
-    let sawStill = false;
     let caughtShot = false;
     for (;;) {
       const v = await until("the next Blackout question (autopilot)", (x) => x.phase === "podium" || x.phase === "boWinner" || (x.phase === "boAnswer" && x.question?.id !== lastQ), 60_000);
@@ -328,18 +324,23 @@ async function main() {
       if (alive.has("Riya")) {
         await screen(riya, "answer");
         if (bq === 1) {
-          await shot("25-blackout-answer", [riya, kabir], 200);
-          await otherSizes("25-blackout-answer", kabir);
-          check((await riya.page.getByTestId("gap").first().textContent())?.includes("ahead"), "runners see their gap while answering");
+          check((await riya.page.locator("main").textContent())?.includes(v.question!.text), "the runner's phone shows the question with its options");
+          check((await riya.page.getByTestId("gap").count()) === 0, "…and nothing else (no distance on the phone)");
+          await shot("24-blackout-question", [riya, kabir], 200);
+          await otherSizes("24-blackout-question", kabir);
         }
         await riya.page.getByTestId("option").filter({ hasText: correctB }).click();
+        if (bq === 1) {
+          await riya.page.locator('[data-testid="option"][aria-pressed="true"]').waitFor();
+          await shot("25-blackout-locked", [riya], 200);
+        }
       }
       if (alive.has("Meera")) await meera.page.getByTestId("option").filter({ hasNotText: correctB }).first().click();
       if (bq === 2 && alive.has("Kabir")) {
-        // Kabir refreshes in the middle of Blackout: same question, same gap.
+        // Kabir refreshes in the middle of a Blackout question: the same question and options come back.
         await kabir.page.reload();
         await screen(kabir, "answer");
-        check((await kabir.page.getByTestId("round-name").textContent())?.toUpperCase().includes("BLACKOUT"), "refresh mid-Blackout: back on the question (BLACKOUT header)");
+        check((await kabir.page.locator("main").textContent())?.includes(v.question!.text), "refresh mid-Blackout: back on the same question");
       }
       if (bq > 1 && alive.has("Kabir")) {
         // Right but slow: the last third of the 10 s window (+1).
@@ -347,41 +348,23 @@ async function main() {
         if (admin!.phase === "boAnswer" && admin!.question?.id === lastQ) await kabir.page.getByTestId("option").filter({ hasText: correctB }).click().catch(() => {});
       }
       await until("the reveal", (x) => x.phase === "boReveal" && x.question?.id === lastQ, 30_000);
-      if (bq === 1 && alive.has("Kabir")) {
-        await kabir.page.getByTestId("runner-missed").waitFor();
-        check((await kabir.page.locator("main").textContent())?.includes("No move"), "no answer: TOO SLOW, no move");
-        await shot("26-blackout-too-slow", [kabir], 300);
+      if (bq === 1) {
+        await riya.page.getByTestId("runner-waiting").waitFor();
+        await shot("26-blackout-eyes-on-screen", [riya, kabir], 300);
       }
-      if (alive.has("Meera")) {
-        await screen(meera, "runnerResult");
-        const back = admin!.blackout!.runners.find((r) => r.name === "Meera")!.delta === -1;
-        if (back && !sawBack) {
-          sawBack = true;
-          await shot("26-blackout-wrong", [meera, riya], 400);
-        }
-      }
-      await until("the dark", (x) => (x.phase === "boDark" || x.phase === "boWinner") && x.blackout!.questionNumber === v.blackout!.questionNumber || x.phase === "podium", 30_000);
-      if (!sawStill && admin!.phase === "boDark" && admin!.blackout!.runners.find((r) => r.name === "Riya")?.alive) {
-        await riya.page.getByTestId("runner-alive").waitFor();
-        await riya.page.getByTestId("next-in").waitFor();
-        sawStill = true;
-        await shot("27-blackout-still-running", [riya, zoe], 300);
-      }
+      if (admin!.blackout!.runners.find((r) => r.name === "Meera")?.delta === -1) sawBack = true;
+      await until("the dark", (x) => ((x.phase === "boDark" || x.phase === "boWinner") && x.blackout!.questionNumber === v.blackout!.questionNumber) || x.phase === "podium", 30_000);
       if (!caughtShot && admin!.blackout!.runners.some((r) => r.name === "Meera" && !r.alive)) {
         caughtShot = true;
         await meera.page.getByTestId("runner-caught").waitFor();
-        await shot("27-blackout-caught", [meera], 300);
+        check((await meera.page.locator("main").textContent())?.includes("YOU'RE OUT"), "caught: the phone says YOU'RE OUT");
+        await shot("27-blackout-out", [meera, zoe], 300);
       }
     }
     check(sawBack, "a wrong answer moved Meera back");
-    check(sawStill, "still running: the gap and \"Next question in\"");
     check(caughtShot, "the dark caught Meera");
     await phase("boWinner", 60_000);
     const winner = admin!.blackout!.winner;
-    if (winner?.name === "Riya") {
-      await riya.page.getByTestId("runner-escaped").waitFor();
-      await shot("28-blackout-winner", [riya, zoe], 400);
-    }
     await phase("podium", 20_000);
     for (const p of [riya, kabir, meera, zoe]) await screen(p, "podium");
     await shot("29-podium", [riya, kabir, meera, zoe], 1500);

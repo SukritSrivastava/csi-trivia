@@ -179,11 +179,14 @@ For each question the quizmaster clicks through:
 - **Moods:** read → idle; answer → thinking (not answered) / locked (answered); time's up →
   locked / idle; reveal → right / wrong (no answer → idle); after the dark moves → caught runners
   out, survivors idle; podium → the winner right.
-- **Runner phones** (the screens change by themselves; the player only taps answers): Eyes up →
-  the 4 options → Locked in, with their distance from the dark → after the reveal "CORRECT +3" /
-  "WRONG −1" / "Too slow: no move" (with "It was …" when wrong or missed) → after the dark moves
-  "Still running: 2 steps ahead of the dark" and "Next question in 3", or "The darkness got you"
-  with their final place.
+- **On the projector** (Sukrit, 14 Oct): the question and its options stay on screen at the top
+  the whole time, and under them the chase runs **left to right**: every finalist (all 10) has a
+  lane and runs right toward the EXIT; the dark is a black wall coming in from the left that
+  covers the rack lights as it advances; whoever it reaches is caught.
+- **Runner phones show only the question and its options** (Sukrit, 14 Oct): while answering, the
+  question text above the 4 numbered options (the tapped one stays locked, even after a refresh);
+  every other Blackout step is a plain "Eyes on the screen"; a caught runner sees "You're out"
+  with their place. No distances or results on the phone: the chase is on the projector.
 - **Audience phones:** who they backed, the runners still running with their distance, "7 still
   running", "{name} got caught".
 

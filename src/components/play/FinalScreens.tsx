@@ -146,12 +146,16 @@ export function RunnerResultScreen({ view, screen: s }: { view: ParticipantView;
   );
 }
 
-/** A runner between questions: the intro, still running, caught (with their place), or the winner moment. */
+/**
+ * A runner whenever there's nothing to answer: the phone only ever shows the
+ * question and its options (AnswerScreen); every other Blackout step is a plain
+ * wait, and a caught runner is simply out. The chase itself is on the projector.
+ */
 export function RunnerStatusScreen({ view, screen: s }: { view: ParticipantView; screen: Screen<"runnerStatus"> }) {
   const me = view.me;
   if (!s.alive) {
     return (
-      <Moment me={me} mood="out" big={s.caughtNow ? "CAUGHT" : "POWERED DOWN"} bad testId="runner-caught">
+      <Moment me={me} mood="out" big="YOU'RE OUT" bad testId="runner-caught">
         The darkness got you.
         {s.place && (
           <span className="mt-2 block">
@@ -161,41 +165,9 @@ export function RunnerStatusScreen({ view, screen: s }: { view: ParticipantView;
       </Moment>
     );
   }
-  if (s.nextUp === "podium") {
-    // The winner moment: the place is final now.
-    return s.place === 1 ? (
-      <Moment me={me} mood="right" big="ESCAPED!" testId="runner-escaped">
-        Last bot running. The podium is next.
-      </Moment>
-    ) : (
-      <Moment me={me} mood="idle" big="SURVIVED" testId="runner-survived">
-        The questions ran out with you still running.
-        {s.place && (
-          <span className="mt-2 block">
-            You finished <T>{ordinal(s.place)}</T>.
-          </span>
-        )}
-      </Moment>
-    );
-  }
-  if (s.questionNumber === 0) {
-    return (
-      <Moment me={me} mood="idle" big="BLACKOUT" testId="runner-ready">
-        The lights are dying behind you. Answer fast to stay ahead of the dark. 10 seconds a question.
-        <span className="mt-2 block">
-          Head start: <T>+{s.headStart}</T> · <Gap n={s.gap} suffix="ahead" />
-        </span>
-        <NextIn view={view} what={s.nextUp} />
-      </Moment>
-    );
-  }
   return (
-    <Moment me={me} mood="idle" big="STILL RUNNING" hop testId="runner-alive">
-      <Gap n={s.gap} suffix="ahead of the dark" />.
-      <span className="mt-2 block">
-        <T>{s.aliveCount}</T> still running
-      </span>
-      <NextIn view={view} what={s.nextUp} />
+    <Moment me={me} mood="idle" big="EYES UP" testId="runner-waiting">
+      Eyes on the screen.
     </Moment>
   );
 }

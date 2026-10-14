@@ -517,7 +517,7 @@ export type HostStage =
   | { phase: "boIntro"; blackout: BlackoutState; backing: Backing }
   | { phase: "boRead" | "boAnswer" | "boTimesUp"; question: McqQuestion; blackout: BlackoutState; answered: number; expected: number; backing: Backing }
   | ({ phase: "boReveal"; question: McqQuestion; blackout: BlackoutState; backing: Backing } & Reveal)
-  | { phase: "boDark"; question: McqQuestion; blackout: BlackoutState; backing: Backing }
+  | ({ phase: "boDark"; question: McqQuestion; blackout: BlackoutState; backing: Backing } & Reveal)
   /** The winner moment (7 s), then the podium by itself. */
   | { phase: "boWinner"; blackout: BlackoutState; backing: Backing }
   | ({ phase: "podium"; backing: Backing } & PodiumSummary);
@@ -591,6 +591,13 @@ export type ParticipantScreen =
       options: AnswerOption[];
       /** Blackout runners: steps ahead of the dark. null in other rounds. */
       gap: number | null;
+      /** Blackout only: the question text (the runner's phone shows question + options). null in other rounds. */
+      text: string | null;
+      /**
+       * Blackout only: the option this runner already tapped (the phone keeps the question
+       * and options on screen with it locked). null = not answered yet, or another round.
+       */
+      chosenId: string | null;
     }
   /** Tapped; waiting. `timeUp` once the answer time has ended. */
   | {

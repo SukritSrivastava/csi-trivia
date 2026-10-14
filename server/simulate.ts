@@ -805,7 +805,7 @@ test("blackout autopilot: one click; 6s intro, 5s read, 10s answer, holds; +3/+2
   assert.match(g.admin().stepLabel, /^Blackout, question 1: reading \(autopilot\)$/);
   assertNoFlowButtons(g);
   const eyes = g.screen(a);
-  assert.ok(eyes.kind === "eyesUp" && eyes.round === 3 && eyes.gap === 4 && eyes.questionCount === null);
+  assert.ok(eyes.kind === "runnerStatus" && eyes.alive, "Blackout read: the runner's phone just waits (eyes on the screen)");
   g.next("boAnswer");
   assert.equal(g.host().timer?.durationMs, 10_000, "10s to answer");
   g.checkNoLeaks(ids);
@@ -821,7 +821,12 @@ test("blackout autopilot: one click; 6s intro, 5s read, 10s answer, holds; +3/+2
   g.answerAt(e, "wrong", 9950);
   // F doesn't answer.
   const locked = g.screen(a);
-  assert.ok(locked.kind === "lockedIn" && locked.gap === 4 && locked.choiceNumber >= 1 && locked.choiceNumber <= 4);
+  assert.ok(
+    locked.kind === "answer" && locked.round === 3 && !!locked.text && locked.chosenId !== null && locked.options.some((o) => o.id === locked.chosenId),
+    "Blackout answer: the phone keeps the question and options, the tapped one locked",
+  );
+  const open = g.screen(f);
+  assert.ok(open.kind === "answer" && open.chosenId === null && open.text === g.admin().question!.text);
   g.next("boTimesUp");
   assert.equal(g.host().timer?.durationMs, h.timesUpMs, "time's up holds 1.5s");
   g.checkNoLeaks(ids);
@@ -838,14 +843,17 @@ test("blackout autopilot: one click; 6s intro, 5s read, 10s answer, holds; +3/+2
   ]);
   assert.deepEqual([g.mood(a), g.mood(e), g.mood(f)], ["right", "wrong", "idle"], "no answer → idle");
   const res = g.screen(e);
-  assert.ok(res.kind === "runnerResult" && res.outcome === "wrong" && res.delta === -1 && res.gap === 2 && res.correctText);
-  const miss = g.screen(f);
-  assert.ok(miss.kind === "runnerResult" && miss.outcome === "missed" && miss.delta === 0 && miss.position === 2, "no answer: stays put");
+  assert.ok(res.kind === "runnerStatus" && res.alive && res.gap === 2, "after the reveal the phone just waits (the moves are on the projector)");
+  assert.equal(g.runner(f).position, 2, "no answer: stays put");
+  const dark = g.host().stage;
+  assert.ok(dark.phase === "boReveal" && dark.correctIndex !== null);
   assert.ok(g.admin().blackout!.runners.every((r) => r.alive), "nobody is caught at the reveal");
   assert.equal(g.admin().darkPreview?.exact, true, "after the moves the preview is final");
   assertNoFlowButtons(g);
   g.next("boDark");
   assert.equal(g.host().timer?.durationMs, h.darkMs + h.darkPerStepMs * 1, "the dark's hold: 2.5s + 0.25s per step, nobody caught");
+  const darkStage = g.host().stage;
+  assert.ok(darkStage.phase === "boDark" && darkStage.correctText !== null, "the projector keeps the question and its answer up while the dark moves");
   g.next("boRead");
   assert.equal(g.admin().question?.number, 2, "the next question started by itself");
 });
@@ -1026,7 +1034,8 @@ test("blackout autopilot: Skip, +5s, Restart question, Void, Remove participant 
   g.expect("boReveal");
   assert.equal(g.host().timer?.durationMs, h.voidMs);
   const vs = g.screen(a);
-  assert.ok(vs.kind === "runnerResult" && vs.outcome === "voided" && vs.delta === 0);
+  assert.ok(vs.kind === "runnerStatus" && vs.alive, "void: the phone just waits");
+  assert.equal(g.runner(a).delta, 0);
   assert.equal(g.admin().blackout!.dark, 2, "void: the dark doesn't move");
   assert.equal(g.admin().darkPreview, null);
   g.next("boRead");
