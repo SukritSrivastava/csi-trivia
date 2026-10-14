@@ -16,11 +16,12 @@
  *   DATABASE_URL    Postgres (Supabase) connection string: saves rooms, scores and
  *                   every Round 1 answer to the backend tables (db.ts). Unset = memory only.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseEnv } from "node:util";
 import { type GameConfig, loadConfig } from "./config";
 import { Database } from "./db";
+import { FINAL_QUIZ_FILE } from "./finalQuiz";
 import { FileLibrary, PostgresLibrary } from "./library";
 import { getLanAddresses } from "./network";
 import { loadQuestions } from "./questions";
@@ -68,12 +69,25 @@ const webUrl = (process.env.PUBLIC_WEB_URL ?? `http://${lanIp}:${WEB_PORT}`).rep
 const joinUrl = `${webUrl}/play`;
 
 // Fail fast, with a readable message, if the question file (the Demo quiz's source) is broken.
+// final_quiz.json (the night's questions) is checked the same way when the server starts below.
 try {
   loadQuestions();
 } catch (error) {
   console.error(`\n  ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 }
+const finalQuizFile = existsSync(FINAL_QUIZ_FILE) ? FINAL_QUIZ_FILE : null;
+
+// On the night, one unexpected error must not take every room (all in memory) down with it:
+// log it loudly and keep serving. Startup problems still exit (they're handled before this matters).
+let started = false;
+process.on("uncaughtException", (error) => {
+  console.error(`\n  [error] uncaught: ${error.stack ?? error.message}\n`);
+  if (!started) process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error(`\n  [error] unhandled promise rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}\n`);
+});
 
 const log = (message: string) => console.log(`  ${message}`);
 const database = Database.fromEnv(log);
@@ -89,8 +103,10 @@ startGameServer({
   log,
   database,
   library,
+  finalQuizFile,
 })
   .then(async ({ port, library }) => {
+    started = true;
     const local = `http://localhost:${WEB_PORT}`;
     const quizzes = (await library.list()).length;
     console.log(
@@ -111,7 +127,8 @@ startGameServer({
     if (error.code === "EADDRINUSE") {
       console.error(`\n  Port ${GAME_PORT} is already in use. Is another "npm run dev" still running? Close it and try again.\n`);
     } else {
-      console.error(error);
+      // e.g. final_quiz.json has a problem: the message lists every one.
+      console.error(`\n  ${error instanceof Error ? error.message : String(error)}\n`);
     }
     process.exit(1);
   });

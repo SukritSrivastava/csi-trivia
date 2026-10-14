@@ -5,7 +5,7 @@
  * browser, runs in a few seconds. Run: npm run simulate
  */
 import assert from "node:assert/strict";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -21,9 +21,10 @@ import {
   type Quiz,
   type QuizRules,
 } from "../src/shared/protocol";
-import { blankQuestion, cleanQuiz, importJson, importRows, importText, isMultiCorrect, parseCsv, questionProblems, quizProblems, quizToCsv } from "../src/shared/quiz";
+import { blankQuestion, cleanQuiz, correctList, importJson, importRows, importText, isMultiCorrect, parseCsv, questionProblems, quizProblems, quizToCsv } from "../src/shared/quiz";
 import { darknessStep, type GameConfig, MULTI_ANSWER_MS, MULTI_WRONG_PENALTY, multiPoints, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
-import { quizToGame } from "./library";
+import { FINAL_QUIZ_FILE, loadFinalQuiz } from "./finalQuiz";
+import { defaultRules, quizToGame } from "./library";
 import { loadQuestions, pickRound, type QuizQuestion } from "./questions";
 import { type Clock, QuizRoom } from "./quiz";
 
@@ -1789,6 +1790,226 @@ test("multi-correct: only Round 1; editor/server checks, the question file, impo
   // cleanQuiz: lists cleaned (sorted, no repeats); one entry is a plain number; garbage reads as before.
   const cleaned = cleanQuiz({ id: "m", title: "M", rules: {}, round1: [{ ...multi, correct: [2, 0, 2] }, { ...multi, correct: [1] }, { ...multi, correct: [7] }, { ...multi, correct: 2 }], wildcard: [], blackout: [] }, quiz.rules)!;
   assert.deepEqual(cleaned.round1.map((q) => q.correct), [[0, 2], 1, 0, 2]);
+});
+
+// ============================================================================
+// The night's question bank: final_quiz.json
+// ============================================================================
+
+const FINAL_RAW = JSON.parse(readFileSync(FINAL_QUIZ_FILE, "utf8")) as {
+  questions: { id: string; round: string; spare: boolean; text: string; options: Record<"A" | "B" | "C" | "D", string>; correct: string[] }[];
+};
+const finalQuiz = () => loadFinalQuiz(FINAL_QUIZ_FILE, defaultRules(PRESETS.event), PRESETS.event.blackout.minQuestions);
+/** A room playing final_quiz.json with the event preset, as Admin opens it. */
+function finalGame(seed = 1) {
+  const { config, questions } = quizToGame(finalQuiz(), PRESETS.event);
+  return new Game(config, questions, seed);
+}
+/** The right options' texts for a question in the file. */
+const fileRight = (q: (typeof FINAL_RAW.questions)[number]) => q.correct.map((l) => q.options[l as "A"]).sort();
+
+test("final_quiz.json: loads, every round from its own list, spares at the bottom, wording and answers untouched", () => {
+  const quiz = finalQuiz();
+  assert.deepEqual([quiz.round1.length, quiz.wildcard.length, quiz.blackout.length], [22, 8, 18]);
+  assert.deepEqual([quiz.rules.round1Questions, quiz.rules.wildCardQuestions], [20, 5], "plays 20 of 22 and 5 of 8");
+  const byText = new Map([...quiz.round1, ...quiz.wildcard, ...quiz.blackout].map((q) => [q.text, q]));
+  for (const raw of FINAL_RAW.questions) {
+    const q = byText.get(raw.text);
+    assert.ok(q, `${raw.id}: its text arrives unchanged`);
+    assert.deepEqual(q.options, [raw.options.A, raw.options.B, raw.options.C, raw.options.D], `${raw.id}: options A–D unchanged`);
+    assert.deepEqual(correctList(q.correct).map((i) => "ABCD"[i]), [...raw.correct].sort(), `${raw.id}: the right letters unchanged`);
+    const list = raw.round === "1" ? quiz.round1 : raw.round === "wild card" ? quiz.wildcard : quiz.blackout;
+    assert.ok(list.includes(q), `${raw.id} sits in its own round's list`);
+  }
+  assert.deepEqual(quiz.round1.slice(20).map((q) => q.id), ["r1-21", "r1-22"], "Round 1 spares last");
+  assert.deepEqual(quiz.wildcard.slice(5).map((q) => q.id), ["wc-06", "wc-07", "wc-08"], "wild card spares last");
+  assert.deepEqual(quiz.round1.filter((q) => isMultiCorrect(q)).map((q) => q.id), ["r1-08", "r1-15", "r1-18"], "three multi-correct questions, all Round 1");
+  assert.deepEqual(quizProblems(quiz, 12), [], "ready to open a room at the event");
+});
+
+test("final_quiz.json: a malformed file stops the server with every problem listed", () => {
+  const file = path.join(tmpdir(), `hermes-final-${process.pid}.json`);
+  const good = JSON.parse(readFileSync(FINAL_QUIZ_FILE, "utf8"));
+  const tryWith = (mutate: (d: typeof good) => void): string => {
+    const d = structuredClone(good);
+    mutate(d);
+    writeFileSync(file, typeof d === "string" ? d : JSON.stringify(d));
+    try {
+      loadFinalQuiz(file, defaultRules(PRESETS.event), 12);
+      return "";
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+  const cases: [string, (d: typeof good) => void, RegExp][] = [
+    ["a letter that isn't A–D", (d) => (d.questions[0].correct = ["E"]), /r1-01.*only hold the letters A, B, C and D/],
+    ["three options", (d) => delete d.questions[0].options.D, /r1-01.*exactly the keys A, B, C and D/],
+    ["the same option twice", (d) => (d.questions[1].options.B = d.questions[1].options.A), /r1-02.*all be different/],
+    ["several right answers in the wild card", (d) => (d.questions[22].correct = ["A", "B"]), /wc-01.*only Round 1/],
+    ["several right answers in Blackout", (d) => (d.questions[30].correct = ["A", "B"]), /bo-01.*only Round 1/],
+    ["a duplicate id", (d) => (d.questions[3].id = "r1-01"), /used twice/],
+    ["an unknown round", (d) => (d.questions[2].round = "2"), /"round" must be "1", "wild card" or "blackout"/],
+    ["no right answer", (d) => (d.questions[4].correct = []), /r1-05.*list of 1–4 letters/],
+    ["a bad answer time", (d) => (d.questions[5].answerSeconds = 2), /r1-06.*answerSeconds/],
+    ["a missing image", (d) => (d.questions[6].image = "/questions/nope.png"), /r1-07.*doesn't exist/],
+    ["counts that don't match", (d) => (d.questions[0].spare = true), /counts\.round1\.played says 20 but the file has 19/],
+    ["too few Blackout questions", (d) => (d.questions = d.questions.filter((q: { round: string }, i: number) => q.round !== "blackout" || i < 38)), /blackout\.total says 18/],
+  ];
+  for (const [what, mutate, expected] of cases) {
+    const message = tryWith(mutate);
+    assert.match(message, expected, `${what}: ${message || "(loaded without an error)"}`);
+    assert.match(message, /final-\d+\.json has \d+ problem\(s\), so the quiz server won't start/);
+  }
+  // Two problems at once: both listed.
+  const both = tryWith((d) => {
+    d.questions[0].correct = ["Z"];
+    d.questions[1].text = "";
+  });
+  assert.ok(both.includes("has 2 problem(s)") && both.includes("r1-01") && both.includes("r1-02"), both);
+  writeFileSync(file, "{ not json");
+  assert.throws(() => loadFinalQuiz(file, defaultRules(PRESETS.event), 12), /isn't valid JSON/);
+  rmSync(file);
+  assert.throws(() => loadFinalQuiz(file, defaultRules(PRESETS.event), 12), /doesn't exist/);
+  assert.equal(tryWith(() => {}), "", "the real file loads");
+  rmSync(file);
+});
+
+test("final_quiz.json: shuffled options, the same 1–4 order on every phone, marked right after the shuffle", () => {
+  let reordered = 0;
+  for (let seed = 1; seed <= 6; seed++) {
+    const g = finalGame(seed);
+    const ids = ["A", "B", "C"].map((n) => g.join(n));
+    g.do({ type: "startQuiz" });
+    for (let q = 0; q < 6; q++) {
+      g.do({ type: q === 0 ? "showQuestion" : "nextQuestion" });
+      g.tick();
+      const admin = g.admin().question!;
+      const raw = FINAL_RAW.questions.find((r) => r.text === admin.text)!;
+      const shown = g.host().stage;
+      assert.ok("question" in shown && shown.question.options);
+      if ("question" in shown && shown.question.options!.join() !== [raw.options.A, raw.options.B, raw.options.C, raw.options.D].join()) reordered += 1;
+      g.checkOneOrder(ids);
+      // Admin's answer key, after the shuffle, names the file's right answers.
+      assert.deepEqual(admin.options.filter((o) => o.correct).map((o) => o.text).sort(), fileRight(raw), `${raw.id}: the key survives the shuffle`);
+      g.answer(ids[0], "correct");
+      g.answer(ids[1], "wrong");
+      g.answer(ids[2], "correct");
+      g.do({ type: "revealAnswer" });
+      const outcome = (id: string) => (g.screen(id) as { outcome?: string }).outcome;
+      assert.deepEqual([outcome(ids[0]), outcome(ids[1]), outcome(ids[2])], ["correct", "wrong", "correct"], `${raw.id}: marked right after the shuffle`);
+    }
+  }
+  assert.ok(reordered >= 30, `the options really are shuffled (${reordered} of 36 not in A–D order)`);
+});
+
+test("final_quiz.json scoring: speed, late answers rejected, multi-correct with wrong ticks (r1-08)", () => {
+  const g = finalGame();
+  const [fast, half, late, paused] = ["Fast", "Half", "Late", "Paused"].map((n) => g.join(n));
+  g.do({ type: "startQuiz" });
+  g.do({ type: "showQuestion" });
+  g.tick();
+  g.answer(fast, "correct"); // 0 s → 200
+  g.answerAt(half, "correct", 4000); // 4 of 8 s → 150
+  g.do({ type: "pause" });
+  const s = g.screen(paused);
+  if (s.kind === "answer") g.room.answer(paused, s.questionId, s.options[0].id);
+  assert.equal(g.admin().counts.answered, 2, "an answer while paused is ignored");
+  g.do({ type: "resume" });
+  g.tick(); // time's up
+  const lateScreen = s.kind === "answer" ? s : null;
+  if (lateScreen) for (const o of lateScreen.options) g.room.answer(late, lateScreen.questionId, o.id);
+  assert.equal(g.screen(late).kind, "timesUp", "an answer after time's up is rejected");
+  assert.deepEqual([fast, half, late, paused].map((id) => g.person(id).score), [200, 150, 0, 0]);
+  // Round 1 question 8 is r1-08 (3 right of 4): ticking 2 right + 1 wrong instantly = 200 × (2/3 − 0.25) = 83.
+  g.do({ type: "revealAnswer" });
+  for (let q = 2; q <= 8; q++) {
+    g.do({ type: "nextQuestion" });
+    g.tick();
+    if (q < 8) g.tick();
+    if (q < 8) g.do({ type: "revealAnswer" });
+  }
+  assert.equal(g.admin().question!.text, "Which of these are Hermes terminal backends?");
+  assert.equal(g.admin().timer?.durationMs, 15_000, "15 s for a multi-correct question");
+  const before = [fast, half, late].map((id) => g.person(id).score);
+  lockAt(g, fast, 2, 1, 0);
+  lockAt(g, half, 3, 1, 0); // all 4 ticked: 200 × (1 − 0.25) = 150
+  lockAt(g, late, 0, 1, 0); // only the wrong one: 0, never negative
+  g.tick();
+  assert.deepEqual([fast, half, late].map((id, i) => g.person(id).score - before[i]), [83, 150, 0]);
+});
+
+test("final_quiz.json: spares are only played when a question is skipped (voided)", () => {
+  const roundOne = (voidAt: number[]) => {
+    const g = finalGame();
+    const ids = ["A", "B"].map((n) => g.join(n));
+    const shown: string[] = [];
+    g.do({ type: "startQuiz" });
+    g.do({ type: "showQuestion" });
+    for (let guard = 0; guard < 40; guard++) {
+      g.tick();
+      const q = g.admin().question!;
+      shown.push(q.text);
+      for (const id of ids) g.answer(id, "correct");
+      if (g.phase === "r1Answer") g.tick();
+      if (voidAt.includes(shown.length)) g.do({ type: "voidQuestion" });
+      else g.do({ type: "revealAnswer" });
+      const next = g.admin().primary!;
+      if (next.action.type === "endRound1") break;
+      assert.equal(next.label, "Next question");
+      g.do(next.action);
+    }
+    const counted = g.admin().participants[0].score / 200;
+    g.do({ type: "endRound1" });
+    return { shown, counted: Math.round(counted) };
+  };
+  const spare1 = "What should you do at the close of the workshop?";
+  const spare2 = "To an LLM, what is a token?";
+  const none = roundOne([]);
+  assert.equal(none.shown.length, 20, "no skips: 20 questions");
+  assert.ok(!none.shown.includes(spare1) && !none.shown.includes(spare2), "no skips: the spares never come up");
+  const one = roundOne([5]);
+  assert.equal(one.shown.length, 21, "one skip: 21 shown");
+  assert.equal(one.shown[20], spare1, "…the first spare plays last");
+  assert.ok(!one.shown.includes(spare2));
+  assert.equal(one.counted, 20, "…and 20 count");
+  const three = roundOne([1, 2, 3]);
+  assert.equal(three.shown.length, 22, "three skips: every question used, both spares");
+  assert.equal(three.counted, 19, "…19 count (only 2 spares), then End round 1");
+  assert.equal(new Set(three.shown).size, 22, "no question shown twice");
+});
+
+test("final_quiz.json: a whole game; no question repeats and each round only uses its own questions", () => {
+  const g = finalGame(7);
+  const rng = g.rng;
+  const ids = Array.from({ length: 30 }, (_, i) => g.join(`P${i + 1}`));
+  const seen: Record<1 | 2 | 3, string[]> = { 1: [], 2: [], 3: [] };
+  let lastRun = "";
+  for (let guard = 0; g.phase !== "podium"; guard++) {
+    assert.ok(guard < 5000, "the game finishes");
+    g.checkNoLeaks(ids);
+    const q = g.admin().question;
+    if (q && q.id !== lastRun && ["r1Read", "wcRead", "boRead"].includes(g.phase)) {
+      lastRun = q.id;
+      seen[q.round].push(q.text);
+    }
+    if (["r1Answer", "wcAnswer", "boAnswer"].includes(g.phase)) {
+      for (const id of ids) if (g.screen(id).kind === "answer" && rng() < 0.9) g.answer(id, rng() < 0.6 ? "correct" : "wrong");
+      if (["r1Answer", "wcAnswer", "boAnswer"].includes(g.phase)) g.tick();
+      continue;
+    }
+    if (g.admin().primary && !["pause", "resume"].includes(g.admin().primary!.action.type)) g.primary();
+    else g.tick();
+  }
+  const fileTexts = (round: string) => new Set(FINAL_RAW.questions.filter((r) => r.round === round).map((r) => r.text));
+  for (const [round, name] of [[1, "1"], [2, "wild card"], [3, "blackout"]] as const) {
+    const own = fileTexts(name);
+    assert.ok(seen[round].length > 0, `round ${name} played`);
+    assert.ok(seen[round].every((t) => own.has(t)), `round ${name} only uses its own questions`);
+    assert.equal(new Set(seen[round]).size, seen[round].length, `round ${name}: no question twice`);
+  }
+  const all = [...seen[1], ...seen[2], ...seen[3]];
+  assert.equal(new Set(all).size, all.length, "no question repeats across rounds");
+  assert.equal(seen[1].length, 20);
 });
 
 // ============================================================================

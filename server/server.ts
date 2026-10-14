@@ -27,6 +27,7 @@ import {
 import { cleanQuiz, newId, quizProblems } from "../src/shared/quiz";
 import type { GameConfig } from "./config";
 import type { Database } from "./db";
+import { loadFinalQuiz } from "./finalQuiz";
 import { defaultRules, ensureDemoQuiz, type LibraryStore, MemoryLibrary } from "./library";
 import type { Clock } from "./quiz";
 import { type GameServer, type GameSocket, RoomManager } from "./rooms";
@@ -52,6 +53,12 @@ export interface GameServerOptions {
   library?: LibraryStore;
   /** Tests only: every room's timers run at this speed (0.1 = ten times faster). */
   timingScale?: number;
+  /**
+   * final_quiz.json: checked on start (a broken file stops the server with every problem
+   * listed) and saved to the library as "Hermes final quiz", replacing the copy saved on
+   * the last start. null = no such file.
+   */
+  finalQuizFile?: string | null;
 }
 
 export interface RunningGameServer {
@@ -75,6 +82,14 @@ export async function startGameServer(options: GameServerOptions): Promise<Runni
   const library = options.library ?? new MemoryLibrary();
   await ensureDemoQuiz(library, options.config, options.questionsFile);
   const log = options.log ?? (() => {});
+  if (options.finalQuizFile) {
+    // Throws (and the server doesn't start) if anything in the file is wrong.
+    const finalQuiz = loadFinalQuiz(options.finalQuizFile, defaultRules(options.config), options.config.blackout.minQuestions);
+    await library.save(finalQuiz);
+    log(
+      `[library] "${finalQuiz.title}" loaded from ${options.finalQuizFile.split(/[\\/]/).pop()}: Round 1 ${finalQuiz.rules.round1Questions} + ${finalQuiz.round1.length - finalQuiz.rules.round1Questions} spare, wild card ${finalQuiz.rules.wildCardQuestions} + ${finalQuiz.wildcard.length - finalQuiz.rules.wildCardQuestions} spare, Blackout ${finalQuiz.blackout.length}`,
+    );
+  }
   const allowed = options.corsOrigin && options.corsOrigin.length ? options.corsOrigin : null;
   const corsFor = (req: IncomingMessage) => {
     const origin = req.headers.origin;

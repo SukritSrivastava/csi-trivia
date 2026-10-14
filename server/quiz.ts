@@ -310,6 +310,10 @@ export class QuizRoom {
   // Round 1
   /** Round 1 question index → scored and not voided. */
   private r1Scored = new Map<number, boolean>();
+  /** Round 1 questions that count (the rest of round1Questions are spares). */
+  private readonly r1Planned: number;
+  /** Planned Round 1 questions started (a void gives its number back, like the wild card). */
+  private r1Number = 0;
 
   // The cut
   /** Round 1 participants in rank order, frozen at "End round 1". */
@@ -369,7 +373,11 @@ export class QuizRoom {
     // Each round takes its own questions; only the demo preset reuses them (fresh ids every run).
     const used = new Set<string>();
     const reuse = config.name === "demo";
-    this.round1Questions = pickRound(questions, 1, config.round1.questions, used, reuse);
+    // Round 1 also takes its list's spares (questions tagged for it beyond the planned count): a
+    // voided question gives its number back and the next one, a spare if need be, takes its place.
+    const r1Tagged = questions.filter((q) => q.round === 1).length;
+    this.round1Questions = pickRound(questions, 1, Math.max(config.round1.questions, r1Tagged), used, reuse);
+    this.r1Planned = Math.min(config.round1.questions, this.round1Questions.length);
     this.wildQuestions = pickRound(questions, 2, config.wildCard.questions + config.wildCard.suddenDeathMax, used, reuse);
     // Blackout plays every question it can get, until one runner is left (the demo cycles its few).
     const boCount = reuse ? Math.max(config.blackout.minQuestions, questions.filter((q) => q.round === 3).length) : Number.MAX_SAFE_INTEGER;
@@ -720,7 +728,8 @@ export class QuizRoom {
   /** Show question / Next question: the next question of whichever round we're in. */
   private nextQuestion() {
     if (R1_PHASES.includes(this.phase)) {
-      this.beginQuestion(1, this.run && this.run.round === 1 ? this.run.index + 1 : 0, 0, false);
+      this.r1Number += 1;
+      this.beginQuestion(1, this.run && this.run.round === 1 ? this.run.index + 1 : 0, this.r1Number, false);
       return;
     }
     if (WC_PHASES.includes(this.phase)) {
@@ -744,7 +753,7 @@ export class QuizRoom {
       id: randomId(),
       round,
       index,
-      number: round === 1 ? index + 1 : number,
+      number,
       suddenDeath,
       question,
       optionIds: question.options.map(() => randomId()),
@@ -1255,6 +1264,8 @@ export class QuizRoom {
     if (run.round === 1) {
       this.unscoreRound1(run);
       run.voided = true;
+      // Its number is free again: the next question (a spare, if the planned ones have run out) takes it.
+      this.r1Number -= 1;
       this.go("r1Reveal");
       return;
     }
@@ -1282,7 +1293,9 @@ export class QuizRoom {
     const run = this.run!;
     if (run.round === 1) {
       this.unscoreRound1(run);
-      this.beginQuestion(1, run.index, 0, false);
+      // A voided question that's restarted counts again.
+      if (run.voided) this.r1Number += 1;
+      this.beginQuestion(1, run.index, run.number, false);
       return;
     }
     this.restoreBefore(run);
@@ -1308,6 +1321,7 @@ export class QuizRoom {
         } satisfies Partial<Participant>);
       }
       this.run = null;
+      this.r1Number = 0;
       for (const index of this.r1Scored.keys()) this.recorder?.round1Unscored(index);
       this.r1Scored.clear();
       this.cutOrder = null;
@@ -1880,7 +1894,7 @@ export class QuizRoom {
 
   private stepLabel(): string {
     const run = this.run;
-    const r1 = run && run.round === 1 ? `Round 1, question ${run.index + 1} of ${this.round1Questions.length}` : "Round 1";
+    const r1 = run && run.round === 1 ? `Round 1, question ${run.number} of ${this.r1Planned}${run.index >= this.r1Planned ? " (spare)" : ""}` : "Round 1";
     const wc =
       run && run.round === 2
         ? run.suddenDeath
@@ -1942,8 +1956,11 @@ export class QuizRoom {
     }
   }
 
+  /** The planned count is reached (a voided question doesn't count), or there's no question left, spares included. */
   private isLastRound1Question() {
-    return !!this.run && this.run.round === 1 && this.run.index >= this.round1Questions.length - 1;
+    const run = this.run;
+    if (!run || run.round !== 1) return false;
+    return (!run.voided && run.number >= this.r1Planned) || run.index >= this.round1Questions.length - 1;
   }
 
   // ==========================================================================
@@ -1957,7 +1974,7 @@ export class QuizRoom {
   private settings(): QuizSettings {
     return this.cached("settings", () => ({
       preset: this.config.name,
-      round1Questions: this.round1Questions.length,
+      round1Questions: this.r1Planned,
       round1ReadSeconds: this.config.round1.readMs / 1000,
       round1AnswerSeconds: this.config.round1.answerMs / 1000,
       round1MaxPoints: R1_MAX_POINTS,
@@ -2018,7 +2035,7 @@ export class QuizRoom {
   }
 
   private mcqQuestion(run: Run): McqQuestion {
-    const count = run.round === 1 ? this.round1Questions.length : run.round === 2 ? this.config.wildCard.questions : null;
+    const count = run.round === 1 ? this.r1Planned : run.round === 2 ? this.config.wildCard.questions : null;
     return {
       id: run.id,
       round: run.round,
@@ -2212,7 +2229,7 @@ export class QuizRoom {
     const make = (round: RoundNumber, index: number, number: number, suddenDeath: boolean): QuestionPreview | null => {
       const q = this.questionsFor(round)[index];
       if (!q) return null;
-      const count = round === 1 ? this.round1Questions.length : round === 2 ? this.config.wildCard.questions : null;
+      const count = round === 1 ? this.r1Planned : round === 2 ? this.config.wildCard.questions : null;
       const correctTexts = correctList(q.correct).map((i) => q.options[i]);
       const multi = round === 1 && correctTexts.length >= 2;
       return { round, number, count, suddenDeath, text: q.text, image: q.image, correctText: correctTexts.join("; "), correctTexts, multi };
@@ -2221,7 +2238,12 @@ export class QuizRoom {
     const phase = this.phase;
     if (phase === "lobby" || phase === "r1Intro") return make(1, 0, 1, false);
     if (run?.round === 1 && R1_QUESTION_PHASES.includes(phase)) {
-      return this.isLastRound1Question() ? (this.wildQuestions.length ? make(2, 0, 1, false) : make(3, 0, 1, false)) : make(1, run.index + 1, run.index + 2, false);
+      // After a void the next question takes the voided one's number.
+      return this.isLastRound1Question()
+        ? this.wildQuestions.length
+          ? make(2, 0, 1, false)
+          : make(3, 0, 1, false)
+        : make(1, run.index + 1, run.voided ? run.number : run.number + 1, false);
     }
     if (phase === "cut") return this.wildPlayerIds().length ? make(2, 0, 1, false) : make(3, 0, 1, false);
     if (WC_PHASES.includes(phase)) {
