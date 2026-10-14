@@ -35,15 +35,17 @@ export function CutStage({ view, stage }: { view: HostView; stage: CutStageData 
   const row = (s: Standing, i: number, isBelow: boolean) => (
     <motion.li
       key={s.id}
-      className="flex items-center gap-[1.4rem]"
+      // Above the cut the rows light up one after another, top to bottom: a solid mint outline and a mint name (no glow).
+      className={`flex items-center gap-[1.4rem] rounded-[0.8rem] px-[0.8rem] py-[0.2rem] ${isBelow ? "" : "cut-lit"}`}
+      style={isBelow ? undefined : { animationDelay: `${LINE_AT_MS + 500 + i * 160}ms` }}
       initial={{ opacity: 0, x: -30 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: (isBelow ? safe.length + i : i) * 0.05 }}
     >
       <span className="w-[4.4rem] text-right font-term text-[3.4rem] leading-none text-amber">{s.rank}</span>
       <Bot color={s.color} head={s.head} mood={mood(s.id)} size="3.8rem" delay={botDelay(s.id)} />
-      {/* Above the cut: mint names (flat, no glow). */}
-      <span className={`host-name min-w-0 flex-1 truncate !text-[2.3rem] ${!isBelow && lineDrawn ? "!text-mint" : ""}`}>{s.name}</span>
+      <span className="cut-name host-name min-w-0 flex-1 truncate !text-[2.3rem]">{s.name}</span>
+      {isBelow && <span className="font-term text-[1.8rem] leading-none tracking-[0.08em] text-fog">WILD CARD</span>}
       <span className="font-term text-[3.2rem] leading-none text-bright">{s.score}</span>
     </motion.li>
   );
@@ -80,7 +82,9 @@ export function CutStage({ view, stage }: { view: HostView; stage: CutStageData 
                   </li>
                 ))}
               </ul>
-              <span className="host-hint !text-[2rem]">and {rest.length} more</span>
+              <span className="font-term text-[2.6rem] leading-none text-mint-soft">
+                + <span className="text-amber">{rest.length}</span> more → WILD CARD
+              </span>
             </div>
           )}
         </>

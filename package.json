@@ -24,6 +24,7 @@
     "check-questions": "tsx scripts/check-questions.ts",
     "tune-blackout": "tsx scripts/tune-blackout.ts",
     "check-glow": "tsx scripts/no-glow.ts",
+    "blackout-shots": "tsx scripts/blackout-shots.ts",
     "washout": "tsx scripts/washout.ts",
     "db-check": "tsx scripts/db-check.ts",
     "deploy": "tsx scripts/deploy.ts"

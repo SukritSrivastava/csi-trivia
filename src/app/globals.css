@@ -560,6 +560,413 @@ html:has(.host-root) {
   }
 }
 
+/* The cut: a safe row lights up (flat: a solid mint outline, the name turns mint). */
+.cut-lit {
+  outline: 0.25rem solid transparent;
+  animation: cut-lit 0.3s steps(1) both;
+}
+.cut-lit .cut-name {
+  animation: cut-name 0.3s steps(1) both;
+  animation-delay: inherit;
+}
+@keyframes cut-lit {
+  to {
+    outline-color: var(--color-mint);
+  }
+}
+@keyframes cut-name {
+  to {
+    color: var(--color-mint);
+  }
+}
+
+/* The wild card reveal: the wall powers down left to right (flat: colour drains, a flicker). */
+.wc-sweep {
+  animation: wc-sweep 0.35s linear both;
+}
+@keyframes wc-sweep {
+  0% {
+    filter: none;
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    filter: grayscale(1) brightness(0.4);
+    opacity: 0.8;
+  }
+}
+
+/* ======================================================================
+   BLACKOUT on the Host (<BlackoutScene />): flat lights, CSS beats that
+   Pause can freeze ([data-paused]) and a refresh can resume (negative delays).
+   Every keyframe exists twice (-a / -b) so a new step restarts it without
+   remounting the element.
+   ====================================================================== */
+.bo-scene[data-paused] *,
+.bo-scene[data-paused] *::before,
+.bo-scene[data-paused] *::after {
+  animation-play-state: paused !important;
+}
+.bo-stage {
+  transform-origin: 50% 50%;
+}
+.bo-alarm,
+.bo-scene > .corridor-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.bo-row {
+  opacity: 0;
+}
+.bo-row.bo-row-off {
+  opacity: 1;
+}
+.bo-row-die-a {
+  animation: bo-row-die-a 0.45s linear both;
+}
+.bo-row-die-b {
+  animation: bo-row-die-b 0.45s linear both;
+}
+.bo-row-light-a {
+  animation: bo-row-light-a 0.5s linear both;
+}
+.bo-row-light-b {
+  animation: bo-row-light-b 0.5s linear both;
+}
+.bo-front-a {
+  animation-name: bo-front-a;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+.bo-front-b {
+  animation-name: bo-front-b;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+.bo-front-gone {
+  opacity: 0;
+  transition: opacity 0.8s;
+}
+.bo-runner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  font-size: var(--f1);
+  transform: translate(var(--x1), var(--y1));
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+.bo-body {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+}
+.bo-bot {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  transform: translateX(-50%);
+  line-height: 0;
+}
+.bo-plate {
+  position: absolute;
+  left: 0;
+  bottom: 1.16em;
+  transform: translateX(-50%);
+  font-family: var(--font-term);
+  font-size: max(32px, 0.5em);
+  line-height: 1;
+  color: var(--color-amber);
+  background: rgb(3 5 6 / 0.85);
+  border: 2px solid var(--color-line);
+  border-radius: 8px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+.bo-wc {
+  margin-right: 0.3em;
+  font-size: 0.6em;
+  color: var(--color-mint-soft);
+}
+.bo-name {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  transform: translateX(-50%);
+  font-family: var(--font-type);
+  font-size: max(26px, 0.28em);
+  line-height: 1.1;
+  color: var(--color-ghost);
+  background: rgb(3 5 6 / 0.7);
+  padding: 0 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.bo-name-low {
+  top: calc(10px + 1.15 * max(26px, 0.28em));
+}
+.bo-caught-label {
+  position: absolute;
+  left: 0;
+  bottom: calc(1.3em + max(40px, 0.6em));
+  transform: translateX(-50%);
+  font-family: var(--font-term);
+  font-size: max(30px, 0.38em);
+  line-height: 1;
+  color: var(--color-wrong);
+  background: rgb(3 5 6 / 0.85);
+  border: 2px solid var(--color-alarm);
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.bo-caught-a {
+  animation: bo-caught-a 0.9s ease-out both;
+}
+.bo-caught-b {
+  animation: bo-caught-b 0.9s ease-out both;
+}
+.bo-pop-a {
+  animation: bo-appear-a 0.3s ease-out both;
+}
+.bo-pop-b {
+  animation: bo-appear-b 0.3s ease-out both;
+}
+.bo-delta {
+  position: absolute;
+  left: 0;
+  bottom: 1.9em;
+  font-family: var(--font-term);
+  font-size: max(44px, 0.6em);
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+}
+.bo-float-a {
+  animation: bo-float-a 1.2s ease-out both;
+}
+.bo-float-b {
+  animation: bo-float-b 1.2s ease-out both;
+}
+.bo-appear-a {
+  animation: bo-appear-a 0.4s ease-out both;
+}
+.bo-appear-b {
+  animation: bo-appear-b 0.4s ease-out both;
+}
+.bo-intro-title {
+  animation: bo-appear-a 1.2s ease-out both;
+}
+.bo-scrim-text {
+  background: rgb(3 5 6 / 0.8);
+  padding: 0.15em 0.6em;
+  border-radius: 0.4em;
+}
+@keyframes bo-move-a {
+  from {
+    transform: translate(var(--x0), var(--y0));
+    font-size: var(--f0);
+  }
+  to {
+    transform: translate(var(--x1), var(--y1));
+    font-size: var(--f1);
+  }
+}
+@keyframes bo-move-b {
+  from {
+    transform: translate(var(--x0), var(--y0));
+    font-size: var(--f0);
+  }
+  to {
+    transform: translate(var(--x1), var(--y1));
+    font-size: var(--f1);
+  }
+}
+@keyframes bo-row-die-a {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.85;
+  }
+  30% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.95;
+  }
+  65% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes bo-row-die-b {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.85;
+  }
+  30% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.95;
+  }
+  65% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes bo-row-light-a {
+  0% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes bo-row-light-b {
+  0% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes bo-front-a {
+  from {
+    transform: scale(var(--s0));
+  }
+  to {
+    transform: scale(var(--s1));
+  }
+}
+@keyframes bo-front-b {
+  from {
+    transform: scale(var(--s0));
+  }
+  to {
+    transform: scale(var(--s1));
+  }
+}
+@keyframes bo-caught-a {
+  0% {
+    opacity: 1;
+  }
+  15% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  45% {
+    opacity: 0.2;
+  }
+  60% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0.3;
+    transform: translateY(4%);
+  }
+}
+@keyframes bo-caught-b {
+  0% {
+    opacity: 1;
+  }
+  15% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  45% {
+    opacity: 0.2;
+  }
+  60% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0.3;
+    transform: translateY(4%);
+  }
+}
+@keyframes bo-float-a {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+    transform: translate(-50%, -0.5em);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -0.6em);
+  }
+}
+@keyframes bo-float-b {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+    transform: translate(-50%, -0.5em);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -0.6em);
+  }
+}
+@keyframes bo-appear-a {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes bo-appear-b {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes corridor-alarm {
   0%,
   55%,

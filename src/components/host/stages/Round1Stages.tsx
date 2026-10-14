@@ -38,16 +38,31 @@ export function TypeOut({ text, className = "" }: { text: string; className?: st
 
 export function Round1Intro({ view }: { view: HostView }) {
   const s = view.settings;
+  const lines = [
+    <>Everyone plays.</>,
+    <>
+      Answer fast: up to <span className="font-term text-[4.4rem] leading-none text-amber">{s.round1MaxPoints}</span> points.
+    </>,
+    <>
+      Top <span className="font-term text-[4.4rem] leading-none text-amber">{s.safeCount}</span> go to Blackout.
+    </>,
+  ];
   return (
-    <Panel top="30%">
-      <Heading size="7rem">Round 1</Heading>
-      <motion.p className="host-hint !text-[3rem] text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
-        Everyone plays <span className="font-term text-[4rem] leading-none text-amber">{s.round1Questions}</span> questions. The top{" "}
-        <span className="font-term text-[4rem] leading-none text-amber">{s.safeCount}</span> are safe for Blackout; everyone else gets a wild card shot.
+    <Panel top="26%" className="!gap-[2.4rem]">
+      <motion.p
+        className="font-term leading-none tracking-[0.1em] text-bright"
+        style={{ fontSize: "11rem" }}
+        initial={{ opacity: 0, scale: 1.15 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6 }}
+      >
+        ROUND 1
       </motion.p>
-      <motion.p className="host-count" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}>
-        <b>{s.round1ReadSeconds}</b>s to read · <b>{s.round1AnswerSeconds}</b>s to answer · faster right answers score more
-      </motion.p>
+      {lines.map((line, i) => (
+        <motion.p key={i} className="host-hint !text-[3.4rem] text-center" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 + i * 0.45 }}>
+          {line}
+        </motion.p>
+      ))}
     </Panel>
   );
 }
@@ -63,14 +78,7 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
   const correct = revealed && !stage.voided ? stage.correctText : null;
   const counting = step === "Answer" || step === "TimesUp";
   const counts = "wildCard" in stage ? { answered: stage.wildCard.answered ?? 0, expected: stage.wildCard.expected ?? 0 } : "answered" in stage ? stage : null;
-  const roundLabel =
-    q.round === 2
-      ? q.suddenDeath
-        ? `Wild card · sudden death`
-        : `Wild card · question ${q.number} of ${q.count}`
-      : q.round === 3
-        ? `Blackout · question ${q.number}`
-        : null;
+  const roundLabel = q.round === 2 ? (q.suddenDeath ? "SUDDEN DEATH" : `WILD CARD · Q${q.number} OF ${q.count}`) : null;
 
   return (
     <>
@@ -85,7 +93,7 @@ export function QuestionStage({ view, stage }: { view: HostView; stage: Stage<Qu
         }
       >
         {roundLabel && (
-          <motion.p layout="position" className="host-hint !text-[2.2rem] text-amber">
+          <motion.p layout="position" className={`font-term !text-[3rem] leading-none tracking-[0.08em] ${q.suddenDeath ? "text-alarm" : "text-mint-soft"}`}>
             {roundLabel}
           </motion.p>
         )}

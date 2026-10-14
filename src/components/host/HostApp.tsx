@@ -19,11 +19,11 @@ import { HostGate } from "./HostGate";
 import { Cast } from "./parts";
 import { SOUNDS, type SoundName, soundUnlocked, unlockSound } from "./sound";
 import { CutStage } from "./stages/CutStage";
-import { BlackoutDarkStage, BlackoutIntroStage, BlackoutRevealStage, BlackoutWinnerStage } from "./stages/BlackoutStages";
+import { BlackoutScene } from "./stages/BlackoutScene";
 import { LobbyStage } from "./stages/LobbyStage";
 import { PodiumStage } from "./stages/PodiumStage";
 import { LeaderboardStage, QuestionStage, ResultsStage, Round1Intro } from "./stages/Round1Stages";
-import { PredictionsStage, WildCardIntroStage, WildCardStandingsStage, WildCardWinnerStage } from "./stages/WildCardStages";
+import { PredictionsStage, SafeCorner, WildCardIntroStage, WildCardStandingsStage, WildCardWinnerStage } from "./stages/WildCardStages";
 
 const MUTE_KEY = "hermes:host-muted";
 
@@ -83,8 +83,13 @@ function scrimFor(stage: HostStage): "split" | "center" | "full" {
   }
 }
 
+const BLACKOUT_PHASES: HostStage["phase"][] = ["boIntro", "boRead", "boAnswer", "boTimesUp", "boReveal", "boDark", "boWinner"];
+const isBlackout = (stage: HostStage) => BLACKOUT_PHASES.includes(stage.phase);
+
 /** Screens that should transition as one (so the question can travel from read to answer). */
 function stageKey(stage: HostStage): string {
+  // Blackout is one scene for the whole chase: its beats animate inside it.
+  if (isBlackout(stage)) return "blackout";
   switch (stage.phase) {
     case "r1Read":
     case "r1Answer":
@@ -94,9 +99,6 @@ function stageKey(stage: HostStage): string {
     case "wcAnswer":
     case "wcTimesUp":
     case "wcReveal":
-    case "boRead":
-    case "boAnswer":
-    case "boTimesUp":
       return `q-${stage.question.id}`;
     case "r1Results":
       return `res-${stage.question.id}`;
@@ -104,10 +106,6 @@ function stageKey(stage: HostStage): string {
       return `lb-${stage.question.id}`;
     case "wcStandings":
       return `st-${stage.wildCard.questionNumber}`;
-    case "boReveal":
-    case "boDark":
-      // One screen per question: the moves, then the dark on the same track.
-      return `track-${stage.question.id}`;
     default:
       return stage.phase;
   }
@@ -128,9 +126,6 @@ function StageView({ view }: { view: HostView }) {
     case "wcAnswer":
     case "wcTimesUp":
     case "wcReveal":
-    case "boRead":
-    case "boAnswer":
-    case "boTimesUp":
       return <QuestionStage view={view} stage={s} />;
     case "r1Results":
       return <ResultsStage view={view} stage={s} />;
@@ -147,13 +142,13 @@ function StageView({ view }: { view: HostView }) {
     case "predictions":
       return <PredictionsStage view={view} stage={s} />;
     case "boIntro":
-      return <BlackoutIntroStage view={view} stage={s} />;
+    case "boRead":
+    case "boAnswer":
+    case "boTimesUp":
     case "boReveal":
-      return <BlackoutRevealStage view={view} stage={s} />;
     case "boDark":
-      return <BlackoutDarkStage view={view} stage={s} />;
     case "boWinner":
-      return <BlackoutWinnerStage view={view} stage={s} />;
+      return <BlackoutScene view={view} stage={s} />;
     case "podium":
       return <PodiumStage view={view} stage={s} />;
   }
@@ -239,8 +234,9 @@ function HostScreen({ view }: { view: HostView }) {
       aria-label="Projector"
       data-phase={stage.phase}
     >
-      <Corridor scrim={scrimFor(stage)} alarmSeconds={stage.phase === "boAnswer" || stage.phase === "boDark" ? 1.1 : undefined} />
-      {stage.phase !== "lobby" && <Cast cast={view.cast} />}
+      {/* Blackout draws its own corridor (the runners ARE the scene, so no cast strip either). */}
+      {!isBlackout(stage) && <Corridor scrim={scrimFor(stage)} alarmSeconds={stage.phase === "wcWinner" ? 1.1 : undefined} />}
+      {stage.phase !== "lobby" && stage.phase !== "wcWinner" && !isBlackout(stage) && <Cast cast={view.cast} />}
 
       <AnimatePresence mode="wait">
         <motion.div
@@ -255,6 +251,8 @@ function HostScreen({ view }: { view: HostView }) {
         </motion.div>
       </AnimatePresence>
 
+      {/* The wild card round: the 9 safe finalists watch from the corner. */}
+      {"wildCard" in stage && stage.phase !== "wcWinner" && <SafeCorner safe={stage.wildCard.safe} />}
       <span className="host-watermark absolute right-[3%] bottom-[3%] z-10">hermes://quiz</span>
       {soundOn && <TickSound view={view} />}
 
