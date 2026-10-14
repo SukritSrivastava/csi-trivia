@@ -91,6 +91,7 @@ export function rulesProblems(r: QuizRules, counts: Record<ListName, number>): s
   if (!inRange(r.safe, L.safe)) p.push(`Safe at the cut must be ${L.safe.min}–${L.safe.max}.`);
   secs(r.round1ReadSeconds, L.readSeconds, "Round 1 read time");
   secs(r.round1AnswerSeconds, L.openSeconds, "Round 1 answer time");
+  secs(r.multiAnswerSeconds, L.openSeconds, "Multi-correct answer time");
   secs(r.blackoutReadSeconds, L.readSeconds, "Blackout read time");
   secs(r.blackoutAnswerSeconds, L.openSeconds, "Blackout answer time");
   return p;

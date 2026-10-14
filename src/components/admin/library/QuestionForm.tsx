@@ -61,7 +61,7 @@ export function QuestionForm({
   const defaults =
     list === "blackout"
       ? { read: rules.blackoutReadSeconds, open: rules.blackoutAnswerSeconds, openLabel: "Answer time" }
-      : { read: rules.round1ReadSeconds, open: multi ? MULTI_ANSWER_SECONDS : rules.round1AnswerSeconds, openLabel: "Answer time" };
+      : { read: rules.round1ReadSeconds, open: multi ? (rules.multiAnswerSeconds ?? MULTI_ANSWER_SECONDS) : rules.round1AnswerSeconds, openLabel: "Answer time" };
 
   const setOption = (i: number, text: string) =>
     setQ((prev) => {
@@ -159,7 +159,8 @@ export function QuestionForm({
         })}
         <p className="text-[14px] text-fog">
           The 4 answers are shuffled on screen, so put them in any order.
-          {multiAllowed && " Tick 2 or more for a multi-correct question: players tick all that apply, then lock in (15 s unless it has its own time). They're never told how many are right."}
+          {multiAllowed &&
+            ` Tick 2 or more for a multi-correct question: players tick all that apply, then lock in (${rules.multiAnswerSeconds ?? MULTI_ANSWER_SECONDS} s unless it has its own time). They're never told how many are right.`}
         </p>
       </fieldset>
 

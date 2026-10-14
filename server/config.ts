@@ -171,12 +171,84 @@ export const PRESETS: Record<GameConfig["name"], GameConfig> = {
   },
 };
 
-export function loadConfig(name = process.env.GAME_PRESET ?? "demo"): GameConfig {
+/**
+ * In-game settings that can come from the environment (.env.local locally, Render's Environment when
+ * hosted). Each overrides the preset; anything unset keeps the preset's value. They are the DEFAULTS a
+ * quiz starts with: Admin → a quiz → Settings can still change them for that quiz, and +5 s works during
+ * play. "Hermes final quiz" takes them on every server start (its question counts come from the file).
+ */
+export const GAME_ENV = {
+  ROUND1_QUESTIONS: { what: "Round 1 questions played", min: 1, max: 200 },
+  ROUND1_READ_SECONDS: { what: "Round 1 (and wild card) read time, seconds", min: 1, max: 60 },
+  ROUND1_ANSWER_SECONDS: { what: "Round 1 (and wild card) answer time, seconds", min: 3, max: 120 },
+  MULTI_ANSWER_SECONDS: { what: "multi-correct question answer time, seconds", min: 3, max: 120 },
+  SAFE_SEATS: { what: "players safe at the cut", min: 2, max: 20 },
+  WILDCARD_QUESTIONS: { what: "wild card questions that count", min: 1, max: 200 },
+  WILDCARD_SUDDEN_DEATH_MAX: { what: "most wild card sudden-death questions", min: 0, max: 10 },
+  BLACKOUT_READ_SECONDS: { what: "Blackout read time, seconds", min: 1, max: 60 },
+  BLACKOUT_ANSWER_SECONDS: { what: "Blackout answer time, seconds", min: 3, max: 120 },
+  BLACKOUT_MIN_QUESTIONS: { what: "fewest Blackout questions a quiz needs", min: 1, max: 200 },
+  MIN_PARTICIPANTS: { what: "fewest players to start", min: 1, max: 500 },
+  MAX_PARTICIPANTS: { what: "most players a room accepts", min: 2, max: 500 },
+} as const;
+export type GameEnvKey = keyof typeof GAME_ENV;
+
+/** The preset with every GAME_ENV variable that's set applied. Throws one error listing every bad value. */
+export function applyGameEnv(preset: GameConfig, env: Record<string, string | undefined> = process.env): GameConfig {
+  const problems: string[] = [];
+  const get = (key: GameEnvKey): number | undefined => {
+    const raw = env[key]?.trim();
+    if (!raw) return undefined;
+    const n = Number(raw);
+    const { what, min, max } = GAME_ENV[key];
+    if (!Number.isInteger(n) || n < min || n > max) {
+      problems.push(`${key}=${raw}: ${what} must be a whole number from ${min} to ${max}.`);
+      return undefined;
+    }
+    return n;
+  };
+  const ms = (s: number | undefined) => (s === undefined ? undefined : s * 1000);
+  const v = Object.fromEntries((Object.keys(GAME_ENV) as GameEnvKey[]).map((k) => [k, get(k)])) as Record<GameEnvKey, number | undefined>;
+  if (problems.length) throw new Error(`Bad game settings in the environment:\n  - ${problems.join("\n  - ")}`);
+  const readMs = ms(v.ROUND1_READ_SECONDS) ?? preset.round1.readMs;
+  const answerMs = ms(v.ROUND1_ANSWER_SECONDS) ?? preset.round1.answerMs;
+  const config: GameConfig = {
+    ...preset,
+    round1: {
+      questions: v.ROUND1_QUESTIONS ?? preset.round1.questions,
+      readMs,
+      answerMs,
+      multiAnswerMs: ms(v.MULTI_ANSWER_SECONDS) ?? preset.round1.multiAnswerMs,
+    },
+    safe: v.SAFE_SEATS ?? preset.safe,
+    // The wild card round uses Round 1's timings.
+    wildCard: { ...preset.wildCard, questions: v.WILDCARD_QUESTIONS ?? preset.wildCard.questions, suddenDeathMax: v.WILDCARD_SUDDEN_DEATH_MAX ?? preset.wildCard.suddenDeathMax, readMs, answerMs },
+    blackout: {
+      ...preset.blackout,
+      readMs: ms(v.BLACKOUT_READ_SECONDS) ?? preset.blackout.readMs,
+      answerMs: ms(v.BLACKOUT_ANSWER_SECONDS) ?? preset.blackout.answerMs,
+      minQuestions: v.BLACKOUT_MIN_QUESTIONS ?? preset.blackout.minQuestions,
+      warnBelow: Math.max(preset.blackout.warnBelow, v.BLACKOUT_MIN_QUESTIONS ?? 0),
+    },
+    minParticipants: v.MIN_PARTICIPANTS ?? preset.minParticipants,
+    maxParticipants: v.MAX_PARTICIPANTS ?? preset.maxParticipants,
+  };
+  if (config.minParticipants > config.maxParticipants) throw new Error(`Bad game settings in the environment:\n  - MIN_PARTICIPANTS (${config.minParticipants}) is more than MAX_PARTICIPANTS (${config.maxParticipants}).`);
+  return config;
+}
+
+/** The preset named by GAME_PRESET (default demo), with any game settings from the environment applied. */
+export function loadConfig(name = process.env.GAME_PRESET ?? "demo", env: Record<string, string | undefined> = process.env): GameConfig {
   const preset = PRESETS[name.trim().toLowerCase() as GameConfig["name"]];
   if (!preset) {
     throw new Error(`Unknown GAME_PRESET "${name}". Use "event" or "demo".`);
   }
-  return preset;
+  return applyGameEnv(preset, env);
+}
+
+/** The game settings from the environment that are set, for the startup log ("ROUND1_READ_SECONDS=10"). */
+export function gameEnvInUse(env: Record<string, string | undefined> = process.env): string[] {
+  return (Object.keys(GAME_ENV) as GameEnvKey[]).filter((k) => env[k]?.trim()).map((k) => `${k}=${env[k]!.trim()}`);
 }
 
 /** How far the dark moves after Blackout question `number` (1-based). Past the end of the list, its last value. */

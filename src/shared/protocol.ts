@@ -48,7 +48,7 @@ export const NAME_MAX_LENGTH = 20;
 /** How much "+5 seconds" adds to a running timer. */
 export const ADD_TIME_MS = 5_000;
 
-/** A multi-correct Round 1 question's answer time when it has no time of its own (server/config.ts MULTI_ANSWER_MS). */
+/** A multi-correct Round 1 question's default answer time (server/config.ts MULTI_ANSWER_MS; MULTI_ANSWER_SECONDS in the environment and each quiz's Settings change it). */
 export const MULTI_ANSWER_SECONDS = 15;
 
 /** Letters for the 4 options, as shown on the Host in the buzzer round and on Admin. */
@@ -1014,6 +1014,8 @@ export interface QuizRules {
   round1ReadSeconds: number;
   /** Also the wild card round's read and answer times. */
   round1AnswerSeconds: number;
+  /** A multi-correct Round 1 question's answer time (unless it has its own). Default 15 (MULTI_ANSWER_SECONDS). */
+  multiAnswerSeconds: number;
   /** Safe at the cut (9 at the event). */
   safe: number;
   /** Wild card questions (the first N of the Wild card list; the rest are spares for voids and sudden death). */

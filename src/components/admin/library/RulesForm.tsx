@@ -2,7 +2,9 @@
 
 /**
  * A quiz's settings: how many questions each round plays, the finalists, and
- * every timer. Plus downloads (the quiz as CSV / JSON, and the blank template).
+ * every timer. New quizzes start from the server's defaults (its preset and the
+ * game settings in its environment, e.g. ROUND1_READ_SECONDS); changes here are
+ * this quiz's own. Plus downloads (the quiz as CSV / JSON, and the blank template).
  * Design extension in the Admin look: terminal-digit steppers on panels.
  */
 import { downloadText } from "@/lib/image";
@@ -85,7 +87,17 @@ export function RulesForm({ quiz, onChange }: { quiz: Quiz; onChange: (rules: Qu
             testId="rule-round1Questions"
           />
           <Stepper label="Time to read" hint="Question on the projector, answers not yet on phones." value={r.round1ReadSeconds} min={read.min} max={read.max} unit="seconds" onChange={set("round1ReadSeconds")} />
-          <Stepper label="Time to answer" hint="Faster right answers score more (500–1000)." value={r.round1AnswerSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("round1AnswerSeconds")} />
+          <Stepper label="Time to answer" hint="Faster right answers score more (200 down to 100)." value={r.round1AnswerSeconds} min={open.min} max={open.max} unit="seconds" onChange={set("round1AnswerSeconds")} />
+          <Stepper
+            label="Time to answer a multi-correct question"
+            hint="Questions with 2 or more right answers: players tick them, then lock in."
+            value={r.multiAnswerSeconds}
+            min={open.min}
+            max={open.max}
+            unit="seconds"
+            onChange={set("multiAnswerSeconds")}
+            testId="rule-multiAnswerSeconds"
+          />
         </div>
       </Panel>
 

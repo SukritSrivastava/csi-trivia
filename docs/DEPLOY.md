@@ -12,6 +12,26 @@ Settings already in place: Render has `GAME_PRESET=event`, `ADMIN_PIN` (ask Sukr
 repo, which is public), `DATABASE_URL`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (both the Vercel address), `NODE_VERSION=24`.
 Vercel has `NEXT_PUBLIC_SOCKET_URL=https://hermes-quiz-game.onrender.com`.
 
+### Environment variables at a glance (template with every one explained: `.env.example`)
+
+| Where | Variable | Value | Required? |
+|---|---|---|---|
+| **Vercel** (website) | `NEXT_PUBLIC_SOCKET_URL` | the Render address, e.g. `https://hermes-quiz-game.onrender.com` | yes (redeploy after changing) |
+| **Render** (game server) | `GAME_PRESET` | `event` | yes |
+| | `ADMIN_PIN` | the quizmaster PIN (not 1234: the server refuses to start) | yes |
+| | `PUBLIC_WEB_URL` | the Vercel address (join link and QR code) | yes |
+| | `CORS_ORIGIN` | the same Vercel address | yes |
+| | `NODE_VERSION` | `24` | yes |
+| | `DATABASE_URL` | Supabase Session pooler string | optional (results + quiz library in Supabase) |
+| | `ROUND1_READ_SECONDS`, `ROUND1_ANSWER_SECONDS`, `MULTI_ANSWER_SECONDS`, `BLACKOUT_READ_SECONDS`, `BLACKOUT_ANSWER_SECONDS` | seconds (event defaults 8, 8, 15, 5, 10) | optional: the default times every quiz starts with |
+| | `ROUND1_QUESTIONS`, `SAFE_SEATS`, `WILDCARD_QUESTIONS`, `WILDCARD_SUDDEN_DEATH_MAX`, `BLACKOUT_MIN_QUESTIONS`, `MIN_PARTICIPANTS`, `MAX_PARTICIPANTS` | whole numbers (event defaults 20, 9, 5, 3, 12, 2, 200) | optional |
+| **This laptop only** | `RENDER_API_KEY`, `RENDER_SERVICE_ID`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | for `npm run deploy` | only to deploy |
+
+Render sets `PORT` itself. The in-game settings are defaults: Admin → a quiz → Settings still changes them
+per quiz (and "Hermes final quiz" takes them again on every server start). A bad value (say
+`ROUND1_READ_SECONDS=abc`) stops the game server at start with a message naming it; the startup log lists
+the settings in use.
+
 Quizzes made in Admin (and their pictures) are stored in Supabase too (tables `quizzes`,
 `quiz_images`), so they survive Render restarts and redeploys. Open rooms don't: a restart closes
 them (open the room again from the quiz). The projector (`/host`) asks for the Admin PIN.

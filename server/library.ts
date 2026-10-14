@@ -161,6 +161,7 @@ export function defaultRules(config: GameConfig, counts?: Partial<Record<"round1
     round1Questions: cap(config.round1.questions, counts?.round1),
     round1ReadSeconds: config.round1.readMs / 1000,
     round1AnswerSeconds: config.round1.answerMs / 1000,
+    multiAnswerSeconds: config.round1.multiAnswerMs / 1000,
     safe: config.safe,
     wildCardQuestions: cap(config.wildCard.questions, counts?.wildcard),
     blackoutReadSeconds: config.blackout.readMs / 1000,
@@ -188,8 +189,8 @@ export function quizToGame(quiz: Quiz, base: GameConfig): { config: GameConfig; 
   return {
     config: {
       ...base,
-      // A multi-correct question without its own time gets the preset's 15 s.
-      round1: { questions: r.round1Questions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000, multiAnswerMs: base.round1.multiAnswerMs },
+      // A multi-correct question without its own time gets the quiz's multi-correct answer time (15 s by default).
+      round1: { questions: r.round1Questions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000, multiAnswerMs: r.multiAnswerSeconds * 1000 },
       safe: r.safe,
       // The wild card round uses Round 1's timings (docs/SPEC.md v3).
       wildCard: { ...base.wildCard, questions: r.wildCardQuestions, readMs: r.round1ReadSeconds * 1000, answerMs: r.round1AnswerSeconds * 1000 },

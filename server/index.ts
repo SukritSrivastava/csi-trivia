@@ -15,11 +15,15 @@
  *   CORS_ORIGIN     comma-separated allowed origins (default: any)
  *   DATABASE_URL    Postgres (Supabase) connection string: saves rooms, scores and
  *                   every Round 1 answer to the backend tables (db.ts). Unset = memory only.
+ *   In-game defaults (ROUND1_READ_SECONDS, ROUND1_ANSWER_SECONDS, MULTI_ANSWER_SECONDS,
+ *   BLACKOUT_READ_SECONDS, … : GAME_ENV in config.ts, documented in .env.example).
+ *
+ * Read from the real environment first (Render), then .env.local, then .env (like Next.js).
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseEnv } from "node:util";
-import { type GameConfig, loadConfig } from "./config";
+import { type GameConfig, gameEnvInUse, loadConfig } from "./config";
 import { Database } from "./db";
 import { FINAL_QUIZ_FILE } from "./finalQuiz";
 import { FileLibrary, PostgresLibrary } from "./library";
@@ -27,13 +31,15 @@ import { getLanAddresses } from "./network";
 import { loadQuestions } from "./questions";
 import { startGameServer } from "./server";
 
-// Settings from .env.local (the same file Next.js reads), if there is one. Like Next.js,
+// Settings from .env.local, then .env (the files Next.js reads), if there are any. Like Next.js,
 // anything already set in the environment wins, so `$env:DATABASE_URL=""` runs without the database.
-try {
-  const fromFile = parseEnv(readFileSync(".env.local", "utf8"));
-  for (const [key, value] of Object.entries(fromFile)) if (process.env[key] === undefined) process.env[key] = value;
-} catch {
-  // No .env.local: defaults it is.
+for (const file of [".env.local", ".env"]) {
+  try {
+    const fromFile = parseEnv(readFileSync(file, "utf8"));
+    for (const [key, value] of Object.entries(fromFile)) if (process.env[key] === undefined) process.env[key] = value;
+  } catch {
+    // No such file: defaults it is.
+  }
 }
 
 const presetFlag = process.argv.indexOf("--preset");
@@ -115,6 +121,8 @@ startGameServer({
         `  Hermes Quiz game server on port ${port}`,
         `  Quiz library: ${quizzes} quiz${quizzes === 1 ? "" : "zes"} (${database ? "Supabase" : "data/library/"}); defaults from the ${config.name} preset`,
         `  Results database: ${database ? "on (DATABASE_URL)" : "off (set DATABASE_URL to save to Postgres/Supabase)"}`,
+        `  Game settings from the environment: ${gameEnvInUse().join(", ") || "none (the preset's)"}`,
+        `  Times: Round 1 / wild card ${config.round1.readMs / 1000}s read + ${config.round1.answerMs / 1000}s answer (multi-correct ${config.round1.multiAnswerMs / 1000}s), Blackout ${config.blackout.readMs / 1000}s + ${config.blackout.answerMs / 1000}s; ${config.safe} safe at the cut`,
         "",
         `  Admin:             ${local}/admin   (PIN ${ADMIN_PIN === "1234" ? "1234" : "from ADMIN_PIN"}): open a room`,
         `  Host (projector):  ${local}/host    (same PIN)`,

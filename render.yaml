@@ -13,6 +13,8 @@ services:
     envVars:
       - key: GAME_PRESET
         value: event
+      - key: NODE_VERSION
+        value: "24"
       - key: ADMIN_PIN # quizmaster PIN; use something longer than 1234
         sync: false
       - key: DATABASE_URL # Supabase → Connect → Session pooler, password filled in
@@ -21,3 +23,15 @@ services:
         sync: false
       - key: CORS_ORIGIN # the same Vercel address
         sync: false
+      # In-game defaults (optional; these are the event preset's values). Admin → a quiz → Settings can
+      # still change them per quiz. Full list and what each does: .env.example.
+      - key: ROUND1_READ_SECONDS
+        value: "8"
+      - key: ROUND1_ANSWER_SECONDS
+        value: "8"
+      - key: MULTI_ANSWER_SECONDS
+        value: "15"
+      - key: BLACKOUT_READ_SECONDS
+        value: "5"
+      - key: BLACKOUT_ANSWER_SECONDS
+        value: "10"

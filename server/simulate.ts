@@ -22,7 +22,7 @@ import {
   type QuizRules,
 } from "../src/shared/protocol";
 import { blankQuestion, cleanQuiz, correctList, importJson, importRows, importText, isMultiCorrect, parseCsv, questionProblems, quizProblems, quizToCsv } from "../src/shared/quiz";
-import { darknessStep, type GameConfig, MULTI_ANSWER_MS, MULTI_WRONG_PENALTY, multiPoints, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
+import { darknessStep, type GameConfig, loadConfig, MULTI_ANSWER_MS, MULTI_WRONG_PENALTY, multiPoints, PRESETS, R1_MAX_POINTS, R1_MIN_POINTS, round1Points } from "./config";
 import { FINAL_QUIZ_FILE, loadFinalQuiz } from "./finalQuiz";
 import { defaultRules, quizToGame } from "./library";
 import { loadQuestions, pickRound, type QuizQuestion } from "./questions";
@@ -1352,6 +1352,7 @@ function libraryQuiz(): Quiz {
     round1Questions: 2,
     round1ReadSeconds: 5,
     round1AnswerSeconds: 9,
+    multiAnswerSeconds: 15,
     safe: 2,
     wildCardQuestions: 1,
     blackoutReadSeconds: 4,
@@ -1790,6 +1791,52 @@ test("multi-correct: only Round 1; editor/server checks, the question file, impo
   // cleanQuiz: lists cleaned (sorted, no repeats); one entry is a plain number; garbage reads as before.
   const cleaned = cleanQuiz({ id: "m", title: "M", rules: {}, round1: [{ ...multi, correct: [2, 0, 2] }, { ...multi, correct: [1] }, { ...multi, correct: [7] }, { ...multi, correct: 2 }], wildcard: [], blackout: [] }, quiz.rules)!;
   assert.deepEqual(cleaned.round1.map((q) => q.correct), [[0, 2], 1, 0, 2]);
+});
+
+// ============================================================================
+// Game settings from the environment
+// ============================================================================
+
+test("environment settings: override the preset, become a quiz's defaults, Admin's Settings still win; bad values refused", () => {
+  const env = {
+    ROUND1_READ_SECONDS: "10",
+    ROUND1_ANSWER_SECONDS: "12",
+    MULTI_ANSWER_SECONDS: "20",
+    SAFE_SEATS: "8",
+    WILDCARD_QUESTIONS: "4",
+    BLACKOUT_READ_SECONDS: "6",
+    BLACKOUT_ANSWER_SECONDS: "11",
+    MAX_PARTICIPANTS: "150",
+  };
+  const config = loadConfig("event", env);
+  assert.deepEqual(
+    [config.round1.readMs, config.round1.answerMs, config.round1.multiAnswerMs, config.safe, config.wildCard.questions, config.wildCard.readMs, config.blackout.readMs, config.blackout.answerMs, config.maxParticipants],
+    [10_000, 12_000, 20_000, 8, 4, 10_000, 6_000, 11_000, 150],
+    "every variable that's set is applied (the wild card takes Round 1's times)",
+  );
+  assert.deepEqual(loadConfig("event", {}), PRESETS.event, "nothing set: exactly the preset");
+  assert.equal(loadConfig("demo", { ROUND1_QUESTIONS: "" }).round1.questions, 3, "an empty value is unset");
+  // New quizzes (and the final quiz, on every start) take them as their defaults…
+  const rules = defaultRules(config);
+  assert.deepEqual([rules.round1ReadSeconds, rules.round1AnswerSeconds, rules.multiAnswerSeconds, rules.safe, rules.blackoutAnswerSeconds], [10, 12, 20, 8, 11]);
+  const final = loadFinalQuiz(FINAL_QUIZ_FILE, rules, config.blackout.minQuestions);
+  assert.deepEqual([final.rules.round1ReadSeconds, final.rules.multiAnswerSeconds, final.rules.round1Questions], [10, 20, 20], "the final quiz: times from the environment, counts from the file");
+  // …and a quiz's own Settings (Admin) win over them in the room.
+  const edited = { ...final, rules: { ...final.rules, round1ReadSeconds: 5, multiAnswerSeconds: 25 } };
+  const game = quizToGame(edited, config);
+  assert.deepEqual([game.config.round1.readMs, game.config.round1.multiAnswerMs, game.config.round1.answerMs], [5_000, 25_000, 12_000]);
+  // Bad values stop the server with every problem listed.
+  assert.throws(() => loadConfig("event", { ROUND1_READ_SECONDS: "abc", SAFE_SEATS: "50", BLACKOUT_ANSWER_SECONDS: "2.5" }), (e: Error) => {
+    assert.match(e.message, /ROUND1_READ_SECONDS=abc/);
+    assert.match(e.message, /SAFE_SEATS=50: players safe at the cut must be a whole number from 2 to 20/);
+    assert.match(e.message, /BLACKOUT_ANSWER_SECONDS=2\.5/);
+    return true;
+  });
+  assert.throws(() => loadConfig("event", { MIN_PARTICIPANTS: "50", MAX_PARTICIPANTS: "40" }), /MIN_PARTICIPANTS \(50\) is more than MAX_PARTICIPANTS \(40\)/);
+  assert.throws(() => loadConfig("party", {}), /Unknown GAME_PRESET "party"/);
+  // A quiz saved before the multi-correct setting existed gets it from the defaults.
+  const old = cleanQuiz({ id: "old", title: "Old", rules: { round1Questions: 1 }, round1: [], wildcard: [], blackout: [] }, rules)!;
+  assert.equal(old.rules.multiAnswerSeconds, 20);
 });
 
 // ============================================================================
