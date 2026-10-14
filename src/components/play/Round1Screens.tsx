@@ -4,7 +4,7 @@
  * Question screens for every round (eyes up, answer, locked in, time's up,
  * result, cancelled), Round 1's intro, the cut, waiting screens, the podium
  * and removed. The answer buttons come in the Host's order, numbered 1–4 in
- * amber. Blackout runners also see how far ahead of the dark they are.
+ * amber. Blackout runners see the question text above the options.
  */
 import { Bot } from "@/components/ui/Bot";
 import { ordinal, vibrate } from "@/lib/format";
