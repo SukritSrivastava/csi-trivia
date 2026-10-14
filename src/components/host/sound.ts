@@ -37,7 +37,7 @@ function play(notes: Note[]) {
   if (!ctx || ctx.state !== "running") return;
   const now = ctx.currentTime;
   const master = ctx.createGain();
-  master.gain.value = 0.18;
+  master.gain.value = MASTER;
   master.connect(ctx.destination);
   for (const n of notes) {
     const osc = ctx.createOscillator();
@@ -55,17 +55,48 @@ function play(notes: Note[]) {
   }
 }
 
+/** One master volume for everything (constant; the Host's mute and Admin's toggle switch it off). */
+const MASTER = 0.18;
+
+let hum: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode } | null = null;
+
+/** The low hum under the whole Blackout chase. Safe to call repeatedly. */
+export function humOn() {
+  if (!ctx || ctx.state !== "running" || hum) return;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(MASTER * 0.35, ctx.currentTime + 0.8);
+  const osc = ctx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.value = 55;
+  const osc2 = ctx.createOscillator();
+  osc2.type = "sine";
+  osc2.frequency.value = 82.4;
+  osc.connect(gain);
+  osc2.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc2.start();
+  hum = { osc, osc2, gain };
+}
+
+/** Stops the hum (Pause, the podium, mute). */
+export function humOff() {
+  if (!ctx || !hum) return;
+  const h = hum;
+  hum = null;
+  h.gain.gain.cancelScheduledValues(ctx.currentTime);
+  h.gain.gain.setValueAtTime(Math.max(0.0001, h.gain.gain.value), ctx.currentTime);
+  h.gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+  h.osc.stop(ctx.currentTime + 0.45);
+  h.osc2.stop(ctx.currentTime + 0.45);
+}
+
 export const SOUNDS = {
   /** Last 3 seconds of a countdown. */
   tick: () => play([{ freq: 1320, at: 0, dur: 0.05, vol: 0.6 }]),
   /** The answer goes up (Round 1 reveal). */
   reveal: () => play([0, 1, 2].map((i) => ({ freq: [523, 659, 784][i], at: i * 0.09, dur: 0.12, vol: 0.7 }))),
-  /** Someone buzzed. */
-  buzz: () =>
-    play([
-      { freq: 140, at: 0, dur: 0.35, type: "sawtooth" },
-      { freq: 147, at: 0, dur: 0.35, type: "square", vol: 0.5 },
-    ]),
   correct: () =>
     play([
       { freq: 784, at: 0, dur: 0.12 },
@@ -87,6 +118,28 @@ export const SOUNDS = {
     ]),
   /** A bot joined the lobby (quiet). */
   join: () => play([{ freq: 990, at: 0, dur: 0.04, vol: 0.25, type: "triangle" }]),
+  /** The wild card reveal: the wall powering down, left to right. */
+  sweep: () => play([{ freq: 880, to: 70, at: 0, dur: 1.2, type: "sawtooth", vol: 0.5 }]),
+  /** …and the winner's seat granted: a rising tone. */
+  seat: () =>
+    play([
+      { freq: 392, to: 784, at: 0, dur: 0.45, type: "triangle" },
+      { freq: 784, at: 0.45, dur: 0.35, type: "square", vol: 0.6 },
+    ]),
+  /** A rack row in Blackout dies. */
+  clunk: () =>
+    play([
+      { freq: 110, to: 60, at: 0, dur: 0.12, type: "square", vol: 0.8 },
+      { freq: 2200, at: 0, dur: 0.02, type: "square", vol: 0.2 },
+    ]),
+  /** The dark caught someone. */
+  thud: () =>
+    play([
+      { freq: 90, to: 38, at: 0, dur: 0.5, type: "sine", vol: 1 },
+      { freq: 180, to: 60, at: 0, dur: 0.25, type: "sawtooth", vol: 0.5 },
+    ]),
+  /** The lights come back on for the winner. */
+  swell: () => play([0, 1, 2, 3, 4].map((i) => ({ freq: [262, 330, 392, 523, 659][i], at: i * 0.12, dur: 0.6 - i * 0.05, type: "triangle" as const, vol: 0.7 }))),
 } as const;
 
 export type SoundName = keyof typeof SOUNDS;

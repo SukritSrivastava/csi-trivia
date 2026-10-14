@@ -17,7 +17,7 @@ import type { HostStage, HostView } from "@/shared/protocol";
 import { useHostStore } from "@/stores/hostStore";
 import { HostGate } from "./HostGate";
 import { Cast } from "./parts";
-import { SOUNDS, type SoundName, soundUnlocked, unlockSound } from "./sound";
+import { humOff, humOn, SOUNDS, type SoundName, soundUnlocked, unlockSound } from "./sound";
 import { CutStage } from "./stages/CutStage";
 import { BlackoutScene } from "./stages/BlackoutScene";
 import { LobbyStage } from "./stages/LobbyStage";
@@ -305,11 +305,13 @@ function HostButton({ onClick, label, children }: { onClick: () => void; label: 
   );
 }
 
-/** A tick in each of the last 3 seconds of any countdown (not while paused). */
+const TICK_PHASES: HostStage["phase"][] = ["r1Read", "r1Answer", "wcRead", "wcAnswer", "boRead", "boAnswer"];
+
+/** A soft tick in each of the last 3 seconds of a read or answer countdown (not the Blackout holds, not while paused). */
 function TickSound({ view }: { view: HostView }) {
   const clockOffset = useHostStore((s) => s.clockOffset);
   const countdown = useCountdown(view.timer, clockOffset);
-  const seconds = countdown?.seconds ?? null;
+  const seconds = TICK_PHASES.includes(view.stage.phase) ? (countdown?.seconds ?? null) : null;
   const last = useRef<number | null>(null);
   useEffect(() => {
     if (seconds === null || view.paused) return;
@@ -319,22 +321,51 @@ function TickSound({ view }: { view: HostView }) {
   return null;
 }
 
-/** Plays a sound on the moments that matter, by comparing each new view with the one before. */
+/**
+ * Plays a sound on the moments that matter, by comparing each new view with
+ * the one before: the server's steps drive every sound (never a timer of its
+ * own). Delays inside a beat match the Host animation (BlackoutScene).
+ */
 function useGameSounds(view: HostView, on: boolean) {
   const prev = useRef<HostView | null>(null);
+  const timers = useRef<number[]>([]);
   useEffect(() => {
     const before = prev.current;
     prev.current = view;
+    const now = view.stage;
+    // The hum runs under the whole Blackout chase, and stops on Pause, the podium, or mute.
+    const chase = ["boIntro", "boRead", "boAnswer", "boTimesUp", "boReveal", "boDark", "boWinner"].includes(now.phase);
+    if (on && chase && !view.paused) humOn();
+    else humOff();
     if (!on || !before) return;
     const was = before.stage;
-    const now = view.stage;
     const play = (name: SoundName) => SOUNDS[name]();
+    const later = (ms: number, name: SoundName) => timers.current.push(window.setTimeout(() => SOUNDS[name](), ms));
     const entered = now.phase !== was.phase;
+    if (entered) {
+      for (const t of timers.current) window.clearTimeout(t);
+      timers.current = [];
+    }
 
     if (now.phase === "lobby" && was.phase === "lobby" && view.cast.length > before.cast.length) play("join");
     if (entered && (now.phase === "r1Reveal" || now.phase === "wcReveal" || now.phase === "boReveal") && !now.voided) play("reveal");
-    if (entered && now.phase === "wcWinner") play("correct");
-    if (entered && now.phase === "boDark") window.setTimeout(() => (now.blackout.caughtThisQuestion.length ? SOUNDS.powerDown() : SOUNDS.correct()), 900);
-    if (entered && now.phase === "podium") window.setTimeout(() => SOUNDS.win(), 1400);
+    if (entered && now.phase === "boReveal" && !now.voided) {
+      // The runners move: a blip for the dashes forward, a buzz for the stumbles back.
+      if (now.blackout.runners.some((r) => r.alive && (r.delta ?? 0) > 0)) later(700, "correct");
+      if (now.blackout.runners.some((r) => r.alive && (r.delta ?? 0) < 0)) later(1300, "wrong");
+    }
+    if (entered && now.phase === "cut") later(1400, "powerDown");
+    if (entered && now.phase === "wcWinner") {
+      later(300, "sweep");
+      later(1650, "seat");
+    }
+    if (entered && now.phase === "boDark") {
+      const steps = now.blackout.dark - now.blackout.darkFrom;
+      for (let k = 0; k < steps; k++) later(450 + k * 250, "clunk");
+      if (now.blackout.caughtThisQuestion.length) later(450 + steps * 250, "thud");
+    }
+    if (entered && now.phase === "boWinner") later(900, "swell");
+    if (entered && now.phase === "podium") later(1400, "win");
   }, [view, on]);
+  useEffect(() => () => humOff(), []);
 }
