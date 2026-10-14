@@ -5,7 +5,7 @@
 > skills, agent roles, plugins and the frontend↔backend API. If you change anything it
 > describes, update this file in the same change (see §10 "Keeping this file true").
 >
-> Last updated: 14 Oct 2026, night (SPEC v3.1: 200→100 scoring, Blackout autopilot, no glow) · Owner: Sukrit Srivastava (frontend) · Repo: `Leleouch14/jackbox_2.0`
+> Last updated: 14 Oct 2026, night (SPEC v3.1: 200→100 scoring, Blackout autopilot, no glow) · Owner: Sukrit Srivastava (frontend) · Repo: `csikjsce/jackbox_2.0` (moved from `Leleouch14/jackbox_2.0` on 14 Oct)
 
 ---
 

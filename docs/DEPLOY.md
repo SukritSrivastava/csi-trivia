@@ -19,7 +19,7 @@ them (open the room again from the quiz). The projector (`/host`) asks for the A
 **Updating it: `npm run deploy`** (on `main`, committed and pushed). It starts a Render deploy of the
 game server, waits until it's live and `/health` says ok, then builds and deploys the website to Vercel.
 Neither service redeploys on its own from a push yet: that needs Render's and Vercel's GitHub apps
-installed on the repo owner's account (`Leleouch14`). The script needs these in `.env.local`
+installed on the repo owner's account (the `csikjsce` organisation). The script needs these in `.env.local`
 (git-ignored; already set on Sukrit's laptop, template in `.env.example`): `RENDER_API_KEY`,
 `RENDER_SERVICE_ID`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`. Options: `--skip-render`,
 `--skip-vercel`. `.vercelignore` keeps `.env.local` out of the upload.
@@ -74,7 +74,7 @@ Table Editor.
 
 ## 2. Render: the game server
 
-1. render.com → sign in with GitHub → **New** → **Blueprint** → pick `Leleouch14/jackbox_2.0`.
+1. render.com → sign in with GitHub → **New** → **Blueprint** → pick `csikjsce/jackbox_2.0`.
    Render reads `render.yaml` (branch `main`, `npm ci`, `npm run start:game`, health check `/health`,
    `GAME_PRESET=event`).
 2. It asks for the secret values:
@@ -93,7 +93,7 @@ Table Editor.
 
 ## 3. Vercel: the website
 
-1. vercel.com → **Add New** → **Project** → import `Leleouch14/jackbox_2.0`. It detects Next.js.
+1. vercel.com → **Add New** → **Project** → import `csikjsce/jackbox_2.0`. It detects Next.js.
 2. Production branch: `main` (the default).
 3. Environment variable (before the first deploy; it's built into the pages):
    | Key | Value |
